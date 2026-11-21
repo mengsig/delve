@@ -39,8 +39,8 @@ function repeatsQuestion(current: string[], previous: string): boolean {
   return shared >= 6 && shared / (words.size + earlierWords.size - shared) >= 0.9;
 }
 
-export const hasTransferredEvidence = (db: Db, context: LessonContext) => listEvidence(db, context.conceptId)
-  .some(e => e.depth === context.depth && e.masteryVerified && e.workspaceId !== null && e.workspaceId !== context.workspaceId);
+export const hasVerifiedMastery = (db: Db, context: LessonContext) => listEvidence(db, context.conceptId)
+  .some(e => e.depth === context.depth && e.masteryVerified && e.workspaceId !== null);
 
 export function checkIn(document: Document | null): MasteryCheck | null {
   return document?.blocks.find(block => block.type === 'check') ?? null;

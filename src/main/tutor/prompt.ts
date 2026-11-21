@@ -10,7 +10,7 @@ import { readHistory, teachingBlocks } from '../reader/conversation';
 import { resolveWorkspaceSource } from '../db/workspaces';
 import { lessonContext, storedLesson } from '../reader/stored-lesson';
 import { checkResponse } from './assessment';
-import { canRecommend, hasTransferredEvidence, loadMastery, masteryLimits, nextGrade, requireMasteryRevision, type Mastery } from './mastery';
+import { canRecommend, hasVerifiedMastery, loadMastery, masteryLimits, nextGrade, requireMasteryRevision, type Mastery } from './mastery';
 
 export const depthGuide = {
   high: 'Teach what this is and why it matters in plain language.',
@@ -22,7 +22,7 @@ const instructions = [
   'You are Delve, a conversational tutor. Return a delve.lesson/1 document inside the requested response.',
   'Use only the chosen depth. For teach, explain the concept with an analogy, worked example or labelled visual, then end with exactly one check.',
   'For ask, answer directly with teaching blocks and leave the active check unchanged. Do not append a check.',
-  'For a visual request, use a diagram block with concise labels and explicit edges to show the relationships.',
+  'When visualRequired is true, use a diagram block with concise labels and explicit edges to show the relationships.',
   'For answer, use the supplied correct flag for choices. For written answers, grade meaning against the reference, accepting valid paraphrases. Set assessment to true or false and give an observation explaining specifically what worked or what was mistaken. Teach any missing connection with a different example or diagram.',
   'When an answer is wrong, say so kindly and plainly. Explain why the chosen answer does not fit and why the correct answer does, using the learner’s specific misconception. Never call an answer evidence or a prediction.',
   'Follow mastery.ifCorrect or mastery.ifWrong according to your assessment. If it says checking, end with one fresh written applied check (kind prediction or short-answer, expected array, omit options). If it says understood or review, return teaching only and no check.',
@@ -53,7 +53,7 @@ export function previewNewTopic(request: TopicPreviewRequest) {
     lesson: null, recentTurns: [], nextConcepts: [],
     mastery: { stage: 'teaching', attempts: 0, maxAttempts, consecutiveCorrect: 0, requiredCorrect,
       appliedPassInStreak: false, previousQuestions: [] },
-    intent: 'teach', check: null,
+    intent: 'teach', visualRequired: false, check: null,
   });
 }
 
@@ -71,9 +71,9 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const context = lessonContext(db, request);
   if (context.demo !== (request.provider === 'demo')) throw new DomainError('PROVIDER_SCOPE', 'Choose a provider for this workspace.');
   const selected = storedLesson(db, context);
-  const mastery = loadMastery(db, context, selected, hasTransferredEvidence(db, context));
+  const mastery = loadMastery(db, context, selected, hasVerifiedMastery(db, context));
   const intent = request.intent;
-  const needsDiagram = intent.kind === 'ask' && /\b(diagram|visual|visuali[sz]e|draw|flowchart)\b/i.test(intent.text);
+  const needsDiagram = intent.kind === 'ask' && /\b(diagrams?|visual(?:ly|i[sz]e)?|flowcharts?)\b|\bdraw\s+(?:me\s+)?(?:(?:a|an)\s+)?(?:diagram|picture|graph|system trace|this|it)\b/i.test(intent.text);
   if (intent.kind === 'review') requireMasteryRevision(mastery, intent.revision, ['teaching', 'review', 'understood', 'skipped']);
   const response = intent.kind === 'answer' ? checkResponse(mastery, intent) : null;
   const reused = mastery.stage === 'understood';
@@ -95,7 +95,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
       teaching: m.blocks && JSON.stringify(m.blocks).slice(0, 1500), recommendation: mayRecommend ? m.recommendation : undefined })),
     nextConcepts: nextConcepts.map(c => ({ id: c.id, title: c.title.slice(0, 300) })),
     mastery: masteryContext(mastery, response !== null),
-    intent: request.intent.kind, question: request.intent.kind === 'ask' ? request.intent.text : undefined, check: response,
+    intent: request.intent.kind, question: request.intent.kind === 'ask' ? request.intent.text : undefined, visualRequired: needsDiagram, check: response,
   };
   const data = formatPreview(request, payload);
   const cacheModel = modelCacheKey(data.model);

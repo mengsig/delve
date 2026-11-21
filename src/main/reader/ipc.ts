@@ -9,7 +9,7 @@ import { isDemoWorkspace } from '../db/demo';
 import { addMessage, readHistory } from './conversation';
 import { publicBlocks } from './document';
 import { lessonContext, selectLesson } from './stored-lesson';
-import { canRecommend, hasTransferredEvidence, loadMastery, publicMastery, requireMasteryRevision, saveMastery } from '../tutor/mastery';
+import { canRecommend, hasVerifiedMastery, loadMastery, publicMastery, requireMasteryRevision, saveMastery } from '../tutor/mastery';
 
 export const address = z.strictObject({ workspaceId: z.uuid(), conceptId: z.int().positive(), depth: z.enum(DEPTHS) });
 export const readerSchemas = {
@@ -21,7 +21,7 @@ export const readerSchemas = {
 
 function lessonState(db: Db, address: LessonAddress, loadDemo: boolean) {
   const context = lessonContext(db, address);
-  const inherited = hasTransferredEvidence(db, context);
+  const inherited = hasVerifiedMastery(db, context);
   const selected = selectLesson(db, context, loadDemo && !inherited);
   return { context, selected, mastery: loadMastery(db, context, selected, inherited) };
 }

@@ -86,7 +86,7 @@ test('lesson depth, local conversations and linked change concepts work offline'
     ['The active claim is generation 21', 'Reject the stale generation'],
     ['A result and a reassignment', 'Compare the active generation'],
     ['A is replaced by B', 'A has a stale generation'],
-  ]) {
+  ] as const) {
     await expect(page.locator('#checkpoint')).toContainText(question);
     await page.locator('#checkpoint textarea').fill(answer);
     await page.getByRole('button', { name: 'Submit answer' }).click();

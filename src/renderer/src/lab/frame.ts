@@ -18,6 +18,13 @@ function connect(event: MessageEvent) {
   let seq = 0;
   let pending = false;
   let height = 0;
+  const reportHeight = () => {
+    if (!root.childElementCount) return;
+    const next = Math.ceil(document.body.getBoundingClientRect().height) + 2;
+    if (next === height || next < 80) return;
+    height = next;
+    port.postMessage(JSON.stringify({ session, kind: 'layout', height: Math.min(1600, height) }));
+  };
   const input = (value: unknown) => {
     if (pending) return;
     pending = true;
@@ -29,12 +36,14 @@ function connect(event: MessageEvent) {
       player = new BundlePlayer(program, view => {
         pending = false;
         mountCustomView(root, program.parameters.title, view, input);
+        reportHeight();
       }, reason => port.postMessage(JSON.stringify({ session, kind: 'failed', reason })));
     } else if ('action' in data) {
       player?.act(data.action);
     } else {
       pending = false;
       mountPack(root, data.config, data.state, input);
+      reportHeight();
     }
   };
   port.onmessage = ({ data }: MessageEvent<StageContent>) => {
@@ -44,12 +53,8 @@ function connect(event: MessageEvent) {
     }
   };
   window.addEventListener('pagehide', () => player?.close(), { once: true });
-  new ResizeObserver(() => {
-    const next = Math.ceil(document.body.getBoundingClientRect().height) + 2;
-    if (next === height || next < 80) return;
-    height = next;
-    port.postMessage(JSON.stringify({ session, kind: 'layout', height: Math.min(1600, height) }));
-  }).observe(document.body);
+  const observer = new ResizeObserver(reportHeight);
+  observer.observe(document.body);
   port.postMessage(JSON.stringify({ session, kind: 'ready' }));
 }
 window.addEventListener('message', connect);

@@ -28,6 +28,7 @@ export class InstrumentHost {
     this.channel = new StageChannel(opening.session, performance.now());
     this.frame.title = title;
     this.frame.className = 'instrument-frame';
+    this.frame.style.visibility = 'hidden';
     this.frame.setAttribute('sandbox', 'allow-scripts');
     this.frame.referrerPolicy = 'no-referrer';
     this.frame.src = 'app://instrument/stage';
@@ -62,7 +63,11 @@ export class InstrumentHost {
     if (!message) return;
     if (message.kind === 'failed') { this.fail(new Error(message.reason)); return; }
     if (message.kind === 'ready') { this.start(); this.events.onReady(); return; }
-    if (message.kind === 'layout') { this.frame.height = String(message.height); return; }
+    if (message.kind === 'layout') {
+      this.frame.height = String(message.height);
+      this.frame.style.visibility = 'visible';
+      return;
+    }
     const { manifest: { config }, session } = this.opening;
     if (config.pack === 'bundle@1') {
       if (typeof message.input === 'string' && /^[a-z][a-z0-9_-]{0,31}$/.test(message.input)) {

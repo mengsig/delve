@@ -137,6 +137,14 @@ it('reuses only a demonstrated canonical concept at the selected depth, preservi
   expect(listEvidence(db, request.conceptId)[0]?.workspaceId).toBe(origin.id);
 });
 
+it('retains verified local mastery when the source snapshot changes', async () => {
+  await run(request.intent);
+  recordEvidence(db, { ...request, status: 'demonstrated', source: 'check', masteryVerified: true });
+  bindSnapshot(db, request.workspaceId, 'abcd002');
+  expect(readLesson(db, request).mastery.stage).toBe('understood');
+  expect(readWorkspaceGraph(db, request.workspaceId).evidence[0]?.status).toBe('demonstrated');
+});
+
 it('uses the cache only for matching model, provider, depth and snapshot', async () => {
   vi.stubEnv('DELVE_CODEX_MODEL', undefined);
   vi.stubEnv('DELVE_CLAUDE_MODEL', undefined);
@@ -388,6 +396,13 @@ it('rejects repeated checks, early recommendations and trace-only visual replies
   }));
   await expect(run({ kind: 'ask', text: 'Draw a diagram' })).rejects.toThrow(/diagram with connected nodes/);
   expect(readLesson(db, request)).toEqual(opened);
+});
+
+it('identifies visual requests without treating every use of draw as a diagram request', () => {
+  const ask = (text: string) => prepareTurn(db, { ...request, intent: { kind: 'ask', text } });
+  expect(ask('Show some diagrams').needsDiagram).toBe(true);
+  expect(ask('Explain this visually').preview.prompt).toContain('"visualRequired": true');
+  expect(ask('Draw a conclusion from this').needsDiagram).toBe(false);
 });
 
 it('rejects a pending answer after the learner skips the lesson', async () => {

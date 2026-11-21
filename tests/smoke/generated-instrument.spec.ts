@@ -8,10 +8,11 @@ test.use({ tutorCli: true });
 const routeLab = { type: 'environment', fallback: 'Connect the client to the proxy, then the proxy to the service.',
   pack: 'network-builder@1', config: null };
 const prose = { type: 'prose', heading: 'A simulated path', text: 'Build the path and trace its two hops.' };
+const check = { type: 'check', kind: 'choice', prompt: 'What carries the request?', options: ['A connected path', 'An unrelated service'], expected: 0 };
 
-function response(directory: string, block: object) {
+function response(directory: string, block: object, opening = true) {
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({
-    lesson: { schema: 'delve.lesson/1', source: null, blocks: [prose, block] },
+    lesson: { schema: 'delve.lesson/1', source: null, blocks: [prose, block, ...(opening ? [check] : [])] },
     assessment: null, observation: null, recommendation: null,
   }));
 }
@@ -19,7 +20,7 @@ function response(directory: string, block: object) {
 function boardWithFollowingContent(directory: string) {
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({
     lesson: { schema: 'delve.lesson/1', source: null, blocks: [prose, bundle(boardSource),
-      { type: 'prose', heading: 'More practice', text: 'Continue exploring. '.repeat(150) }] },
+      { type: 'prose', heading: 'More practice', text: 'Continue exploring. '.repeat(150) }, check] },
     assessment: null, observation: null, recommendation: null,
   }));
 }
@@ -61,7 +62,7 @@ test('a pointer can move the token while scrolling past the composer', async ({ 
     if (!scroller) throw new Error('Lesson has no scroll container');
     scroller.scrollBy({ top: delta, behavior: 'instant' });
   }, buttonBox!.y + buttonBox!.height / 2 - composerBox!.y - composerBox!.height / 2);
-  await button.scrollIntoViewIfNeeded();
+  await page.locator('#instrument').scrollIntoViewIfNeeded();
   const visibleButton = await button.boundingBox();
   expect(visibleButton).not.toBeNull();
   if (process.env['DELVE_POINTER_EVIDENCE']) await page.screenshot({ path: process.env['DELVE_POINTER_EVIDENCE'] });
@@ -110,7 +111,7 @@ test('a new topic wires a network, then opens a generated board inside a tutor r
   await stage.getByRole('button', { name: /service\.in/ }).press('Enter');
   await stage.getByRole('button', { name: 'Test path' }).click();
   await expect(page.getByRole('log')).toContainText('reached the service through the proxy');
-  response(directory, bundle(boardSource));
+  response(directory, bundle(boardSource), false);
   await page.getByRole('textbox', { name: 'Ask your tutor' }).fill('Show the idea on a board');
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
   const preview = page.getByRole('dialog');
@@ -131,6 +132,6 @@ test('terminates a looping bundle, retains the text alternative and collects no 
   await expect(page.locator('iframe')).toHaveCount(0);
   await expect(page.locator('#instrument details p')).toBeVisible();
   await expect(page.locator('#instrument details')).toContainText('Advance the token');
-  await expect(page.getByRole('complementary')).toContainText('No evidence recorded');
+  await expect(page.getByRole('complementary')).toContainText('Not yet marked understood');
   await expect(page.getByRole('log').locator('.reader-message')).toHaveCount(0);
 });
