@@ -8,7 +8,10 @@ function devCsp(): Plugin {
     name: 'delve-dev-csp',
     apply: 'serve',
     transformIndexHtml(html) {
-      return html.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'").replace("connect-src 'self'", "connect-src 'self' ws:");
+      return html
+        .replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")
+        .replace("style-src 'self'", "style-src 'self' 'unsafe-inline'")
+        .replace("connect-src 'self'", "connect-src 'self' ws:");
     },
   };
 }
