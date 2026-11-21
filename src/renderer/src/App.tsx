@@ -18,6 +18,7 @@ import { TutorJobsProvider, TutorJobStatus } from './reader/TutorJobs';
 import { isSwitcherShortcut } from './switcher';
 import { errorMessage, useRead } from './useRead';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { Knowledge } from './knowledge/Knowledge';
 
 const readWorkspaces = () => call('workspaces:list', null);
 
@@ -116,7 +117,10 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
         <LearnLink onAccepted={accepted} />
         <DesktopJobs nav={nav} />
         <div className="screen" key={active?.id}>
-          {setup ? <AddWorkspaceForm onOpenSwitcher={palette.show} onAdded={added} onCancel={active ? nav.back : undefined}
+          {route.screen === 'knowledge' ? <Knowledge onOpen={(workspaceId, conceptId, target, depth) => {
+            void nav.select(workspaceId, target === 'atlas' ? { screen: 'atlas', conceptId } : { screen: 'lesson', conceptId }, depth)
+              .catch(cause => nav.setError(errorMessage(cause)));
+          }} /> : setup ? <AddWorkspaceForm onOpenSwitcher={palette.show} onAdded={added} onCancel={active ? nav.back : undefined}
             firstRun={route.screen === 'first-run' || !active} />
             : <Study {...destinations} nav={nav} workspace={active} onSwitch={palette.show}
               onSelect={id => void nav.select(id, { screen: 'progress' }).catch(cause => nav.setError(errorMessage(cause)))} />}

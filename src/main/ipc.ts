@@ -27,6 +27,8 @@ export const REQUEST_SCHEMAS: { [C in IpcChannel]: z.ZodType<IpcRequest<C>> } = 
   ...tutorSchemas,
   ...labSchemas,
   'graph:read': z.strictObject({ workspaceId, includeChangeLessons: z.boolean().optional() }),
+  'knowledge:read': z.null(),
+  'knowledge:remove-link': z.strictObject({ id: z.int().positive() }),
   'progress:read': z.null(),
   'evidence:reset': z.strictObject({ workspaceId, conceptId: z.int().positive(), depth: z.enum(DEPTHS) }),
 };

@@ -173,6 +173,23 @@ export const MIGRATIONS: readonly Migration[] = [
       FOREIGN KEY (workspace_id, concept_id) REFERENCES workspace_concepts ON DELETE CASCADE
     );`,
   },
+  {
+    version: 5,
+    name: 'persist cross-concept transfer links',
+    sql: `CREATE TABLE transfer_links (
+      id INTEGER PRIMARY KEY,
+      from_concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
+      to_concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
+      reason TEXT NOT NULL CHECK (length(reason) > 0),
+      provider TEXT NOT NULL CHECK (length(provider) > 0),
+      model TEXT NOT NULL CHECK (length(model) > 0),
+      workspace_id TEXT REFERENCES workspaces ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      CHECK (from_concept_id <> to_concept_id)
+    );
+    CREATE UNIQUE INDEX transfer_links_pair ON transfer_links (min(from_concept_id, to_concept_id), max(from_concept_id, to_concept_id));
+    CREATE INDEX transfer_links_to ON transfer_links (to_concept_id);`,
+  },
 ];
 
 function assertOrdered(migrations: readonly Migration[]): void {

@@ -11,7 +11,7 @@ export type Route =
   | { screen: 'atlas'; focus?: AtlasFocus; conceptId?: number; intent?: LearnIntent }
   | { screen: 'changes'; change?: ChangeRef; title?: string; job?: RepositoryJob }
   | { screen: 'lesson'; conceptId: number; question?: string; change?: ChangeRef; environment?: string }
-  | { screen: 'progress' | 'setup' | 'first-run' }
+  | { screen: 'progress' | 'knowledge' | 'setup' | 'first-run' }
   | { screen: 'baseline'; job?: RepositoryJob };
 export type Screen = Route['screen'];
 
@@ -50,7 +50,7 @@ function usePageHistory(initial: WorkspaceList) {
       return [...previous.slice(0, index), sameChange ? prior : next];
     });
   }
-  function openPrimary(screen: 'atlas' | 'progress' | 'changes' | 'setup') {
+  function openPrimary(screen: 'atlas' | 'progress' | 'knowledge' | 'changes' | 'setup') {
     const saved = screen === 'changes' && stack.findLast(entry => entry.screen === 'changes');
     visit(saved || { screen });
   }
