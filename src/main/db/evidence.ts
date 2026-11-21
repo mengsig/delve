@@ -1,0 +1,140 @@
+import assert from 'node:assert/strict';
+import { DEPTHS, type Depth } from '../../shared/domain';
+import { DomainError } from '../../shared/errors';
+import { getConcept, getConceptByKey } from './concepts';
+import { nowIso, transaction, type Db } from './connection';
+
+export const EVIDENCE_STATUSES = ['demonstrated', 'partial', 'revisit'] as const;
+export type EvidenceStatus = (typeof EVIDENCE_STATUSES)[number];
+export const EVIDENCE_SOURCES = ['check', 'environment', 'self-report'] as const;
+export type EvidenceSource = (typeof EVIDENCE_SOURCES)[number];
+
+export interface EvidenceInput {
+  conceptId: number;
+  depth: Depth;
+  status: EvidenceStatus;
+  source: EvidenceSource;
+  note?: string;
+  workspaceId?: string;
+  snapshotId?: number;
+}
+
+export interface Evidence {
+  id: number;
+  conceptId: number;
+  depth: Depth;
+  status: EvidenceStatus;
+  source: EvidenceSource;
+  note: string;
+  workspaceId: string | null;
+  snapshotId: number | null;
+  revision: number;
+  recordedAt: string;
+}
+
+interface EvidenceRow {
+  id: number;
+  concept_id: number;
+  depth: string;
+  status: string;
+  source: string;
+  note: string;
+  workspace_id: string | null;
+  snapshot_id: number | null;
+  revision: number;
+  recorded_at: string;
+}
+
+function toEvidence(row: EvidenceRow): Evidence {
+  assert.ok((DEPTHS as readonly string[]).includes(row.depth), `unknown depth ${row.depth}`);
+  assert.ok((EVIDENCE_STATUSES as readonly string[]).includes(row.status), `unknown status ${row.status}`);
+  return {
+    id: row.id,
+    conceptId: row.concept_id,
+    depth: row.depth as Depth,
+    status: row.status as EvidenceStatus,
+    source: row.source as EvidenceSource,
+    note: row.note,
+    workspaceId: row.workspace_id,
+    snapshotId: row.snapshot_id,
+    revision: row.revision,
+    recordedAt: row.recorded_at,
+  };
+}
+
+function assertInput(input: EvidenceInput): void {
+  if (!(DEPTHS as readonly string[]).includes(input.depth)) throw new DomainError('INVALID_EVIDENCE', `Unknown depth "${input.depth}".`);
+  if (!(EVIDENCE_STATUSES as readonly string[]).includes(input.status)) {
+    throw new DomainError('INVALID_EVIDENCE', `Unknown evidence status "${input.status}".`);
+  }
+  if (!(EVIDENCE_SOURCES as readonly string[]).includes(input.source)) {
+    throw new DomainError('INVALID_EVIDENCE', `Unknown evidence source "${input.source}".`);
+  }
+}
+
+/** Records evidence for a concept at a depth; recording again revises it and bumps the revision. */
+export function recordEvidence(db: Db, input: EvidenceInput): Evidence {
+  assertInput(input);
+  return transaction(db, () => {
+    if (!getConcept(db, input.conceptId)) throw new DomainError('CONCEPT_NOT_FOUND', `Concept ${input.conceptId} does not exist.`);
+    db.prepare(
+      `INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+       ON CONFLICT (concept_id, depth) DO UPDATE SET
+         status = excluded.status, source = excluded.source, note = excluded.note,
+         workspace_id = excluded.workspace_id, snapshot_id = excluded.snapshot_id,
+         revision = evidence.revision + 1, recorded_at = excluded.recorded_at`,
+    ).run(input.conceptId, input.depth, input.status, input.source, input.note ?? '', input.workspaceId ?? null, input.snapshotId ?? null, nowIso());
+    const saved = listEvidence(db, input.conceptId).find((e) => e.depth === input.depth);
+    assert.ok(saved && saved.status === input.status, 'recorded evidence must be readable');
+    return saved;
+  });
+}
+
+export function listEvidence(db: Db, conceptId: number): Evidence[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM evidence WHERE concept_id = ?
+       ORDER BY CASE depth WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END`,
+    )
+    .all(conceptId) as unknown as EvidenceRow[];
+  return rows.map(toEvidence);
+}
+
+/** Forgets evidence for a concept, at one depth or all. Returns how many records were removed. */
+export function resetEvidence(db: Db, conceptId: number, depth?: Depth): number {
+  if (depth !== undefined && !(DEPTHS as readonly string[]).includes(depth)) {
+    throw new DomainError('INVALID_EVIDENCE', `Unknown depth "${depth}".`);
+  }
+  const result =
+    depth === undefined
+      ? db.prepare('DELETE FROM evidence WHERE concept_id = ?').run(conceptId)
+      : db.prepare('DELETE FROM evidence WHERE concept_id = ? AND depth = ?').run(conceptId, depth);
+  const removed = Number(result.changes);
+  assert.ok(Number.isInteger(removed) && removed >= 0 && removed <= DEPTHS.length, 'at most one record per depth');
+  return removed;
+}
+
+export interface KnownResult {
+  known: boolean;
+  /** The depth whose evidence satisfies the request, when known. */
+  viaDepth: Depth | null;
+  reason: string;
+}
+
+/**
+ * Whether a concept is known at `depth` in `workspaceId`, i.e. may be reused instead of retaught.
+ * Depths are cumulative, so evidence at a deeper depth satisfies a shallower one.
+ */
+export function isConceptKnown(db: Db, query: { conceptKey: string; depth: Depth; workspaceId: string }): KnownResult {
+  const wanted = DEPTHS.indexOf(query.depth);
+  assert.ok(wanted >= 0, `unknown depth ${query.depth}`);
+  const concept = getConceptByKey(db, query.conceptKey);
+  if (!concept) return { known: false, viaDepth: null, reason: 'No such concept in the knowledge graph.' };
+  if (!concept.portable && concept.workspaceId !== query.workspaceId) {
+    return { known: false, viaDepth: null, reason: 'This concept is specific to another workspace and is not reused.' };
+  }
+  const satisfying = listEvidence(db, concept.id).find((e) => e.status === 'demonstrated' && DEPTHS.indexOf(e.depth) >= wanted);
+  if (!satisfying) return { known: false, viaDepth: null, reason: `Not yet demonstrated at ${query.depth} depth.` };
+  return { known: true, viaDepth: satisfying.depth, reason: `Demonstrated at ${satisfying.depth} depth.` };
+}
