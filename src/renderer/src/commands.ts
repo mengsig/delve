@@ -13,6 +13,7 @@ export interface Command {
 }
 export const primaryViews = [
   { screen: 'atlas', label: 'Atlas', icon: 'atlas' },
+  { screen: 'knowledge', label: 'Knowledge', icon: 'knowledge' },
   { screen: 'changes', label: 'Changes', icon: 'pr' },
   { screen: 'progress', label: 'Progress', icon: 'profile' },
 ] as const;

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import type { GraphConcept } from '../../../shared/graph';
 import type { LessonAddress, ReaderLesson } from '../../../shared/reader';
 import { LessonInstruments } from '../lab/Environment';
@@ -14,6 +14,7 @@ interface LessonProps extends ReaderProps {
   conceptId: number;
   onEvidence?: () => void;
   initialQuestion?: string;
+  initialReview?: boolean;
   onBackToChange?: () => void;
 }
 
@@ -61,6 +62,13 @@ function LessonThread({ body, address, props, onLesson }: {
     if (intent.kind === 'ask') setDraft(current => current.trim() === intent.text ? '' : current);
     if (intent.kind === 'answer' || lesson.messages.at(-1)?.recommendation) props.onEvidence?.();
   });
+  const reviewed = useRef(false);
+  const prepareReview = useEffectEvent(() => {
+    if (!props.initialReview || reviewed.current || !body.mastery.revision) return;
+    reviewed.current = true;
+    tutor.prepare({ kind: 'review', revision: body.mastery.revision }, true);
+  });
+  useEffect(() => { prepareReview(); }, []);
   return <article className="sheet reader-thread" aria-label="Lesson and conversation">
     <LessonInstruments address={address} body={body} onLesson={lesson => { onLesson(lesson); props.onEvidence?.(); }}>
     <div className="reader-scroll">

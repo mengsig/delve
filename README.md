@@ -61,6 +61,23 @@ The demo tutor runs entirely offline. The Archon demo includes an illustrative b
 - Binding requirements (R1–R18): [`docs/requirements.md`](docs/requirements.md)
 - Approved design: [`docs/design/proposal-v1.html`](docs/design/proposal-v1.html) (open in a browser)
 
+## Global knowledge
+
+Open **Knowledge** in the header or search for it with Ctrl/⌘-K to see concepts across your
+topics and repositories. Shared concepts appear once as bridges; workspace colours, prerequisite
+lines and transfer links show how ideas connect. Filter by workspace, mastery or depth, search, focus
+a neighbourhood, or switch to the virtualized list of everything you have understood. Select a
+concept to open its lesson, review it, or show it in its workspace Atlas.
+
+**Find connections** previews the exact request before a tutor proposes transfer links. Suggestions
+include a reason and model provenance, and you can remove them. Your graph and view settings are
+stored locally; an approved request sends the displayed concept information to your selected provider.
+The built-in demo workspaces are excluded from your personal knowledge record.
+
+![Knowledge graph in light theme](docs/images/knowledge-light.png)
+
+![Knowledge graph in dark theme](docs/images/knowledge-dark.png)
+
 ## Interactive lessons
 
 Open **Worker leases** in Archon or **Moving subjects** in Photography. Advance the lease clock and decide

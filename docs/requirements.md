@@ -59,3 +59,15 @@ maintainer's approval. Design reference: `docs/design/proposal-v1.html`.
   diff spans to concepts and open them on the Atlas. View change-only concepts there temporarily. Open the change lesson in one click,
   retaining R14 source approval for new generation. Accepted learn links select the referenced
   change. Make missing patches, unavailable GitHub access and empty histories explicit.
+- **R19 Global knowledge graph.** Knowledge is a one-click global destination across topic and
+  repository workspaces. Show each canonical concept once, its workspace memberships and shared
+  bridges, prerequisite and transfer links, and its mastery state and depth. Search, filter by
+  workspace, state and depth, focus a neighbourhood, and preserve filters and map position. Offer a
+  virtualized, recent-first list of understood concepts, grouped by workspace or flat, with dates,
+  depths and transfers. A concept's detail provides its summary, relationships, workspaces and
+  one-click lesson, review and Atlas actions. A learner may preview and explicitly approve an
+  on-demand model request for transfer suggestions, inspect their reasons and provenance, and remove
+  incorrect links. Keep data local and validate links and model output. Support light and dark themes,
+  keyboard access and the minimum desktop window; keep large graphs responsive. Demo fixtures do not
+  count as personal learning. The desktop performance test budgets 5 seconds to load and paint and
+  1 second to pan at 2,000 concepts and 5,000 edges; the local query is budgeted at 500 ms.

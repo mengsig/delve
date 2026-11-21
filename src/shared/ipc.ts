@@ -3,6 +3,8 @@ import type { ReaderContract, TutorContract } from './reader';
 import type { AddWorkspaceInput, Depth, ProviderStatus, Workspace, WorkspaceList } from './domain';
 import type { WorkspaceCoverage, WorkspaceGraph } from './graph';
 import type { LabContract } from './lab-ipc';
+import type { GlobalKnowledgeGraph, ConnectionPreview, ConnectionResult } from './knowledge';
+import type { ProviderId } from './domain';
 
 /**
  * The one typed channel map shared by main, preload and renderer.
@@ -15,6 +17,11 @@ export interface IpcContract extends RepositoryContract, ReaderContract, TutorCo
   'workspaces:pick-folder': { request: null; response: string | null };
   'providers:detect': { request: null; response: ProviderStatus[] };
   'graph:read': { request: { workspaceId: string; includeChangeLessons?: boolean }; response: WorkspaceGraph };
+  'knowledge:read': { request: null; response: GlobalKnowledgeGraph };
+  'knowledge:remove-link': { request: { id: number }; response: boolean };
+  'connections:preview': { request: { provider: ProviderId; conceptId: number }; response: ConnectionPreview };
+  'connections:run': { request: { token: string; consent: true }; response: ConnectionResult };
+  'connections:cancel': { request: null; response: null };
   'progress:read': { request: null; response: WorkspaceCoverage[] };
   'evidence:reset': { request: { workspaceId: string; conceptId: number; depth: Depth }; response: boolean };
 }
@@ -39,6 +46,11 @@ const CHANNEL_FLAGS: Record<IpcChannel, true> = {
   'reader:message': true,
   'reader:skip': true,
   'graph:read': true,
+  'knowledge:read': true,
+  'knowledge:remove-link': true,
+  'connections:preview': true,
+  'connections:run': true,
+  'connections:cancel': true,
   'progress:read': true,
   'evidence:reset': true,
   'repo:stage': true,

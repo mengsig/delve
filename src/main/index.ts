@@ -17,6 +17,10 @@ import { registerAppScheme, serveRenderer } from './protocol';
 import { detectProviders } from './providers/detect';
 import { APP_ORIGIN, applySecurityPolicy, isAppUrl } from './security';
 import { installShutdown } from './shutdown';
+import { ConnectionSession } from './connections/session';
+import { createTransferLink, getGlobalKnowledgeGraph } from './db/knowledge';
+import { transaction } from './db/connection';
+import { DomainError } from '../shared/errors';
 
 // electron-vite sets this in development only; an empty value means "not set".
 const devServerUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'] || undefined;
@@ -26,6 +30,30 @@ const userDataOverride = process.env['DELVE_USER_DATA_DIR'];
 if (userDataOverride) app.setPath('userData', resolve(userDataOverride));
 
 type Shutdown = ReturnType<typeof installShutdown>;
+
+function connectionHandlers(db: Db, connections: ConnectionSession, signal: AbortSignal): Pick<IpcHandlers, 'connections:preview' | 'connections:cancel' | 'connections:run'> {
+  let running: AbortController | null = null;
+  return {
+    'connections:preview': request => {
+      if (running) throw new DomainError('CONNECTIONS_BUSY', 'A connection request is already running.');
+      return connections.preview(request);
+    },
+    'connections:cancel': () => { connections.clearPreview(); running?.abort(); return null; },
+    'connections:run': async request => {
+      if (running) throw new DomainError('CONNECTIONS_BUSY', 'A connection request is already running.');
+      const controller = new AbortController();
+      running = controller;
+      try {
+        const result = await connections.run(request, AbortSignal.any([signal, controller.signal]));
+        transaction(db, () => {
+          for (const suggestion of result.suggestions) createTransferLink(db, { ...suggestion,
+            provider: result.provenance.provider, model: result.provenance.model ?? 'provider default' });
+        });
+        return result;
+      } finally { if (running === controller) running = null; }
+    },
+  };
+}
 
 function createWindow(labs: LabHost, shutdown: Shutdown): BrowserWindow {
   const window = new BrowserWindow({
@@ -58,7 +86,7 @@ function createWindow(labs: LabHost, shutdown: Shutdown): BrowserWindow {
 }
 
 function buildHandlers(db: Db, tutor: TutorSession, labs: LabHost, learning: RepositoryLearning, links: LearnInbox,
-  detect: typeof detectProviders, signal: AbortSignal): IpcHandlers {
+  connections: ConnectionSession, detect: typeof detectProviders, signal: AbortSignal): IpcHandlers {
   return {
     'workspaces:list': () => listWorkspaces(db),
     'workspaces:add': async (input) => {
@@ -83,6 +111,7 @@ function buildHandlers(db: Db, tutor: TutorSession, labs: LabHost, learning: Rep
     ...readerHandlers(db),
     ...tutorHandlers(db, tutor),
     ...graphHandlers(db),
+    ...connectionHandlers(db, connections, signal),
     'repo:stage': ({ source }) => learning.stage(source),
     'repo:attach': ({ token }) => {
       const workspace = learning.attach(token);
@@ -123,6 +152,14 @@ async function start(links: LearnInbox, shutdown: Shutdown): Promise<void> {
     return pending;
   };
   const runner = createTutorRunner(detect);
+  const connections = new ConnectionSession(conceptId => {
+    const graph = getGlobalKnowledgeGraph(db);
+    const anchor = graph.concepts.find(concept => concept.id === conceptId);
+    if (!anchor) return null;
+    const linkedConceptIds = graph.links.flatMap(link => link.fromConceptId === conceptId ? [link.toConceptId]
+      : link.toConceptId === conceptId ? [link.fromConceptId] : []);
+    return { anchor, candidates: graph.concepts.filter(concept => concept.id !== conceptId), linkedConceptIds };
+  }, runner);
   const learning = new RepositoryLearning(db, join(app.getPath('userData'), 'repositories'), runner);
   const tutor = new TutorSession(db, createGenerator(runner));
   shutdown.setCleanup(async () => {
@@ -138,7 +175,7 @@ async function start(links: LearnInbox, shutdown: Shutdown): Promise<void> {
   });
   seedDemoWorkspaces(db);
   const labs = new LabHost(db);
-  const handlers = buildHandlers(db, tutor, labs, learning, links, detect, shutdown.signal);
+  const handlers = buildHandlers(db, tutor, labs, learning, links, connections, detect, shutdown.signal);
   registerIpc(ipcMain, handlers, (url) => isAppUrl(url, devServerUrl), shutdown.signal);
   createWindow(labs, shutdown);
   app.on('activate', () => {
