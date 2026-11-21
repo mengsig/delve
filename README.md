@@ -7,8 +7,15 @@ The first launch includes labeled Archon, Relay and Photography demo workspaces.
 repository, GitHub repository or topic with **+ Add**. Each workspace has its own atlas.
 Progress shows the evidence behind each reading depth and where to reset a shared record.
 
-The demo includes an offline lesson conversation and the illustrative Archon change brief for
-PR #184. New workspaces show their stored knowledge graph, lessons and source snapshot as available.
+Open a concept at High, Medium or Low depth to read its lesson and ask the tutor a question.
+In an empty topic atlas, choose **Start a topic lesson**. Before the first live request, review
+the prompt, model and byte count. The tutor receives concept summaries, selected-depth evidence
+and recent conversation from the local graph. No repository files are attached. You can preview
+individual questions, cancel a turn and retry. The optional check updates local evidence, and the
+tutor explains its next suggestion. Reset a check in **Progress** at its recorded workspace.
+
+The demo tutor runs entirely offline. The Archon demo also includes an illustrative change brief
+for PR #184. Repository lessons use the concepts and snapshot already stored in the workspace.
 
 - Product direction: [`docs/product.md`](docs/product.md)
 - Binding requirements (R1–R17): [`docs/requirements.md`](docs/requirements.md)
@@ -25,6 +32,8 @@ To generate lessons, Delve uses a CLI you already have and are signed in to:
 itself and never copies your credentials. It only runs a CLI signed in with a subscription
 (claude.ai or ChatGPT); a CLI signed in with an API key is shown and refused, because it bills per
 use. If neither CLI is on your `PATH`, Delve shows "not found".
+Live tutor requests use `gpt-5.4` or `claude-sonnet-4-6`. Set `DELVE_CODEX_MODEL` or
+`DELVE_CLAUDE_MODEL` before launching to use another model available to your subscription.
 
 Ctrl+K (⌘K on macOS) or the "Switch workspace" button opens the workspace switcher: type to filter,
 use the arrow keys, press Enter to switch and Escape to close.

@@ -20,6 +20,7 @@ export interface AtlasProps {
   onChanges: () => void;
   onProgress: () => void;
   onAdd: () => void;
+  onStartTopic: () => Promise<void>;
   onSwitch: () => void;
 }
 
@@ -55,10 +56,28 @@ function AtlasFooter({ model, depth, onProgress, view, onView }: Pick<AtlasProps
   </footer>;
 }
 
+function StartTopic({ start }: { start: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function open() {
+    setBusy(true);
+    setError('');
+    try { await start(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  }
+  return <><button className="primary-btn" disabled={busy} onClick={() => void open()}>Start a topic lesson →</button>
+    {error && <p role="alert">{error}</p>}</>;
+}
+
 function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel }) {
   const { workspace, graph, depth, view, onLesson, onSwitch, onChanges } = props;
   const demo = useMemo(() => demoPlate(graph, model), [graph, model]);
-  const target = useMemo(() => nextConcept(model, demo?.primary), [model, demo]);
+  const suggestion = graph.suggestions?.[depth];
+  const suggested = suggestion && model.byId.get(suggestion.conceptId);
+  const adaptive = suggested && !isLearned(suggested) ? suggested : undefined;
+  const fallback = useMemo(() => nextConcept(model, demo?.primary), [model, demo]);
+  const target = adaptive ?? fallback;
   const [selection, setSelection] = useState(props.initialConceptId ?? demo?.primary.id ?? target?.id);
   const selected = (selection === undefined ? undefined : model.byId.get(selection)) ?? target;
   const recommendedId = target && !isLearned(target) ? target.id : undefined;
@@ -75,10 +94,11 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
         : <Folio model={model} selected={selected} recommendedId={recommendedId} workspaceId={workspace.id} changedId={demo?.changed?.id} onSelect={setSelection} />}
       <Inspector selected={selected} status={statusText(selected, workspace.id, selected.id === demo?.changed?.id)}
         onSelect={setSelection} onLesson={onLesson} />
-    </div><FieldGuide model={model} target={target} workspace={workspace} demo={demo} onLesson={onLesson} onChanges={onChanges} /></div>
+    </div><FieldGuide model={model} target={target} reason={adaptive && suggestion?.reason} workspace={workspace} demo={demo} onLesson={onLesson} onChanges={onChanges} /></div>
       : <section className="sheet atlas-empty"><h3>No concepts mapped yet</h3>
         <p>This workspace has no saved concepts to explore.</p>
-        <div className="actions"><button onClick={onSwitch}>Switch workspace</button>
+        <div className="actions">{workspace.kind === 'topic' && <StartTopic start={props.onStartTopic} />}
+          <button onClick={onSwitch}>Switch workspace</button>
           <button onClick={props.onAdd}>Add workspace</button></div>
       </section>}
     <AtlasFooter model={model} depth={depth} onProgress={props.onProgress} view={view} onView={props.onView} />

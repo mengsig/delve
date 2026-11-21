@@ -4,6 +4,9 @@ import { openDatabase, type Db } from './db/connection';
 import { seedDemoWorkspaces } from './db/demo';
 import { addWorkspace, listWorkspaces, switchWorkspace } from './db/workspaces';
 import { assertGitRepository } from './git';
+import { tutorHandlers } from './tutor/ipc';
+import { createGenerator, createTutorRunner } from './tutor/provider';
+import { TutorSession } from './tutor/session';
 import { readerHandlers } from './reader/ipc';
 import { graphHandlers } from './graph-ipc';
 import { registerIpc, type IpcHandlers } from './ipc';
@@ -44,7 +47,7 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-function buildHandlers(db: Db): IpcHandlers {
+function buildHandlers(db: Db, tutor: TutorSession): IpcHandlers {
   return {
     'workspaces:list': () => listWorkspaces(db),
     'workspaces:add': async (input) => {
@@ -60,6 +63,7 @@ function buildHandlers(db: Db): IpcHandlers {
     },
     'providers:detect': () => detectProviders(),
     ...readerHandlers(db),
+    ...tutorHandlers(db, tutor),
     ...graphHandlers(db),
   };
 }
@@ -69,9 +73,21 @@ async function start(): Promise<void> {
   applySecurityPolicy(devServerUrl);
   serveRenderer(join(__dirname, '../renderer'));
   const db = openDatabase(join(app.getPath('userData'), 'delve.sqlite'));
+  const runner = createTutorRunner();
+  const tutor = new TutorSession(db, createGenerator(runner));
+  let draining = false;
+  let drained = false;
+  app.on('before-quit', event => {
+    if (drained) return;
+    event.preventDefault();
+    if (draining) return;
+    draining = true;
+    tutor.close();
+    void runner.drain().then(() => { drained = true; app.quit(); });
+  });
   app.on('will-quit', () => db.close());
   seedDemoWorkspaces(db);
-  registerIpc(ipcMain, buildHandlers(db), (url) => isAppUrl(url, devServerUrl));
+  registerIpc(ipcMain, buildHandlers(db, tutor), (url) => isAppUrl(url, devServerUrl));
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

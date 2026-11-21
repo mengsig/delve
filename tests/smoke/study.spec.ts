@@ -32,11 +32,16 @@ test('lesson depth, local conversations and linked change concepts work offline'
   await page.getByRole('button', { name: 'Open lesson →' }).click();
   await expect(page.getByRole('heading', { name: 'Worker leases', level: 1 })).toBeVisible();
   await page.getByRole('button', { name: 'Low · Protocol detail' }).click();
-  await expect(page.getByRole('heading', { name: 'No environment in this lesson' })).toBeVisible();
+  await expect(page.getByText('lease-handoff@1 · text alternative')).toBeVisible();
   await expect(page.locator('pre mark')).toBeVisible();
   await page.getByRole('textbox', { name: 'Ask the demo tutor' }).fill('How does the result writer check ownership?');
   await page.getByRole('button', { name: 'Ask question' }).click();
   await expect(page.getByRole('log')).toContainText('How does the result writer check ownership?');
+  await expect(page.getByRole('log').getByRole('heading', { name: 'Follow the late result' })).toBeVisible();
+  await page.getByRole('button', { name: 'Task ID and worker start time' }).click();
+  await expect(page.getByRole('log')).toContainText('partial evidence');
+  await expect(page.getByRole('complementary').getByRole('button', { name: 'Open Write fencing →' })).toBeVisible();
+  await expect(page.getByRole('log')).toContainText('Let’s look at the decision again');
   await page.getByRole('button', { name: 'Task ID and active generation' }).click();
   await expect(page.getByText(/Connection learned\./).first()).toBeVisible();
   await page.getByRole('button', { name: '← Back to atlas' }).click();

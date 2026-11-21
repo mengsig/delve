@@ -76,24 +76,27 @@ function assertInput(input: EvidenceInput): void {
 
 /** Records evidence for a concept at a depth; recording again revises it and bumps the revision. */
 export function recordEvidence(db: Db, input: EvidenceInput): Evidence {
+  return transaction(db, () => recordEvidenceInTransaction(db, input));
+}
+
+export function recordEvidenceInTransaction(db: Db, input: EvidenceInput): Evidence {
   assertInput(input);
-  return transaction(db, () => {
-    const scope = resolveScope(db, input.conceptId, input.workspaceId, input.snapshotId);
-    if (scope.workspaceId !== null) {
-      db.prepare('INSERT OR IGNORE INTO workspace_concepts (workspace_id, concept_id) VALUES (?, ?)').run(scope.workspaceId, input.conceptId);
-    }
-    db.prepare(
-      `INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
-       ON CONFLICT (concept_id, depth) DO UPDATE SET
-         status = excluded.status, source = excluded.source, note = excluded.note,
-         workspace_id = excluded.workspace_id, snapshot_id = excluded.snapshot_id,
-         revision = evidence.revision + 1, recorded_at = excluded.recorded_at`,
-    ).run(input.conceptId, input.depth, input.status, input.source, input.note ?? '', scope.workspaceId, scope.snapshotId, nowIso());
-    const saved = listEvidence(db, input.conceptId).find((e) => e.depth === input.depth);
-    assert.ok(saved && saved.status === input.status, 'recorded evidence must be readable');
-    return saved;
-  });
+  assert.ok(db.isTransaction, 'evidence must be recorded atomically');
+  const scope = resolveScope(db, input.conceptId, input.workspaceId, input.snapshotId);
+  if (scope.workspaceId !== null) {
+    db.prepare('INSERT OR IGNORE INTO workspace_concepts (workspace_id, concept_id) VALUES (?, ?)').run(scope.workspaceId, input.conceptId);
+  }
+  db.prepare(
+    `INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+     ON CONFLICT (concept_id, depth) DO UPDATE SET
+       status = excluded.status, source = excluded.source, note = excluded.note,
+       workspace_id = excluded.workspace_id, snapshot_id = excluded.snapshot_id,
+       revision = evidence.revision + 1, recorded_at = excluded.recorded_at`,
+  ).run(input.conceptId, input.depth, input.status, input.source, input.note ?? '', scope.workspaceId, scope.snapshotId, nowIso());
+  const saved = listEvidence(db, input.conceptId).find((e) => e.depth === input.depth);
+  assert.ok(saved && saved.status === input.status, 'recorded evidence must be readable');
+  return saved;
 }
 
 export function listEvidence(db: Db, conceptId: number): Evidence[] {
