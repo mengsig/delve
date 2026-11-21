@@ -1,0 +1,16 @@
+.coverage table { width: 100%; border-collapse: collapse; text-align: left; table-layout: fixed; }
+.coverage td, .coverage th { border-top: 1px solid var(--rule); padding: 13px 9px; vertical-align: middle; }
+.coverage th:first-child { width: 22%; padding-left: 0; }
+.coverage thead th { text-transform: capitalize; }
+.coverage button { text-align: left; }
+.coverage meter { display: block; width: 100%; height: 5px; margin: 8px 0; appearance: none; background: var(--rule); border-radius: 10px; }
+.coverage meter::-webkit-meter-bar { background: var(--rule); border: 0; border-radius: 10px; }
+.coverage meter::-webkit-meter-optimum-value { background: var(--green); border-radius: 10px; }
+.coverage small, .evidence-entry small { color: var(--dim); font-size: 12px; }
+.progress-notes { margin-top: 14px; align-items: start; }
+.progress-notes > .note { margin: 0; }
+.evidence-list { list-style: none; margin: 0; padding: 0; }
+.evidence-entry > div:first-child { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.evidence-entry small, .evidence-entry > .back { display: block; margin-top: 6px; }
+.confirm-reset { margin-top: 8px; padding: 10px; background: var(--soft); border-radius: 9px; }
+.confirm-reset .actions { margin-top: 8px; }

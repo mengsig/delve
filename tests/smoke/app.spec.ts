@@ -1,102 +1,79 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { test, shortcut } from './desktop';
 
-const mainEntry = resolve(__dirname, '../../out/main/index.js');
-
-let userData: string;
-
-function launch(): Promise<ElectronApplication> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && key !== 'ELECTRON_RENDERER_URL') env[key] = value;
-  }
-  env['DELVE_USER_DATA_DIR'] = userData;
-  env['PATH'] = '/nonexistent';
-  return electron.launch({
-    args: [mainEntry],
-    env,
-    timeout: 30_000,
-  });
+async function add(page: Page, kind: string, value: string) {
+  await page.getByRole('button', { name: '+ Add', exact: true }).click();
+  await page.getByRole('button', { name: kind, exact: true }).click();
+  await page.getByLabel(kind, { exact: true }).fill(value);
+  await page.getByRole('button', { name: 'Add to atlas →' }).click();
 }
 
-test.beforeEach(() => {
-  userData = mkdtempSync(join(tmpdir(), 'delve-smoke-'));
-});
+test('loads a hardened desktop and persists workspaces added through the source form', async ({ desktop }) => {
+  const { page } = desktop;
+  await expect(page).toHaveTitle('Delve');
+  await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
+  expect(await page.evaluate(() => typeof (globalThis as { require?: unknown }).require)).toBe('undefined');
+  expect(await page.evaluate(() => typeof (globalThis as { process?: unknown }).process)).toBe('undefined');
 
-test.afterEach(() => {
-  rmSync(userData, { recursive: true, force: true });
-});
-
-test('window loads hardened, adds and switches workspaces that persist', async () => {
-  const app = await launch();
-  const window = await app.firstWindow();
-  await expect(window).toHaveTitle('Delve');
-  await expect(window.getByRole('heading', { name: 'Delve', level: 1 })).toBeVisible();
-  expect(await window.evaluate(() => typeof (globalThis as { require?: unknown }).require)).toBe('undefined');
-  expect(await window.evaluate(() => typeof (globalThis as { process?: unknown }).process)).toBe('undefined');
-
-  await expect(window.locator('[data-provider="claude"]')).toHaveAttribute('data-state', 'not-found');
-  await expect(window.locator('[data-provider="codex"]')).toContainText('not found');
-
-  const source = window.getByLabel('Source');
-  await source.fill('Photography');
-  await window.getByRole('button', { name: 'Add workspace' }).click();
-  await expect(window.getByTestId('active-workspace')).toHaveText('Active: Photography');
-
-  await window.getByLabel('Kind').selectOption('github');
-  await source.fill('octo/site');
-  await window.getByRole('button', { name: 'Add workspace' }).click();
-  await expect(window.getByTestId('active-workspace')).toHaveText('Active: octo/site');
-
-  await window.getByRole('button', { name: 'Switch to Photography' }).click();
-  await expect(window.getByTestId('active-workspace')).toHaveText('Active: Photography');
-
-  // R3: Ctrl/Cmd+K opens the switcher dialog; typing filters, Enter switches, Escape closes.
-  const shortcut = process.platform === 'darwin' ? 'Meta+K' : 'Control+K';
-  const dialog = window.getByRole('dialog', { name: 'Switch workspace' });
+  await page.getByRole('button', { name: '+ Add', exact: true }).click();
+  await expect(page.locator('[data-provider="claude"]')).toHaveAttribute('data-state', 'not-found');
+  await expect(page.locator('[data-provider="codex"]')).toContainText('CLI not found');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await add(page, 'Any topic', 'Photography');
+  await expect(page.getByRole('heading', { name: 'Topic atlas.' })).toBeVisible();
+  await add(page, 'GitHub URL', 'https://github.com/octo/site.git');
+  await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
+  await page.keyboard.press(shortcut);
+  const dialog = page.getByRole('dialog', { name: 'Switch workspace' });
   const finder = dialog.getByRole('combobox', { name: 'Find a workspace' });
-  await window.locator('body').click();
-  await window.keyboard.press(shortcut);
-  await expect(dialog).toBeVisible();
   await expect(finder).toBeFocused();
-  await expect(dialog.getByRole('option', { selected: true })).toContainText('Photography');
-  await finder.fill('octo');
-  await expect(dialog.getByRole('option')).toHaveCount(1);
-  await window.keyboard.press('Enter');
+  await expect(dialog.getByRole('option', { selected: true })).toContainText('octo/site');
+  await finder.fill('Photography');
+  await dialog.getByRole('option').filter({ has: page.getByText('Photography', { exact: true }) }).click();
   await expect(dialog).toBeHidden();
-  await expect(window.getByTestId('active-workspace')).toHaveText('Active: octo/site');
-
-  await window.keyboard.press(shortcut);
-  await expect(finder).toBeFocused();
-  await expect(finder).toHaveValue('');
-  await window.keyboard.press('ArrowDown');
-  await expect(dialog.getByRole('option', { selected: true })).toContainText('Photography');
-  await window.keyboard.press('Escape');
-  await expect(dialog).toBeHidden();
-  await expect(window.getByTestId('active-workspace')).toHaveText('Active: octo/site');
-
-  const opener = window.getByRole('button', { name: /Switch workspace/ });
-  await opener.click();
-  await dialog.getByRole('option', { name: 'Photography' }).click();
-  await expect(window.getByTestId('active-workspace')).toHaveText('Active: Photography');
-  await expect(opener).toBeFocused();
-  await app.close();
-
-  const reopened = await launch();
-  const again = await reopened.firstWindow();
-  await expect(again.getByTestId('active-workspace')).toHaveText('Active: Photography');
-  await expect(again.getByRole('list', { name: 'Workspaces' }).getByRole('listitem')).toHaveCount(2);
-  await reopened.close();
+  await expect(page.getByRole('heading', { name: 'Topic atlas.' })).toBeVisible();
+  const again = await desktop.restart();
+  await expect(again.getByRole('heading', { name: 'Topic atlas.' })).toBeVisible();
+  await again.keyboard.press(shortcut);
+  await expect(again.getByRole('option')).toHaveCount(5);
+  await expect(again.getByRole('option', { selected: true })).toContainText('Photography');
 });
 
-test('rejects invalid input with a visible error', async () => {
-  const app = await launch();
-  const window = await app.firstWindow();
-  await window.getByLabel('Kind').selectOption('git');
-  await window.getByLabel('Source').fill(userData);
-  await window.getByRole('button', { name: 'Add workspace' }).click();
-  await expect(window.getByRole('alert')).toContainText('not a Git repository');
-  await app.close();
+test('validates a local working tree and exposes the new empty atlas', async ({ desktop }) => {
+  const { page, directory } = desktop;
+  await add(page, 'Local folder', directory);
+  await expect(page.getByRole('alert')).toContainText('not a Git repository');
+  const folder = join(directory, 'local-repository');
+  mkdirSync(join(folder, '.git'), { recursive: true });
+  await page.getByLabel('Local folder', { exact: true }).fill(folder);
+  await page.getByRole('button', { name: 'Add to atlas →' }).click();
+  await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
+  await expect(page.getByText('local-repository', { exact: false }).first()).toBeVisible();
+  await expect(page.locator('.react-flow__node')).toHaveCount(0);
+});
+
+test('switcher supports filtering, keyboard navigation, cancellation and focus restoration', async ({ desktop }) => {
+  const { page } = desktop;
+  const opener = page.locator('header').getByRole('button', { name: 'Switch workspace', exact: true });
+  await opener.click();
+  const dialog = page.getByRole('dialog');
+  const finder = dialog.getByRole('combobox');
+  await expect(finder).toBeFocused();
+  await finder.fill('no matching workspace');
+  await expect(dialog.getByRole('status')).toContainText('No workspace matches');
+  await finder.fill('');
+  const first = await dialog.getByRole('option', { selected: true }).innerText();
+  await finder.press('ArrowDown');
+  await expect(dialog.getByRole('option', { selected: true })).not.toHaveText(first);
+  await finder.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(opener).toBeFocused();
+  await page.keyboard.press(shortcut);
+  await finder.fill('Relay');
+  await expect(dialog.getByRole('option')).toHaveCount(1);
+  await finder.press('Enter');
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('.topline')).toContainText('Relay');
 });

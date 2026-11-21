@@ -72,7 +72,7 @@
   .folio .reader {
     grid-template-columns: 1fr;
   }
-  .folio .reader main,
+  .folio .reader article,
   .folio .reader aside {
     grid-column: auto;
     grid-row: auto;
