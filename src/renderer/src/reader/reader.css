@@ -55,7 +55,7 @@
   padding: 9px 12px;
   font: inherit;
 }
-.reader-thread > .reader-provider { margin-bottom: 15px; }
+.reader-scroll > .reader-provider { margin-bottom: 15px; }
 .reader-message, .lesson-blocks > .chapter { animation: appear .22s ease-out both; }
 @media (prefers-reduced-motion: reduce) {
   .reader-message, .lesson-blocks > .chapter { animation: none; }
