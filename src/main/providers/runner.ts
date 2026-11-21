@@ -43,6 +43,8 @@ export interface RunResult<T> {
 const DEFAULT_TIMEOUT_MS = 180_000;
 const DEFAULT_RETRIES = 1;
 const MAX_RETRIES = 3;
+// setTimeout cannot wait longer than 2^31 - 1 ms; an hour is far beyond any real run.
+const MAX_TIMEOUT_MS = 60 * 60 * 1000;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 interface Attempt {
@@ -88,6 +90,10 @@ export class ProviderRunner {
   run<T>(req: RunRequest<T>): Promise<RunResult<T>> {
     assert(req.cacheKey.length > 0, 'cacheKey required');
     assert(req.prompt.length > 0, 'prompt required');
+    const retries = req.maxRetries;
+    assert(retries === undefined || (Number.isInteger(retries) && retries >= 0 && retries <= MAX_RETRIES), `maxRetries must be an integer from 0 to ${MAX_RETRIES}`);
+    const timeout = req.timeoutMs;
+    assert(timeout === undefined || (Number.isInteger(timeout) && timeout > 0 && timeout <= MAX_TIMEOUT_MS), `timeoutMs must be an integer from 1 to ${MAX_TIMEOUT_MS}`);
     const entry = this.inFlight.get(req.cacheKey) ?? this.start(req);
     return this.subscribe(entry, req);
   }
@@ -140,7 +146,7 @@ export class ProviderRunner {
   }
 
   private async runWithRetries<T>(req: RunRequest<T>, signal: AbortSignal): Promise<RunResult<T>> {
-    const retries = Math.min(Math.max(req.maxRetries ?? DEFAULT_RETRIES, 0), MAX_RETRIES);
+    const retries = req.maxRetries ?? DEFAULT_RETRIES;
     const model = req.model === undefined ? null : validateModel(req.model);
     const bin = requireSubscription(await this.deps.resolveProvider(req.provider));
     const resolution = await resolveCommand(bin, this.deps.env ?? process.env);
@@ -215,7 +221,7 @@ export class ProviderRunner {
       signal, killGraceMs: this.deps.killGraceMs,
     });
     checkExit(req.provider, res);
-    const payload = isCodex ? await extractCodexPayload(lastMessageFile) : extractClaudePayload(res);
+    const payload = isCodex ? await extractCodexPayload(lastMessageFile, MAX_OUTPUT_BYTES) : extractClaudePayload(res);
     return validatePayload(req.provider, req.schema, payload);
   }
 }

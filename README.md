@@ -73,11 +73,13 @@ Electron fuses. Provider CLIs run with fixed arguments, no shell, no write tools
 temporary directory, and without API-key environment variables. Delve runs a CLI only when it is
 signed in with a subscription; an API key, including one the CLI has stored, is reported as "not
 signed in with a subscription". On Linux and macOS each CLI runs in its own process group: timeout
-or cancellation sends the group SIGTERM, then SIGKILL after a grace period, and leftovers in the group
-are killed when the CLI exits. On Windows, `taskkill /T /F` stops the tree on timeout or cancellation
-while the CLI still runs. A run settles when the CLI exits, without waiting on pipes a descendant
-still holds. Out of scope: a descendant that deliberately leaves the process group or session
-(claude and codex do not). npm `.cmd` launchers on Windows are run through Node directly, never
+or cancellation sends the group SIGTERM, then SIGKILL after a grace period. On Windows,
+`taskkill /T /F` stops the tree on timeout or cancellation. Either way a signal is sent only while
+the CLI has not exited, so it cannot reach a reused process id (on Windows the CLI may still exit
+while taskkill starts). A run settles when the CLI exits, without waiting on pipes a descendant
+still holds. Limits: descendants that outlive the CLI's exit are not stopped, and one that leaves
+the process group or session is out of scope (claude and codex do neither). Output is capped at
+8 MiB, including Codex's final-message file. npm `.cmd` launchers on Windows are run through Node directly, never
 through a shell.
 
 ## License

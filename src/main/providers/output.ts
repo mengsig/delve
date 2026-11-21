@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { readFile } from 'node:fs/promises';
+import { open, type FileHandle } from 'node:fs/promises';
 import type { z } from 'zod';
 import type { ProviderId } from '../../shared/domain';
 import type { CaptureResult } from './process';
@@ -40,15 +40,38 @@ export function extractClaudePayload(res: CaptureResult): unknown {
   return parseJson('claude', obj.result, 'claude result text');
 }
 
-export async function extractCodexPayload(lastMessageFile: string): Promise<unknown> {
+// Reads at most maxBytes + 1 bytes, so a file that is too large (or still growing) is detected unread.
+async function readBounded(handle: FileHandle, maxBytes: number): Promise<Buffer | null> {
+  const buffer = Buffer.alloc(maxBytes + 1);
+  let filled = 0;
+  for (;;) {
+    const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
+    if (bytesRead === 0) break;
+    filled += bytesRead;
+    if (filled > maxBytes) return null;
+  }
+  assert(filled <= maxBytes, 'a bounded read never exceeds its cap');
+  return buffer.subarray(0, filled);
+}
+
+/** Reads codex's --output-last-message file, refusing one larger than `maxBytes`. */
+export async function extractCodexPayload(lastMessageFile: string, maxBytes: number): Promise<unknown> {
   assert(lastMessageFile.length > 0, 'last-message path required');
-  let text: string;
+  assert(Number.isInteger(maxBytes) && maxBytes > 0, 'maxBytes must be a positive integer');
+  let handle: FileHandle;
   try {
-    text = await readFile(lastMessageFile, 'utf8');
+    handle = await open(lastMessageFile, 'r');
   } catch (cause) {
     throw invalidOutputError('codex', 'codex wrote no final message', cause);
   }
-  return parseJson('codex', text, 'codex final message');
+  try {
+    if ((await handle.stat()).size > maxBytes) throw failedError('codex', `final message exceeded ${maxBytes} bytes`);
+    const bytes = await readBounded(handle, maxBytes);
+    if (bytes === null) throw failedError('codex', `final message exceeded ${maxBytes} bytes`);
+    return parseJson('codex', bytes.toString('utf8'), 'codex final message');
+  } finally {
+    await handle.close();
+  }
 }
 
 export function validatePayload<T>(provider: ProviderId, schema: z.ZodType<T>, payload: unknown): T {

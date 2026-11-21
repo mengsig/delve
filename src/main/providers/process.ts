@@ -57,10 +57,13 @@ function taskkillTree(pid: number): Promise<Error | null> {
 }
 
 /**
- * One CLI execution: bounded output, timeout and cancellation. POSIX runs the CLI in its own process
- * group, signalled only while the CLI is unreaped or in the tick its exit is seen, so the group id
- * cannot have been reused. Windows kills the tree with taskkill, only while the CLI still runs.
- * Out of scope: a descendant that deliberately leaves the group or session (claude and codex do not).
+ * One CLI execution: bounded output, timeout and cancellation. On timeout or cancel, POSIX sends the
+ * CLI's own process group SIGTERM, then SIGKILL after the grace; Windows runs taskkill /T /F.
+ * Signals go out only while Node has not reaped the CLI: libuv reaps and reports the exit in one
+ * synchronous step, so `running` means the pid (and, on POSIX, its group id) cannot have been reused.
+ * Limits: descendants that outlive the CLI's exit are not killed (their pipes are dropped after
+ * DRAIN_MS), and a descendant that leaves the group or session is out of scope; claude and codex do
+ * neither. On Windows the CLI may exit while taskkill starts, so taskkill may name a released pid.
  */
 class CapturedRun {
   private readonly out: Buffer[] = [];
@@ -155,13 +158,11 @@ class CapturedRun {
     this.timers.push(setTimeout(() => this.settle(this.verdict), DRAIN_MS));
   }
 
-  // Leftovers in the group are killed in the same tick the exit is seen; then pipes get a short bound.
+  // A run settles on exit; a descendant still holding the pipes only delays it by DRAIN_MS.
   private onExit(code: number | null): void {
+    assert(this.child.pid !== undefined, 'only a spawned child exits');
+    assert(!this.running, 'exit is reported after the child is reaped');
     this.code = code;
-    const pid = this.child.pid;
-    assert(pid !== undefined, 'only a spawned child exits');
-    const killError = IS_WINDOWS ? null : signalGroup(pid, 'SIGKILL');
-    if (killError) return this.settle(failedError(this.opts.provider, 'could not stop leftover processes', killError));
     this.timers.push(setTimeout(() => this.settle(this.verdict), DRAIN_MS));
   }
 }

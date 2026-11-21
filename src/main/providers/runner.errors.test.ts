@@ -20,10 +20,17 @@ describe('ProviderRunner failures', () => {
     expect(await readFile(counter, 'utf8')).toBe('3');
   });
 
-  it('caps retries at 3', async () => {
+  it('allows at most 3 retries and refuses retry or timeout values that would not bound the run', async () => {
     const counter = await counterIn();
     const { runner } = await setup({ FAKE_PROVIDER_MODE: 'invalid', FAKE_PROVIDER_COUNTER: counter });
-    await expect(runner.run(request({ maxRetries: 99 }))).rejects.toMatchObject({ code: 'PROVIDER_INVALID_OUTPUT' });
+    await expect(runner.run(request({ maxRetries: 3 }))).rejects.toMatchObject({ code: 'PROVIDER_INVALID_OUTPUT' });
+    expect(await readFile(counter, 'utf8')).toBe('4');
+    for (const maxRetries of [99, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => runner.run(request({ maxRetries, cacheKey: `r${maxRetries}` }))).toThrow(/maxRetries/);
+    }
+    for (const timeoutMs of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 31]) {
+      expect(() => runner.run(request({ timeoutMs, cacheKey: `t${timeoutMs}` }))).toThrow(/timeoutMs/);
+    }
     expect(await readFile(counter, 'utf8')).toBe('4');
   });
 
