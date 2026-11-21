@@ -116,7 +116,9 @@ describe('evidence and reuse', () => {
     expect(() => recordEvidence(db, { ...base, conceptId: portable.id, workspaceId: wsA, snapshotId: snapB })).toThrow(/different workspace/);
     expect(() => recordEvidence(db, { ...base, conceptId: portable.id, snapshotId: snapA })).toThrow(/different workspace/);
   });
+});
 
+describe('cross-workspace evidence', () => {
   it('leaves existing evidence untouched when a cross-workspace record or reset is refused', () => {
     const local = upsertConcept(db, { key: 'lease', title: 'Lease', portable: false, workspaceId: wsA });
     const snapA = bindSnapshot(db, wsA, 'aaaaaaa2');

@@ -38,3 +38,17 @@ form {
 .error {
   color: #c0392b;
 }
+dialog {
+  min-width: 360px;
+}
+dialog input {
+  width: 100%;
+  box-sizing: border-box;
+}
+[role='option'] {
+  cursor: pointer;
+  padding-inline: 6px;
+}
+.highlighted {
+  outline: 2px solid currentColor;
+}

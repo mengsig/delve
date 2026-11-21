@@ -21,7 +21,8 @@ itself and never copies your credentials. It only runs a CLI signed in with a su
 (claude.ai or ChatGPT); a CLI signed in with an API key is shown and refused, because it bills per
 use. If neither CLI is on your `PATH`, Delve shows "not found".
 
-Switch workspaces from the switcher at the top; Ctrl+K (⌘K on macOS) focuses it.
+Ctrl+K (⌘K on macOS) or the "Switch workspace" button opens the workspace switcher: type to filter,
+use the arrow keys, press Enter to switch and Escape to close.
 
 ## Develop
 

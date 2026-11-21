@@ -53,15 +53,35 @@ test('window loads hardened, adds and switches workspaces that persist', async (
   await window.getByRole('button', { name: 'Switch to Photography' }).click();
   await expect(window.getByTestId('active-workspace')).toHaveText('Active: Photography');
 
-  // R3: the shortcut focuses the workspace switcher, which then switches workspace.
+  // R3: Ctrl/Cmd+K opens the switcher dialog; typing filters, Enter switches, Escape closes.
+  const shortcut = process.platform === 'darwin' ? 'Meta+K' : 'Control+K';
+  const dialog = window.getByRole('dialog', { name: 'Switch workspace' });
+  const finder = dialog.getByRole('combobox', { name: 'Find a workspace' });
   await window.locator('body').click();
-  await window.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
-  const switcher = window.getByLabel('Switch workspace');
-  await expect(switcher).toBeFocused();
-  await switcher.selectOption({ label: 'octo/site' });
+  await window.keyboard.press(shortcut);
+  await expect(dialog).toBeVisible();
+  await expect(finder).toBeFocused();
+  await expect(dialog.getByRole('option', { selected: true })).toContainText('Photography');
+  await finder.fill('octo');
+  await expect(dialog.getByRole('option')).toHaveCount(1);
+  await window.keyboard.press('Enter');
+  await expect(dialog).toBeHidden();
   await expect(window.getByTestId('active-workspace')).toHaveText('Active: octo/site');
-  await window.getByRole('button', { name: 'Switch to Photography' }).click();
+
+  await window.keyboard.press(shortcut);
+  await expect(finder).toBeFocused();
+  await expect(finder).toHaveValue('');
+  await window.keyboard.press('ArrowDown');
+  await expect(dialog.getByRole('option', { selected: true })).toContainText('Photography');
+  await window.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(window.getByTestId('active-workspace')).toHaveText('Active: octo/site');
+
+  const opener = window.getByRole('button', { name: /Switch workspace/ });
+  await opener.click();
+  await dialog.getByRole('option', { name: 'Photography' }).click();
   await expect(window.getByTestId('active-workspace')).toHaveText('Active: Photography');
+  await expect(opener).toBeFocused();
   await app.close();
 
   const reopened = await launch();
