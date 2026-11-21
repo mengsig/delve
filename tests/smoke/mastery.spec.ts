@@ -116,3 +116,36 @@ test('guides a learner from a misconception to completion and a one-click next l
   });
   await completeNextLesson(page, directory);
 });
+
+
+test('keeps practice primary after a skipped check', async ({ desktop: { page, directory } }) => {
+  mkdirSync('.archon/evidence', { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const repo = repository(directory);
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify({ schema: 'delve.map/1', concepts,
+    edges: [{ concept: 'permissions', prerequisite: 'agents' }], recommendation: { key: 'agents', reason: 'Start here.' } }));
+  await page.locator('#source-input').fill(repo);
+  await page.getByRole('button', { name: 'Add and build map' }).click();
+  await expect(page.getByLabel('Field guide')).toContainText('Agents, tasks, and runs');
+  await page.getByRole('region', { name: 'Repository generation' }).getByRole('button', { name: 'Dismiss' }).click();
+  reply(directory, [explanation, openingCheck]);
+  await page.getByLabel('Field guide').getByRole('button', { name: /Agents, tasks, and runs/ }).click();
+  await page.getByRole('button', { name: 'Start lesson', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Always allow for this workspace' }).click();
+  await expect(page.getByRole('heading', { name: openingCheck.prompt })).toBeVisible();
+  await page.getByRole('button', { name: 'Skip this check' }).click();
+  const complete = page.getByRole('region', { name: 'Lesson complete' });
+  await expect(complete).toContainText('Not understood yet');
+  await expect(complete).toContainText('not marked understood');
+  await expect(complete.getByRole('button', { name: /Next lesson/ })).toHaveCount(0);
+  await expect(complete).not.toContainText('Recommended next');
+  await expect(complete.getByRole('button', { name: 'Keep practising' })).toHaveClass(/primary-btn/);
+  await expect(complete.getByRole('button', { name: 'Move on anyway: Permissions and isolation' })).toBeVisible();
+  await capture(page, complete, 'skip-after');
+  reply(directory, [explanation, firstCheck]);
+  await complete.getByRole('button', { name: 'Keep practising' }).click();
+  await expect(page.getByRole('heading', { name: firstCheck.prompt })).toBeVisible();
+  await page.getByRole('button', { name: 'Skip this check' }).click();
+  await complete.getByRole('button', { name: 'Move on anyway: Permissions and isolation' }).click();
+  await expect(page.getByRole('heading', { name: 'Permissions and isolation', level: 1 })).toBeVisible();
+});

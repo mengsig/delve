@@ -32,7 +32,8 @@ html[data-theme="dark"] .knowledge-legend span:nth-child(4) { color: #d5adbf; }
 .knowledge-search-results { display: flex; flex-wrap: wrap; gap: 5px; }
 .knowledge-list-heading { display: flex; justify-content: space-between; align-items: center; }
 .knowledge-list { height: 440px; overflow-y: auto; }
-.knowledge-list-row { position: absolute; left: 0; width: 100%; display: grid; gap: 5px; text-align: left; padding: 12px; border: 0; border-bottom: 1px solid var(--rule); background: transparent; color: inherit; }
+.knowledge-list-row { position: absolute; left: 0; width: 100%; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--rule); }
+.knowledge-list-select { flex: 1; min-width: 0; display: grid; gap: 5px; text-align: left; padding: 12px; border: 0; background: transparent; color: inherit; }
 .knowledge-list-row span { color: var(--dim); font-size: 12px; }
 .knowledge-empty { max-width: 560px; padding: 50px; }
 .knowledge-preview { width: min(760px, 90vw); max-height: 80vh; overflow: auto; padding: 25px; background: var(--surface); color: var(--ink); border: 1px solid var(--rule); }

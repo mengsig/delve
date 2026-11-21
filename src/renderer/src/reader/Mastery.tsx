@@ -38,15 +38,16 @@ function Completion({ props, mastery, tutor }: {
   const previous = current?.prerequisites[0] ?? path[index - 1];
   return <section className="chapter lesson-completion" aria-label="Lesson complete">
     <span className="eyebrow">Lesson complete</span>
-    <h3>{mastery.stage === 'understood' ? 'You understand this concept' : 'Check skipped'}</h3>
+    <h3>{mastery.stage === 'understood' ? 'You understand this concept' : 'Not understood yet'}</h3>
     <p>{mastery.stage === 'understood' ? current?.summary : 'This concept is not marked understood. You can return to its check anytime.'}</p>
     <div className="actions">
-      {next && <button className="primary-btn" onClick={() => props.onLesson(next.id)}>Next lesson: {next.title}</button>}
-      <button disabled={tutor.pending || !mastery.revision} onClick={() => mastery.revision && tutor.prepare({ kind: 'review', revision: mastery.revision })}>Review this lesson again</button>
+      {next && mastery.stage === 'understood' && <button className="primary-btn" onClick={() => props.onLesson(next.id)}>Next lesson: {next.title}</button>}
+      <button className={mastery.stage === 'skipped' ? 'primary-btn' : undefined} disabled={tutor.pending || !mastery.revision} onClick={() => mastery.revision && tutor.prepare({ kind: 'review', revision: mastery.revision })}>{mastery.stage === 'skipped' ? 'Keep practising' : 'Review this lesson again'}</button>
       {previous && <button onClick={() => props.onLesson(previous.id)}>Go back to {previous.title}</button>}
       <button onClick={props.onBack}>Back to the map</button>
     </div>
-    {next && <p className="smallprint">Recommended next: {next.prerequisites.some(prior => prior.id === current?.id)
+    {next && mastery.stage === 'skipped' && <p><button className="lesson-move-on" onClick={() => props.onLesson(next.id)}>Move on anyway: {next.title}</button></p>}
+    {next && mastery.stage === 'understood' && <p className="smallprint">Recommended next: {next.prerequisites.some(prior => prior.id === current?.id)
       ? `It builds on ${current?.title}. ` : 'It is ready to explore. '}{next.summary}</p>}
   </section>;
 }

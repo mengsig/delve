@@ -18,11 +18,14 @@ A click, Enter to submit or a keyboard shortcut counts as one action. Typing the
 | Atlas → another workspace | 2 | **1** | Direct workspace buttons replace opening a picker first. The full list remains searchable. |
 | Go to Atlas, Changes or Progress | 1 | **1 each** | Persistent header actions also keep the selected change when returning to Changes. |
 | Open global Knowledge | Not available | **1** | The header opens the cross-workspace graph; Ctrl/⌘-K also finds Knowledge. |
+| Learned list → lesson | 2 | **1** | Each row opens its lesson directly; selecting the row still focuses the concept. |
 | Selected concept → lesson or review | Not available | **1 each** | The detail panel opens its lesson or review directly; a new model request still needs consent. |
 | Command palette | Shortcut, type, Enter for workspaces only | **1 shortcut**, then type + Enter | Ctrl/⌘-K searches workspaces, primary views, Terrain, Folio, setup and recent lessons across workspaces. Escape returns focus to the opener. |
 | Home → last lesson, environment or change | No direct action | **1 each** | Continue restores the workspace, depth and destination. For a lab it selects and focuses the saved block. This also works after restart. |
 | Approve a tutor request | 1 approval after opening review | **1 approval** | Allow once or allow future tutoring here with this provider. Revoke from the reader. Inspect exact input in one click. |
 | Approve a repository source request | 1 approval after opening review | **1 approval** | See provider, files and bytes first. Optional remembered consent is separate for maps and change lessons. Exact request is one click away. |
+
+Next lesson is recommended only after mastery. After a skip, the learner can keep practising or explicitly choose “Move on anyway” to open the next lesson.
 
 ## Other core journeys
 

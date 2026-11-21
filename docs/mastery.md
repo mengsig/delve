@@ -18,7 +18,7 @@ tutor teaches the relevant connection and gives a fresh written check in a diffe
 When the budget runs out, the learner can review or skip. Review starts a fresh round with a
 written applied check and resets its attempt budget. Learners can also review an understood or
 skipped lesson. Skip finishes the lesson without recording demonstrated mastery. Delve offers
-further learning choices once the learner understands or skips the lesson.
+the next lesson as a recommendation only after mastery. After a skip, continuing practice is the primary action; the next lesson is available only through an explicit “Move on anyway” link.
 
 Delve saves the current question, stage, and attempt counts locally with the lesson source and
 depth. It writes a grade, transcript, and evidence in one transaction. An answer approved for an

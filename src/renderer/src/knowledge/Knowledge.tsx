@@ -71,7 +71,7 @@ function KnowledgePage({ graph, refresh, onOpen }: Props & { graph: GlobalKnowle
       <label>Depth <select value={filters.depth} onChange={e => set('depth', e.target.value)}><option value="">All depths</option><option value="high">High level</option><option value="medium">Medium</option><option value="low">Deep</option></select></label>
     </div>
     <div className="knowledge-body"><div className="knowledge-main">
-      {showList ? <LearnedList graph={graph} concepts={learned.filter(c => visible.has(c.id))} group={filters.group} setGroup={value => set('group', value)} onSelect={setSelected} />
+      {showList ? <LearnedList graph={graph} concepts={learned.filter(c => visible.has(c.id))} group={filters.group} setGroup={value => set('group', value)} onSelect={setSelected} onOpen={onOpen} />
         : <><KnowledgeMap graph={graph} selected={selected} visible={visible} focus={focus} onSelect={setSelected} />
           <p className="knowledge-legend"><span>● Understood: H high level, M medium, D deep</span><span>● In progress</span><span>● Not started</span><span>● Skipped</span><span>◎ Shared across workspaces</span><span>— Prerequisite</span><span>╌ Transfer</span></p>
           <div className="knowledge-key" aria-label="Workspace colours"><span>Node rings show workspace membership:</span>{workspaces.map(w => <button key={w.workspaceId} onClick={() => set('workspace', filters.workspace === w.workspaceId ? '' : w.workspaceId)}><span style={{ color: workspaceColor(w.workspaceId) }}>●</span> {w.workspaceName}</button>)}</div></>}
@@ -82,7 +82,7 @@ function KnowledgePage({ graph, refresh, onOpen }: Props & { graph: GlobalKnowle
   </section>;
 }
 
-function LearnedList({ graph, concepts, group, setGroup, onSelect }: { graph: GlobalKnowledgeGraph; concepts: KnowledgeConcept[]; group: boolean; setGroup: (value: boolean) => void; onSelect: (id: number) => void }) {
+function LearnedList({ graph, concepts, group, setGroup, onSelect, onOpen }: { graph: GlobalKnowledgeGraph; concepts: KnowledgeConcept[]; group: boolean; setGroup: (value: boolean) => void; onSelect: (id: number) => void; onOpen: Props['onOpen'] }) {
   const [scroll, setScroll] = useState(0);
   const rows = useMemo(() => {
     const sorted = [...concepts].sort((a, b) => (b.learnedAt ?? '').localeCompare(a.learnedAt ?? ''));
@@ -102,10 +102,15 @@ function LearnedList({ graph, concepts, group, setGroup, onSelect }: { graph: Gl
   const rowHeight = 76; const first = Math.min(Math.max(0, rows.length - 1), Math.max(0, Math.floor(scroll / rowHeight) - 3)); const count = 15;
   return <><div className="knowledge-list-heading"><h2>Everything I’ve learned</h2><label><input type="checkbox" checked={group} onChange={e => setGroup(e.target.checked)} /> Group by workspace</label></div>
     <div className="knowledge-list" onScroll={e => setScroll(e.currentTarget.scrollTop)}><div style={{ height: rows.length * rowHeight, position: 'relative' }}>
-      {rows.slice(first, first + count).map(({ concept, workspace }, index) => <button className="knowledge-list-row" key={`${concept.id}-${workspace}`}
-        style={{ top: (first + index) * rowHeight, height: rowHeight }} onClick={() => onSelect(concept.id)}>
-        <strong>{concept.title}</strong><span>{concept.masteredDepth} depth · {concept.learnedAt ? new Date(concept.learnedAt).toLocaleDateString() : 'Date unavailable'} · {workspace}{transfers.get(concept.id)?.length ? ` · Transfers: ${transfers.get(concept.id)!.join(', ')}` : ''}</span>
-      </button>)}</div>{!rows.length && <p>No understood concepts match these filters yet.</p>}</div></>;
+      {rows.slice(first, first + count).map(({ concept, workspace }, index) => {
+        const membership = concept.memberships.find(member => member.workspaceId === concept.learnedWorkspaceId) ?? concept.memberships[0];
+        return <div className="knowledge-list-row" key={`${concept.id}-${workspace}`} style={{ top: (first + index) * rowHeight, height: rowHeight }}>
+          <button className="knowledge-list-select" onClick={() => onSelect(concept.id)}>
+            <strong>{concept.title}</strong><span>{concept.masteredDepth} depth · {concept.learnedAt ? new Date(concept.learnedAt).toLocaleDateString() : 'Date unavailable'} · {workspace}{transfers.get(concept.id)?.length ? ` · Transfers: ${transfers.get(concept.id)!.join(', ')}` : ''}</span>
+          </button>
+          {membership && <button onClick={() => onOpen(membership.workspaceId, concept.id, 'lesson', concept.masteredDepth ?? undefined)} aria-label={`Open lesson: ${concept.title}`}>Open lesson</button>}
+        </div>;
+      })}</div>{!rows.length && <p>No understood concepts match these filters yet.</p>}</div></>;
 }
 
 function Detail({ graph, concept, focused, onFocus, onSelect, onOpen, refresh, onError }: {
