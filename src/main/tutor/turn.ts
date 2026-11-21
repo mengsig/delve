@@ -13,10 +13,10 @@ import { prepareTurn, type PreparedTurn } from './prompt';
 import { validateTurn, type Generate, type TutorReply } from './provider';
 
 function saveOpening(db: Db, turn: PreparedTurn, lesson: Document) {
-  const { context, cacheKey, preview, request } = turn;
+  const { context, cacheKey, cacheModel, request } = turn;
   const source = context.snapshot ?? (context.demo ? 'Field study · 01' : undefined);
   return saveLessonInTransaction(db, { ...context, snapshotId: context.snapshotId ?? undefined, cacheKey,
-    model: preview.model, provider: request.provider, schemaVersion: lesson.schema, body: { ...lesson, source } }).id;
+    model: cacheModel, provider: request.provider, schemaVersion: lesson.schema, body: { ...lesson, source } }).id;
 }
 
 function reuseOpening(db: Db, turn: PreparedTurn): boolean {

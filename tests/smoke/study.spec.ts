@@ -1,6 +1,33 @@
 import { expect } from '@playwright/test';
 import { test } from './desktop';
 
+for (const [workspace, marker, label] of [
+  ['Archon', 'Write fencing', 'Event journal'],
+  ['Relay', 'Retry policy', 'Event journal'],
+  ['Photography', 'Shutter speed', 'Sensor gain'],
+] as const) {
+  test(`selects ${workspace} Terrain concepts by clicking the marker and label`, async ({ desktop: { page } }) => {
+    if (workspace !== 'Archon') {
+      await page.getByRole('button', { name: /^Switch workspace,/ }).click();
+      await page.getByRole('option', { name: new RegExp(workspace) }).click();
+    }
+    const terrain = page.getByRole('region', { name: `${workspace} terrain` });
+    const inspector = page.getByRole('region', { name: 'Selected concept' }).locator('[aria-live]');
+    const markerButton = terrain.getByRole('button', { name: new RegExp(`^${marker},`) });
+    const labelButton = terrain.getByRole('button', { name: new RegExp(`^${label},`) });
+
+    await expect(markerButton).toHaveAttribute('aria-pressed', 'false');
+    await markerButton.click({ timeout: 5_000 });
+    await expect(markerButton).toHaveAttribute('aria-pressed', 'true');
+    await expect(inspector).toHaveText(marker);
+
+    await expect(labelButton).toHaveAttribute('aria-pressed', 'false');
+    await labelButton.getByText(label, { exact: true }).click({ timeout: 5_000 });
+    await expect(labelButton).toHaveAttribute('aria-pressed', 'true');
+    await expect(inspector).toHaveText(label);
+  });
+}
+
 test('navigates the same graph by keyboard on the terrain and in Folio', async ({ desktop: { page } }) => {
   const nodes = page.locator('.react-flow__node');
   await expect(nodes).toHaveCount(6);
@@ -11,10 +38,16 @@ test('navigates the same graph by keyboard on the terrain and in Folio', async (
   const start = await transform();
   await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
   await expect.poll(transform).not.toBe(start);
-  await page.getByRole('button', { name: 'Fit map', exact: true }).click();
+  const fit = page.getByRole('button', { name: 'Fit map', exact: true });
+  await fit.click();
+  await page.keyboard.press('Tab');
+  const firstNode = nodes.getByRole('button').first();
+  await expect(firstNode).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(firstNode).toHaveAttribute('aria-pressed', 'true');
   const journal = nodes.getByRole('button', { name: /^Event journal,/ });
   await journal.focus();
-  await journal.press('Enter');
+  await page.keyboard.press('Enter');
   await expect(inspector).toContainText('Event journal');
   await expect(nodes.getByRole('button', { name: /Worker leases,.*Recommended next/ })).toHaveClass(/next/);
   await page.getByRole('button', { name: 'Ledger', exact: true }).click();
@@ -22,6 +55,13 @@ test('navigates the same graph by keyboard on the terrain and in Folio', async (
   await expect(ledger).toContainText('Durable queue');
   await expect(ledger).toContainText('Requires');
   await expect(inspector).toContainText('Event journal');
+  const queueRow = ledger.getByRole('button', { name: /^Durable queue/ });
+  await queueRow.focus();
+  await page.keyboard.press('Space');
+  await expect(queueRow).toHaveAttribute('aria-pressed', 'true');
+  await expect(inspector.locator('[aria-live]')).toHaveText('Durable queue');
+  await ledger.getByRole('button', { name: /^Event journal/ }).focus();
+  await page.keyboard.press('Enter');
   await inspector.getByRole('button', { name: 'Open lesson →' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Event journal' })).toBeVisible();
   await page.getByRole('button', { name: '← Back to atlas' }).click();

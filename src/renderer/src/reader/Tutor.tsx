@@ -95,13 +95,17 @@ function RequestPreview({ preview, approve, close }: { preview: Preview; approve
     return () => element?.close();
   }, []);
   const { data, request } = preview;
+  const offline = request.provider === 'demo';
+  const model = offline ? data.model : data.modelSource === 'codex-config' ? `${data.model} · from Codex config` :
+    data.model === null ? `${request.provider === 'codex' ? 'Codex' : 'Claude'} default` : `Requested model: ${data.model}`;
   return <dialog ref={dialog} className="reader-preview" aria-labelledby="preview-title" onCancel={close}>
     <span className="eyebrow">Provider request / {request.provider}</span>
-    <h3 id="preview-title">Review what will be sent</h3>
-    <p>{data.model} · {data.bytes.toLocaleString()} bytes · {data.files.length ? data.files.join(', ') : 'No files attached'}</p>
+    <h3 id="preview-title">{offline ? 'Review local tutor input' : 'Review what will be sent'}</h3>
+    <p>{model} · {data.bytes.toLocaleString()} bytes · {data.files.length ? data.files.join(', ') : 'No files attached'}</p>
     <pre tabIndex={0}>{data.prompt}</pre>
-    <p className="smallprint">Continue to share this request and subsequent turns with this provider in this workspace for this session.</p>
-    <div className="actions"><button className="primary-btn" onClick={approve}>Allow and continue</button>
+    <p className="smallprint">{offline ? 'This tutor runs locally.' :
+      'Allow Delve to share this prompt and subsequent turns with this provider in this workspace for this session.'}</p>
+    <div className="actions"><button className="primary-btn" onClick={approve}>{offline ? 'Continue' : 'Allow and continue'}</button>
       <button onClick={close}>Close preview</button></div>
   </dialog>;
 }

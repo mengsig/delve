@@ -1,4 +1,9 @@
 import assert from 'node:assert';
+import type { ProviderId } from '../../shared/domain';
+
+export const MODEL_OVERRIDE_ENV: Record<ProviderId, string> = {
+  codex: 'DELVE_CODEX_MODEL', claude: 'DELVE_CLAUDE_MODEL',
+};
 
 const STRIPPED_ENV = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY'];
 

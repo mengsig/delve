@@ -13,7 +13,7 @@ interface Desktop {
 function launch(userData: string, fakeBin?: string): Promise<ElectronApplication> {
   const providerEnv = fakeBin ? shimEnv(fakeBin, { FAKE_PROVIDER_RESPONSE_FILE: join(userData, 'reply.json'),
     FAKE_PROVIDER_GATE: join(userData, 'gate'), FAKE_PROVIDER_RECORD: join(userData, 'request.json') }) : { PATH: '/nonexistent' };
-  const env = { ...process.env, ...providerEnv, DELVE_USER_DATA_DIR: userData };
+  const env = { ...process.env, ...providerEnv, CODEX_HOME: join(userData, 'codex-home'), DELVE_USER_DATA_DIR: userData };
   delete (env as NodeJS.ProcessEnv).ELECTRON_RENDERER_URL;
   return electron.launch({ args: [resolve(__dirname, '../../out/main/index.js')], env, timeout: 30_000 });
 }

@@ -40,7 +40,7 @@ export function createGenerator(runner = createTutorRunner()): Generate {
   return async (turn, signal) => {
     const provider = turn.request.provider;
     if (provider === 'demo') return demoTurn(turn);
-    const result = await runner.run({ provider, model: turn.preview.model, prompt: turn.preview.prompt,
+    const result = await runner.run({ provider, model: turn.preview.model ?? undefined, prompt: turn.preview.prompt,
       cacheKey: turn.preview.token, schema: replySchema, jsonSchema: replyJsonSchema, signal });
     return result.value;
   };
