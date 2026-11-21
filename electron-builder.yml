@@ -24,6 +24,8 @@ linux:
     - AppImage
     - deb
   category: Education
+  mimeTypes:
+    - x-scheme-handler/delve
   maintainer: mengsig <https://github.com/mengsig>
   artifactName: ${productName}-${version}-${arch}.${ext}
 mac:
@@ -39,3 +41,7 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
 publish: null
+protocols:
+  - name: Delve learning intent
+    schemes:
+      - delve

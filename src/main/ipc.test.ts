@@ -10,6 +10,8 @@ import { dispatch, registerIpc, type IpcHandlers, type IpcRegistrar } from './ip
 
 const workspace = { id: '0b0f5f56-1d3c-4a5e-9a51-3c8f4c2f3e10', kind: 'topic', name: 'Chess', source: 'chess', createdAt: 'now', lastOpenedAt: null } as const;
 
+function unexpected(): never { throw new Error('Unexpected repository request'); }
+
 function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
   return {
     'workspaces:list': () => ({ workspaces: [workspace], activeId: workspace.id }),
@@ -30,6 +32,8 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
     'lab:open': () => { throw new Error('Unexpected activity'); },
     'lab:input': () => { throw new Error('Unexpected activity input'); },
     'lab:close': () => false,
+    'repo:files': unexpected, 'repo:preview': unexpected, 'repo:generate': unexpected, 'repo:cancel': unexpected,
+    'repo:changes': unexpected, 'repo:saved': unexpected, 'learn:pending': unexpected, 'learn:resolve': unexpected,
     ...overrides,
   };
 }

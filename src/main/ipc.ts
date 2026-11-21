@@ -1,3 +1,4 @@
+import { repoSchemas } from './repository/schemas';
 import { tutorSchemas } from './tutor/ipc';
 import { readerSchemas } from './reader/ipc';
 import { labSchemas } from './environment/ipc';
@@ -22,6 +23,7 @@ export const REQUEST_SCHEMAS: { [C in IpcChannel]: z.ZodType<IpcRequest<C>> } = 
   'workspaces:pick-folder': z.null(),
   'providers:detect': z.null(),
   ...readerSchemas,
+  ...repoSchemas,
   ...tutorSchemas,
   ...labSchemas,
   'graph:read': z.strictObject({ workspaceId }),

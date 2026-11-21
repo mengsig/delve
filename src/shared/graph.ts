@@ -31,6 +31,7 @@ export interface WorkspaceGraph {
   edges: GraphEdge[];
   evidence: GraphEvidence[];
   snapshot: string | null;
+  baselineCommit?: string;
   demo: boolean;
   suggestions?: Partial<Record<Depth, { conceptId: number; reason: string }>>;
 }

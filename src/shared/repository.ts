@@ -1,0 +1,73 @@
+import type { Depth, ProviderId, Workspace } from './domain';
+
+export interface ChangeRef {
+  kind: 'commit' | 'pr';
+  ref: string;
+}
+
+export interface RepositoryFile {
+  path: string;
+  bytes: number;
+}
+
+export interface RepositoryInventory {
+  commit: string;
+  files: RepositoryFile[];
+  partial: boolean;
+}
+
+export type RepoSelection = ChangeRef | { kind: 'baseline'; commit: string; paths: string[] };
+
+export interface RepoRequest {
+  workspaceId: string;
+  depth: Depth;
+  provider: ProviderId;
+  selection: RepoSelection;
+}
+
+export interface RepoPreview {
+  token: string;
+  model: string;
+  prompt: string;
+  bytes: number;
+  files: string[];
+  commit: string;
+  title: string;
+  partial: boolean;
+}
+
+export interface ChangeBrief {
+  conceptId: number;
+  title: string;
+  summary: string;
+  what: string;
+  why: string;
+  before: string;
+  after: string;
+  commit: string;
+  files: string[];
+  partial: boolean;
+  touched: { id: number; title: string }[];
+  recommendation: { conceptId: number; reason: string };
+}
+
+export interface LearnIntent {
+  id: string;
+  workspace: string;
+  kind: 'pr' | 'commit' | 'proposed';
+  ref: string;
+}
+
+export type GenerationResult = { kind: 'baseline' } | { kind: 'change'; brief: ChangeBrief };
+export type SavedRequest = Omit<RepoRequest, 'selection'> & ChangeRef;
+
+export interface RepositoryContract {
+  'repo:files': { request: { workspaceId: string }; response: RepositoryInventory };
+  'repo:preview': { request: RepoRequest; response: RepoPreview };
+  'repo:generate': { request: { token: string; requestId: string }; response: GenerationResult };
+  'repo:cancel': { request: { requestId: string }; response: boolean };
+  'repo:changes': { request: { workspaceId: string }; response: { changes: (ChangeRef & { title: string })[]; warning: string | null } };
+  'repo:saved': { request: SavedRequest; response: ChangeBrief | null };
+  'learn:pending': { request: null; response: LearnIntent | null };
+  'learn:resolve': { request: { id: string; accept: boolean }; response: Workspace | null };
+}
