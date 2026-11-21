@@ -135,3 +135,5 @@
 .reader-preview::backdrop { background: #10241b73; }
 .reader-preview .smallprint { margin-block: 12px; }
 .reader-recommendation h4, .impact h4 { margin: 6px 0; }
+
+.reader-comparison .note + .note { margin-top: 0; }

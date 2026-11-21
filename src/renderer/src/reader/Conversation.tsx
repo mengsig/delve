@@ -50,7 +50,11 @@ export function Conversation({ messages, earlierMessages }: { messages: ReaderMe
   </section>;
 }
 
-export function Composer({ tutor, draft, setDraft }: { tutor: ReturnType<typeof useTutor>; draft: string; setDraft: (text: string) => void }) {
+export function Composer({ tutor, draft, setDraft, focusOnOpen }: {
+  tutor: ReturnType<typeof useTutor>; draft: string; setDraft: (text: string) => void; focusOnOpen?: boolean;
+}) {
+  const input = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { if (focusOnOpen) input.current?.focus(); }, [focusOnOpen]);
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!draft.trim() || tutor.pending) return;
@@ -58,7 +62,7 @@ export function Composer({ tutor, draft, setDraft }: { tutor: ReturnType<typeof 
   }
   return <form className="reader-composer" onSubmit={submit}>
     <label className="eyebrow" htmlFor="reader-question">{tutor.provider === 'demo' ? 'Ask the demo tutor' : 'Ask your tutor'}</label>
-    <textarea id="reader-question" rows={1} maxLength={4000} placeholder="Ask a question or request a different example…"
+    <textarea ref={input} id="reader-question" rows={1} maxLength={4000} placeholder="Ask a question or request a different example…"
       value={draft} onChange={event => setDraft(event.target.value)}
       onKeyDown={event => {
         if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {

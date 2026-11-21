@@ -1,4 +1,4 @@
-import type { Depth } from '../../shared/domain';
+import type { Depth, Workspace } from '../../shared/domain';
 
 export const DEMO_CONCEPTS = {
   queue: ['Durable queue', 'A task survives the worker that accepted it.'],
@@ -57,3 +57,7 @@ export const DEMO_WORKSPACES: readonly DemoWorkspace[] = [
     evidence: [['light', ['high', 'medium']], ['frame', ['high', 'medium']]],
   },
 ];
+
+export function matchesDemo(workspace: Workspace): boolean {
+  return DEMO_WORKSPACES.some(demo => demo.id === workspace.id && workspace.source === `Demo: ${demo.title}`);
+}

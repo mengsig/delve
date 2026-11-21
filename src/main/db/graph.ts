@@ -6,12 +6,13 @@ import { listWorkspaceConcepts } from './concepts';
 import type { Db } from './connection';
 import { isDemoWorkspace } from './demo';
 import { listWorkspaceEvidence } from './evidence';
+import { learningSnapshot } from './repository-snapshot';
 import { getWorkspace } from './workspaces';
 
-export function readWorkspaceGraph(db: Db, workspaceId: string): WorkspaceGraph {
+export function readWorkspaceGraph(db: Db, workspaceId: string, includeChangeLessons = false): WorkspaceGraph {
   const workspace = getWorkspace(db, workspaceId);
   if (!workspace) throw new DomainError('WORKSPACE_NOT_FOUND', 'That workspace no longer exists.');
-  const concepts = listWorkspaceConcepts(db, workspaceId)
+  const concepts = listWorkspaceConcepts(db, workspaceId, includeChangeLessons)
     .sort((a, b) => a.id - b.id)
     .map(({ id, key, title, summary, portable }) => ({ id, key, title, summary, portable }));
   const ids = new Set(concepts.map(({ id }) => id));
@@ -23,25 +24,43 @@ export function readWorkspaceGraph(db: Db, workspaceId: string): WorkspaceGraph 
      ORDER BY e.concept_id, e.prerequisite_id`,
   ).all(workspaceId) as unknown as GraphEdge[];
   const edges = edgeRows.filter(({ conceptId, prerequisiteId }) => ids.has(conceptId) && ids.has(prerequisiteId));
-  const evidence = listWorkspaceEvidence(db, workspaceId);
+  const evidence = listWorkspaceEvidence(db, workspaceId, includeChangeLessons);
   assert.ok(evidence.every((row) => ids.has(row.conceptId)), 'evidence must be in the workspace graph');
-  const snapshot = db.prepare(
-    'SELECT commit_sha FROM snapshots WHERE workspace_id = ? ORDER BY created_at DESC, id DESC LIMIT 1',
-  ).get(workspaceId) as { commit_sha: string } | undefined;
+  const snapshot = learningSnapshot(db, workspaceId);
+  const changeSuggestions = suggestedChanges(db, workspaceId);
   const suggestions = tutorSuggestions(db, workspaceId, ids);
-  const graph = { workspaceId, concepts, edges, evidence, snapshot: snapshot?.commit_sha ?? null, demo: isDemoWorkspace(db, workspaceId) };
+  const baseline = db.prepare(`SELECT ref FROM repository_generations WHERE workspace_id = ? AND kind = 'baseline' ORDER BY last_used DESC LIMIT 1`).get(workspaceId);
+  const graph = { ...(Object.keys(changeSuggestions).length ? { changeSuggestions } : {}), ...(baseline ? { baselineCommit: String(baseline.ref) } : {}), workspaceId, concepts, edges, evidence, snapshot: snapshot?.commit_sha ?? null, demo: isDemoWorkspace(db, workspaceId) };
   return Object.keys(suggestions).length ? { ...graph, suggestions } : graph;
 }
 
+function suggestedChanges(db: Db, workspaceId: string): NonNullable<WorkspaceGraph['changeSuggestions']> {
+  const query = db.prepare(`SELECT kind, ref, reason, json_extract(result, '$.brief.title') AS title,
+    json_extract(proposal, '$.recommendation.key') AS target FROM repository_generations
+    WHERE workspace_id = ? AND depth = ? AND kind <> 'baseline' ORDER BY last_used DESC LIMIT 1`);
+  const suggestions: NonNullable<WorkspaceGraph['changeSuggestions']> = {};
+  for (const depth of DEPTHS) {
+    const row = query.get(workspaceId, depth);
+    if (row && row.target === null) {
+      assert.ok(row.kind === 'pr' || row.kind === 'commit');
+      assert.ok(typeof row.title === 'string' && typeof row.reason === 'string' && typeof row.ref === 'string');
+      suggestions[depth] = { kind: row.kind, ref: row.ref, title: row.title, reason: row.reason };
+    }
+  }
+  return suggestions;
+}
+
 function tutorSuggestions(db: Db, workspaceId: string, ids: Set<number>): NonNullable<WorkspaceGraph['suggestions']> {
-  const latest = db.prepare(`SELECT json_extract(m.body, '$.recommendation.targetId') AS target,
-    json_extract(m.body, '$.recommendation.reason') AS reason
+  const latest = db.prepare(`SELECT target, reason FROM (SELECT json_extract(m.body, '$.recommendation.targetId') AS target,
+    json_extract(m.body, '$.recommendation.reason') AS reason, m.created_at AS at, m.id AS seq
     FROM conversations c JOIN messages m ON m.conversation_id = c.id
     WHERE c.workspace_id = ? AND c.depth = ? AND m.role IN ('tutor', 'system') AND json_type(m.body, '$.recommendation') = 'object'
-    ORDER BY m.id DESC LIMIT 1`);
+    UNION ALL SELECT next_concept, reason, created_at, last_used FROM repository_generations WHERE workspace_id = ? AND depth = ?
+    ) WHERE target IN (SELECT concept_id FROM workspace_concepts WHERE workspace_id = ? AND on_atlas = 1)
+    ORDER BY at DESC, seq DESC LIMIT 1`);
   const suggestions: NonNullable<WorkspaceGraph['suggestions']> = {};
   for (const depth of DEPTHS) {
-    const row = latest.get(workspaceId, depth);
+    const row = latest.get(workspaceId, depth, workspaceId, depth, workspaceId);
     if (typeof row?.target === 'number' && ids.has(row.target) && typeof row.reason === 'string' && row.reason.trim()) {
       suggestions[depth] = { conceptId: row.target, reason: row.reason };
     }
@@ -64,7 +83,7 @@ export function readWorkspaceCoverage(db: Db): WorkspaceCoverage[] {
        SUM(CASE WHEN e.depth = 'medium' THEN 1 ELSE 0 END) AS medium,
        SUM(CASE WHEN e.depth = 'low' THEN 1 ELSE 0 END) AS low
      FROM workspaces w
-     LEFT JOIN workspace_concepts wc ON wc.workspace_id = w.id
+     LEFT JOIN workspace_concepts wc ON wc.workspace_id = w.id AND wc.on_atlas = 1
      LEFT JOIN concepts c ON c.id = wc.concept_id AND (c.portable = 1 OR c.workspace_id = w.id)
      LEFT JOIN evidence e ON e.concept_id = c.id AND e.status = 'demonstrated'
        AND (c.portable = 1 OR e.workspace_id = w.id)

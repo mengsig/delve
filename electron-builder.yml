@@ -39,3 +39,7 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
 publish: null
+protocols:
+  - name: Delve learning intent
+    schemes:
+      - delve

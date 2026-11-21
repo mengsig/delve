@@ -1,3 +1,4 @@
+import type { ChangeRef } from './repository';
 import type { Depth } from './domain';
 
 export interface GraphConcept {
@@ -31,7 +32,9 @@ export interface WorkspaceGraph {
   edges: GraphEdge[];
   evidence: GraphEvidence[];
   snapshot: string | null;
+  baselineCommit?: string;
   demo: boolean;
+  changeSuggestions?: Partial<Record<Depth, ChangeRef & { title: string; reason: string }>>;
   suggestions?: Partial<Record<Depth, { conceptId: number; reason: string }>>;
 }
 

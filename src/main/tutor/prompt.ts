@@ -6,16 +6,24 @@ import type { Db } from '../db/connection';
 import { readWorkspaceGraph } from '../db/graph';
 import { lessonCacheKey } from '../db/lessons';
 import { selectTutorModel } from '../providers/model';
+import { validateModel } from '../providers/argv';
 import { readHistory } from '../reader/conversation';
 import { publicBlocks } from '../reader/document';
 import { lessonContext, storedLesson } from '../reader/stored-lesson';
 import { checkResponse } from './assessment';
 
-const depthGuide = {
+export const depthGuide = {
   high: 'Teach what this is and why it matters in plain language.',
   medium: 'Explain how the parts interact, at the module or technique level.',
   low: 'Work through protocol, implementation details or exact technique and boundary conditions.',
 };
+
+export function modelFor(provider: TutorRequest['provider']): string {
+  if (provider === 'demo') return 'field-tutor-v1';
+  const name = provider === 'codex' ? process.env.DELVE_CODEX_MODEL ?? 'gpt-5.4'
+    : process.env.DELVE_CLAUDE_MODEL ?? 'claude-sonnet-4-6';
+  return validateModel(name);
+}
 
 const instructions = [
   'You are Delve, a conversational tutor. Return a delve.lesson/1 document inside the requested response.',

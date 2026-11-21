@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, isAbsolute, normalize } from 'node:path';
 import { WORKSPACE_KINDS, type AddWorkspaceInput, type Workspace, type WorkspaceKind, type WorkspaceList } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
+import { matchesDemo } from './demo-fixtures';
 import { nowIso, transaction, type Db } from './connection';
 
 const GITHUB_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -73,14 +74,13 @@ export function getWorkspace(db: Db, id: string): Workspace | null {
 }
 
 /** Adds a workspace and makes it active. Adding the same source twice is rejected. */
-export function addWorkspace(db: Db, input: AddWorkspaceInput): Workspace {
+export function addWorkspace(db: Db, input: AddWorkspaceInput, id: string = randomUUID()): Workspace {
   const resolved = resolveWorkspaceSource(input);
   return transaction(db, () => {
     const existing = db
       .prepare('SELECT name FROM workspaces WHERE kind = ? AND source = ?')
       .get(resolved.kind, resolved.source) as { name: string } | undefined;
     if (existing) throw new DomainError('DUPLICATE_WORKSPACE', `"${existing.name}" is already in your workspaces.`);
-    const id = randomUUID();
     const now = nowIso();
     db.prepare('INSERT INTO workspaces (id, kind, name, source, created_at, last_opened_at) VALUES (?, ?, ?, ?, ?, ?)').run(
       id,
@@ -112,7 +112,7 @@ export function listWorkspaces(db: Db): WorkspaceList {
   const workspaces = rows.map(toWorkspace);
   const active = db.prepare('SELECT value FROM app_state WHERE key = ?').get(ACTIVE_WORKSPACE_KEY) as { value: string } | undefined;
   const activeId = active && workspaces.some((w) => w.id === active.value) ? active.value : null;
-  return { workspaces, activeId };
+  return { workspaces, activeId, hasUserWorkspace: workspaces.some(workspace => !matchesDemo(workspace)) };
 }
 
 export function isActiveWorkspace(db: Db, id: string): boolean {

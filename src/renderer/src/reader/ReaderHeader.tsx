@@ -16,12 +16,13 @@ interface HeaderProps extends Pick<ReaderProps, 'depth' | 'onDepth' | 'onBack' |
   title: string;
   summary: string;
   showDepth?: boolean;
+  backLabel?: string;
 }
 
-export function ReaderHeader({ depth, onDepth, onBack, workspace, label, title, summary, showDepth = true }: HeaderProps) {
+export function ReaderHeader({ depth, onDepth, onBack, workspace, label, title, summary, showDepth = true, backLabel = '← Back to atlas' }: HeaderProps) {
   const scopes = workspace.kind === 'topic' ? ['Intent', 'Technique', 'Settings'] : ['What & why', 'Module mechanics', 'Protocol detail'];
   return <>
-    <button className="back" onClick={onBack}>← Back to atlas</button>
+    <button className="back" onClick={onBack}>{backLabel}</button>
     <header className="intro">
       <span className="eyebrow">{label}</span>
       <h1>{title}</h1>

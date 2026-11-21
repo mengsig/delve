@@ -16,6 +16,43 @@
 .source-control button {
   flex: none;
 }
+.setup-form {
+  min-width: 0;
+}
+.setup-form .actions {
+  flex-wrap: wrap;
+}
+.setup-form .attach-preview {
+  margin-bottom: 0;
+}
+.attach-files {
+  margin-top: 16px;
+  border-top: 1px solid var(--rule);
+  padding-top: 12px;
+}
+.attach-files summary, .attach-preview summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.attach-file-names {
+  max-height: 150px;
+  overflow-y: auto;
+  padding-inline-start: 24px;
+}
+.attach-feedback button, .detect-cli {
+  margin-top: 8px;
+}
+.setup-form .repository-files label {
+  flex-wrap: wrap;
+}
+@media (max-width: 460px) {
+  .source-control {
+    flex-wrap: wrap;
+  }
+  .source-control input {
+    flex-basis: 100%;
+  }
+}
 .provider-state {
   display: block;
   color: var(--dim);
