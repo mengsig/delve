@@ -184,6 +184,32 @@ test('keeps commit history usable when GitHub has no PRs or needs sign-in', asyn
   await expect(await openTab(page, 'Files changed')).toContainText('+  const attempts = 3;');
 });
 
+test('selects the row under the pointer after scrolling deep into history', async ({ desktop }) => {
+  const { directory, page } = desktop;
+  const { path } = createExplorerFixture(directory);
+  await mapFixture(page, path, directory);
+  const timeline = page.locator('#change-timeline');
+  for (let i = 0; i < 10; i++) {
+    const height = await timeline.evaluate(element => element.scrollHeight);
+    if (height > 11500) break;
+    await page.getByRole('button', { name: 'Load more changes' }).click();
+    await expect.poll(() => timeline.evaluate(element => element.scrollHeight)).toBeGreaterThan(height);
+  }
+  await page.getByLabel('Search history').focus();
+  await timeline.scrollIntoViewIfNeeded();
+  await timeline.evaluate(element => { element.scrollTop = 10917; });
+  const row = page.getByRole('option', { name: /Record dispatch sample 47\b/ });
+  await expect(row).toBeInViewport();
+  const before = await timeline.evaluate(element => element.scrollTop);
+  await row.click();
+  await expect(page.getByRole('region', { name: 'Selected change' }).getByRole('heading', { name: 'Record dispatch sample 47' })).toBeVisible();
+  expect(await timeline.evaluate(element => element.scrollTop)).toBe(before);
+  await timeline.focus();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('region', { name: 'Selected change' }).getByRole('heading', { name: 'Record dispatch sample 46' })).toBeVisible();
+});
+
 test('reloads a moved PR and keeps the saved lesson readable offline', async ({ desktop }) => {
   const { directory, page } = desktop;
   const { path } = createExplorerFixture(directory);
