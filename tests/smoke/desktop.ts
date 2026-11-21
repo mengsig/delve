@@ -11,9 +11,10 @@ interface Desktop {
   restart: (link?: string) => Promise<Page>;
 }
 
-async function launch(userData: string, firstRun: boolean, fakeBin?: string, link?: string): Promise<ElectronApplication> {
+async function launch(userData: string, firstRun: boolean, fakeBin?: string, link?: string, providerMode?: string): Promise<ElectronApplication> {
   const providerEnv = fakeBin ? shimEnv(fakeBin, { FAKE_PROVIDER_RESPONSE_FILE: join(userData, 'reply.json'),
-    FAKE_PROVIDER_GATE: join(userData, 'gate'), FAKE_PROVIDER_RECORD: join(userData, 'request.json') }) : { PATH: '/nonexistent' };
+    FAKE_PROVIDER_GATE: join(userData, 'gate'), FAKE_PROVIDER_RECORD: join(userData, 'request.json'),
+    ...(providerMode ? { FAKE_PROVIDER_MODE: providerMode } : {}) }) : { PATH: '/nonexistent' };
   if (firstRun && fakeBin) {
     const git = await findExecutable('git', process.env);
     if (!git) throw new Error('Repository smoke requires Git.');
@@ -24,15 +25,16 @@ async function launch(userData: string, firstRun: boolean, fakeBin?: string, lin
   return electron.launch({ args: [resolve(__dirname, '../../out/main/index.js'), ...(link ? [link] : [])], env, timeout: 30_000 });
 }
 
-export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun: boolean }>({
+export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun: boolean; providerMode: string | undefined }>({
   tutorCli: [false, { option: true }],
   firstRun: [false, { option: true }],
-  desktop: async ({ tutorCli, firstRun }, use) => {
+  providerMode: [undefined, { option: true }],
+  desktop: async ({ tutorCli, firstRun, providerMode }, use) => {
     const directory = mkdtempSync(join(tmpdir(), 'delve-smoke-'));
     let fakeBin: string | undefined;
     let app: ElectronApplication | undefined;
     async function start(link?: string) {
-      app = await launch(directory, firstRun, fakeBin, link);
+      app = await launch(directory, firstRun, fakeBin, link, providerMode);
       const page = await app.firstWindow();
       await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
       return page;
