@@ -91,7 +91,7 @@ function TimelineFeedback({ history, filters, onRefresh }: { history: ReturnType
     {error && <p className="timeline-message" role="alert">{error}</p>}
     {loading && <p className="timeline-message" role="status">{page ? 'Loading more changes…' : 'Loading history…'}</p>}
     <div className="timeline-actions">
-      <button type="button" disabled={loading} onClick={() => { history.refresh(); onRefresh?.(); }}>Refresh history</button>
+      <button type="button" disabled={loading} onClick={() => history.refresh(true, onRefresh)}>Refresh history</button>
       {(error || hasRequestedMore || page?.next != null) &&
       <button type="button" aria-disabled={loading || (!error && page?.next == null)}
         onClick={error ? retry : loadMore}>

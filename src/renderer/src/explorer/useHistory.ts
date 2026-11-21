@@ -11,7 +11,14 @@ export interface HistoryFilters {
   search?: string;
 }
 
-interface HistoryRequest { query: string; cursor: number; retried?: boolean; searchedPages?: number }
+interface HistoryRequest {
+  query: string;
+  cursor: number;
+  refreshSnapshot?: boolean;
+  onRefreshed?: () => void;
+  retried?: boolean;
+  searchedPages?: number;
+}
 interface HistoryResult {
   request: HistoryRequest | null;
   page: HistoryPage | null;
@@ -51,11 +58,12 @@ export function useHistory(workspaceId: string, filters: HistoryFilters, query: 
     async function load() {
       try {
         const incoming = await call('repo:history', {
-          workspaceId, cursor: request.cursor, branch, kind, author, search,
+          workspaceId, cursor: request.cursor, refreshSnapshot: request.refreshSnapshot, branch, kind, author, search,
         });
         if (!current) return;
         const merged = appendPage(page, incoming, request.cursor);
         setResult({ request, page: merged, error: null });
+        request.onRefreshed?.();
         const searchedPages = request.searchedPages ?? 0;
         if ((search || author) && !merged.nodes.length && merged.next !== null && searchedPages < 9) {
           setRequest({ query: request.query, cursor: merged.next, searchedPages: searchedPages + 1 });
@@ -79,9 +87,9 @@ export function useHistory(workspaceId: string, filters: HistoryFilters, query: 
     if (result.expired) refresh();
     else setRequest({ ...request, retried: true });
   }
-  function refresh() {
+  function refresh(refreshSnapshot = false, onRefreshed?: () => void) {
     setResult(emptyResult);
-    setRequest({ query, cursor: 0 });
+    setRequest({ query, cursor: 0, refreshSnapshot, onRefreshed });
   }
   return { refresh, page, loading, error: loading ? null : result.error, hasRequestedMore: request.cursor !== 0 || request.retried === true, loadMore, retry };
 }

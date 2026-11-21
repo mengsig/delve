@@ -10,7 +10,7 @@ import type { Db } from '../db/connection';
 import { isDemoWorkspace } from '../db/demo';
 import { addWorkspace, getWorkspace, listWorkspaces, resolveWorkspaceSource } from '../db/workspaces';
 import type { ProviderRunner } from '../providers/runner';
-import { listChanges, listFiles, readChangeDetail, repositoryPath, repositorySnapshotPath } from './source';
+import { listChanges, listFiles, readChangeDetail, repositoryPath, withCommitSnapshot } from './source';
 import { prepareSource } from './preview';
 import { baselineReply, changeReply } from './schemas';
 import { digest, useCachedGeneration, latestBrief, persistGeneration, savedChanges, savedHistory, type ApprovedSource } from './store';
@@ -128,9 +128,8 @@ export class RepositoryLearning {
       const workspace = this.workspace(request.workspaceId);
       const { kind, ref } = request;
       try {
-        const path = kind === 'pr' ? (workspace.kind === 'git' ? workspace.source : null)
-          : await repositorySnapshotPath(workspace, this.cacheRoot);
-        return await readChangeDetail(path, workspace, kind, ref);
+        if (kind === 'commit') return await withCommitSnapshot(workspace, this.cacheRoot, path => readChangeDetail(path, workspace, kind, ref));
+        return await readChangeDetail(workspace.kind === 'git' ? workspace.source : null, workspace, kind, ref);
       } catch (cause) {
         if (!(cause instanceof DomainError) || cause.code === 'GITHUB_PULL_REQUEST_MOVED') throw cause;
         const matches = savedHistory(this.db, workspace.id).filter(node =>
@@ -153,10 +152,10 @@ export class RepositoryLearning {
     if (pending && request.selection.kind !== 'baseline') throw new DomainError('INVALID_REPO', 'Add this repository before reading changes.');
     const workspace = pending?.workspace ?? this.workspace(request.workspaceId);
     const listed = request.selection.kind === 'baseline' ? this.inventories.get(workspace.id + '/' + request.selection.commit) : undefined;
-    const path = request.selection.kind === 'commit' ? await repositorySnapshotPath(workspace, this.cacheRoot)
-      : workspace.kind === 'github' && request.selection.kind === 'pr' ? null
-      : listed?.path ?? await repositoryPath(workspace, this.cacheRoot);
-    const source = await prepareSource(this.db, path, workspace, request, listed?.inventory);
+    const prepare = (path: string | null) => prepareSource(this.db, path, workspace, request, listed?.inventory);
+    const source = request.selection.kind === 'commit' ? await withCommitSnapshot(workspace, this.cacheRoot, prepare)
+      : await prepare(workspace.kind === 'github' && request.selection.kind === 'pr' ? null
+        : listed?.path ?? await repositoryPath(workspace, this.cacheRoot));
     if (this.closed) throw new DomainError('REPO_CLOSED', 'Delve is closing.');
     if (this.previews.size >= 12) this.previews.delete(this.previews.keys().next().value!);
     this.previews.set(source.preview.token, source);

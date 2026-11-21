@@ -5,7 +5,7 @@ import { DomainError } from '../../shared/errors';
 import { assertGitRepository } from '../git';
 import { readGitChangeWithPatches, readGitDetail } from './git-change';
 import { completedOutput } from './source-process';
-import { gitReader, listGitChanges, listGitFiles, readGitFiles, withoutChangePatches, type GitChange } from './git-reader';
+import { gitReader, MissingSnapshotCommit, listGitChanges, listGitFiles, readGitFiles, withoutChangePatches, type GitChange } from './git-reader';
 import { openGitHistory } from './git-history';
 import { readPullHistoryPage, listPullRequests, readPullDetail, readPullRequestWithPatches } from './github';
 import { cachedGithubRepository, githubRepository, githubSlug } from './github-cache';
@@ -25,6 +25,17 @@ export async function repositorySnapshotPath(workspace: Workspace, cacheRoot: st
   if (!path && initialize) return githubRepository(cacheRoot, workspace.source);
   if (!path) throw new DomainError('GITHUB_CACHE_MISSING', 'There is no local snapshot of this repository.');
   return path;
+}
+
+export async function withCommitSnapshot<T>(workspace: Workspace, cacheRoot: string, read: (path: string) => Promise<T>): Promise<T> {
+  if (workspace.kind !== 'github') return read(await repositoryPath(workspace, cacheRoot));
+  const cached = await cachedGithubRepository(cacheRoot, workspace.source);
+  if (cached) {
+    try { return await read(cached); }
+    catch (cause) { if (!(cause instanceof MissingSnapshotCommit)) throw cause; }
+  }
+  // The linked revision may have been pushed since the last shallow snapshot.
+  return read(await githubRepository(cacheRoot, workspace.source));
 }
 
 async function githubSource(path: string | null, workspace: Workspace): Promise<string | null> {
@@ -81,12 +92,27 @@ export async function readChangeDetail(path: string | null, workspace: Workspace
   return readPullDetail(await pullSource(path, workspace), ref);
 }
 
+async function historySnapshot(workspace: Workspace, cacheRoot: string, request: HistoryRequest) {
+  if (workspace.kind === 'github' && request.refreshSnapshot && request.kind !== 'pr') {
+    try { return { path: await githubRepository(cacheRoot, workspace.source) }; }
+    catch (cause) {
+      if (!(cause instanceof DomainError)) throw cause;
+      const cached = await cachedGithubRepository(cacheRoot, workspace.source);
+      if (!cached) throw cause;
+      return { path: cached, warning: cause.message + ' Showing the last local snapshot.' };
+    }
+  }
+  return { path: await repositorySnapshotPath(workspace, cacheRoot, request.kind !== 'pr') };
+}
+
 export async function gitHistory(workspace: Workspace, cacheRoot: string, request: HistoryRequest) {
   assert.equal(workspace.id, request.workspaceId);
   assert.ok(workspace.kind === 'git' || workspace.kind === 'github');
   try {
-    const path = await repositorySnapshotPath(workspace, cacheRoot, request.kind !== 'pr');
-    return await openGitHistory(path, request.branch, request.kind !== 'pr');
+    const { path, warning } = await historySnapshot(workspace, cacheRoot, request);
+    const history = await openGitHistory(path, request.branch, request.kind !== 'pr');
+    if (warning) history.warnings.push(warning);
+    return history;
   } catch (cause) {
     if (!(cause instanceof DomainError)) throw cause;
     const warnings = request.kind === 'pr' && cause.code === 'GITHUB_CACHE_MISSING' ? [] : [cause.message];

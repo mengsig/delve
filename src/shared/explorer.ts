@@ -23,6 +23,7 @@ export interface HistoryPage {
 export interface HistoryRequest {
   workspaceId: string;
   cursor: number;
+  refreshSnapshot?: boolean;
   branch?: string;
   kind?: ChangeRef['kind'];
   author?: string;

@@ -77,6 +77,7 @@ describe('explorer IPC', () => {
     expect(await dispatch(h, 'repo:history', { workspaceId, cursor: 0, branch: 'main\0other' })).toMatchObject(invalid);
     expect(await dispatch(h, 'repo:history', { workspaceId, cursor: 0, kind: 'anything' })).toMatchObject(invalid);
     expect(await dispatch(h, 'repo:history', { workspaceId, cursor: 0, search: '   ' })).toMatchObject(invalid);
+    expect(await dispatch(h, 'repo:history', { workspaceId, cursor: 4, refreshSnapshot: true })).toMatchObject(invalid);
     expect(await dispatch(h, 'repo:detail', { workspaceId, kind: 'commit', ref: 'HEAD~1' })).toMatchObject(invalid);
     expect(await dispatch(h, 'repo:detail', { workspaceId, kind: 'pr', ref: '0' })).toMatchObject(invalid);
     expect(history).not.toHaveBeenCalled();
