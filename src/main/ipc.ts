@@ -1,5 +1,6 @@
 import { tutorSchemas } from './tutor/ipc';
 import { readerSchemas } from './reader/ipc';
+import { labSchemas } from './environment/ipc';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { DEPTHS } from '../shared/domain';
@@ -22,6 +23,7 @@ export const REQUEST_SCHEMAS: { [C in IpcChannel]: z.ZodType<IpcRequest<C>> } = 
   'providers:detect': z.null(),
   ...readerSchemas,
   ...tutorSchemas,
+  ...labSchemas,
   'graph:read': z.strictObject({ workspaceId }),
   'progress:read': z.null(),
   'evidence:reset': z.strictObject({ workspaceId, conceptId: z.int().positive(), depth: z.enum(DEPTHS) }),

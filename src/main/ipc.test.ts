@@ -27,6 +27,9 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
     'graph:read': ({ workspaceId }) => ({ workspaceId, concepts: [], edges: [], evidence: [], snapshot: null, demo: false }),
     'progress:read': () => [],
     'evidence:reset': () => false,
+    'lab:open': () => { throw new Error('Unexpected activity'); },
+    'lab:input': () => { throw new Error('Unexpected activity input'); },
+    'lab:close': () => false,
     ...overrides,
   };
 }

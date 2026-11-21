@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { documentGenerationSchema, documentJsonSchema, documentSchema, publicBlocks } from './document';
 
 const prose = { type: 'prose', heading: 'Transit', text: 'The bus stops here.' };
@@ -73,6 +74,17 @@ describe('lesson documents', () => {
 });
 
 describe('provider lesson documents', () => {
+  it('normalizes a generated bundle and retains a safe fallback for malformed saved config', () => {
+    const source = 'function step(initial, action) { return {text: initial, controls: [], marks: []}; }';
+    const config = { pack: 'bundle@1', bundle: { apiVersion: 'delve.view/1', entry: 'step', source },
+      parameters: { title: 'Practice', initial: 'Try it' } };
+    const wire = { ...lesson({ type: 'environment', fallback: 'Practice by hand.', pack: null, config }), source: null };
+    const generated = documentGenerationSchema.parse(wire);
+    expect(generated.blocks[0]).toMatchObject({ config: { bundle: { sha256: createHash('sha256').update(source).digest('hex') } } });
+    const malformed = documentSchema.parse(lesson({ type: 'environment', fallback: 'Practice by hand.', config: { pack: 'bogus' } }));
+    expect(malformed.blocks[0]).toEqual({ type: 'environment', fallback: 'Practice by hand.' });
+  });
+
   it('adapts required nullable fields and validates the resulting lesson', () => {
     const wire = { ...lesson(
       prose, table, { type: 'diagram', nodes, edges: null },

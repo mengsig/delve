@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
+import { labConfigSchema, type LabConfig } from '../../shared/lab-config';
+import { packSchema } from '../../shared/instruments';
 import { CHECK_ANSWER_LIMIT, type CodeSpan, type LessonBlock } from '../../shared/lesson-blocks';
 
 const label = z.string().min(1).max(1024);
@@ -47,7 +50,14 @@ const code = z.object({
 }).refine(validSpans, 'Code spans must be within a line, non-overlapping, and supplied as span or spans.');
 const environment = z.object({
   type: z.literal('environment'), fallback: text.optional(), runtime: z.literal('delve.env/1').optional(), pack: pack.optional(),
-}).refine(({ runtime, pack }) => Boolean(runtime) === Boolean(pack), 'An environment reference needs both runtime and pack.');
+  config: z.unknown().optional(),
+}).refine(({ runtime, pack }) => Boolean(runtime) === Boolean(pack), 'An environment reference needs both runtime and pack.')
+  .transform(({ config, ...block }): { type: 'environment'; fallback?: string; runtime?: 'delve.env/1'; pack?: string; config?: LabConfig } => {
+    const parsed = labConfigSchema.safeParse(config);
+    if (parsed.success) return { ...block, config: parsed.data };
+    if (config === undefined) return block;
+    return { type: 'environment', ...(block.fallback ? { fallback: block.fallback } : {}) };
+  });
 const choice = z.object({
   type: checkType, kind: choiceKind.optional(), prompt: text, options, expected: expectedChoice,
 }).refine(b => b.expected < b.options.length && new Set(b.options).size === b.options.length,
@@ -107,7 +117,12 @@ const generationBlock = z.union([
     edges: z.array(edge.extend({ label: richLabel.nullable() })).max(120).nullable(),
   }),
   z.strictObject({ type: code.shape.type, source: code.shape.source, lines: code.shape.lines, spans: z.array(span.strict()).max(200) }),
-  z.strictObject({ type: environment.shape.type, fallback: richText, pack: pack.nullable() }),
+  z.strictObject({ type: z.literal('environment'), fallback: richText, pack: pack.nullable(), config: z.union([
+    packSchema,
+    z.strictObject({ pack: z.literal('bundle@1'), bundle: z.strictObject({ apiVersion: z.literal('delve.view/1'),
+      entry: z.literal('step'), source: z.string().min(1).max(32768) }),
+    parameters: z.strictObject({ title: z.string().trim().min(1).max(120), initial: z.string().max(2048) }) }),
+  ]).nullable().optional() }),
   z.strictObject({ ...choice.shape, kind: choiceKind }),
   z.strictObject({ type: checkType, kind: writtenKind, prompt: richText, expected: expectedText }),
 ]);
@@ -122,9 +137,12 @@ type GeneratedBlock = z.infer<typeof generationBlock>;
 
 function adaptGeneratedBlock(block: GeneratedBlock) {
   if (block.type === 'environment') {
-    return block.pack === null
-      ? { type: block.type, fallback: block.fallback }
-      : { ...block, runtime: 'delve.env/1' as const };
+    const { config, pack: packName, ...rest } = block;
+    const normalized = config?.pack === 'bundle@1'
+      ? { ...config, bundle: { ...config.bundle, sha256: createHash('sha256').update(config.bundle.source, 'utf8').digest('hex') } }
+      : config;
+    return { ...rest, ...(packName === null ? {} : { pack: packName, runtime: 'delve.env/1' as const }),
+      ...(normalized ? { config: normalized } : {}) };
   }
   if (block.type !== 'diagram') return block;
   const { edges, ...diagram } = block;
@@ -148,6 +166,8 @@ export const documentJsonSchema = z.toJSONSchema(generationWire, {
   target: 'draft-7',
   io: 'input',
   override: ({ jsonSchema }) => {
+    if (jsonSchema.type === 'object' && jsonSchema.properties) jsonSchema.required = Object.keys(jsonSchema.properties);
+    if (jsonSchema.oneOf) { jsonSchema.anyOf = jsonSchema.oneOf; delete jsonSchema.oneOf; }
     delete jsonSchema.minLength;
     delete jsonSchema.maxLength;
     delete jsonSchema.minItems;

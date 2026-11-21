@@ -9,6 +9,7 @@ import { createGenerator, createTutorRunner } from './tutor/provider';
 import { TutorSession } from './tutor/session';
 import { readerHandlers } from './reader/ipc';
 import { graphHandlers } from './graph-ipc';
+import { labHandlers } from './environment/host';
 import { registerIpc, type IpcHandlers } from './ipc';
 import { registerAppScheme, serveRenderer } from './protocol';
 import { detectProviders } from './providers/detect';
@@ -65,6 +66,7 @@ function buildHandlers(db: Db, tutor: TutorSession): IpcHandlers {
     ...readerHandlers(db),
     ...tutorHandlers(db, tutor),
     ...graphHandlers(db),
+    ...labHandlers(db),
   };
 }
 
