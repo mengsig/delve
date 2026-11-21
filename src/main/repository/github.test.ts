@@ -20,8 +20,10 @@ const workspace: Workspace = {
 const gh = vi.mocked(sourceCommand);
 const git = vi.mocked(gitSource);
 const OK = { status: 0, diagnostic: '', truncated: false };
-const PR = { number: 42, title: 'Update module', head: { sha: HEAD }, base: { sha: BASE }, changed_files: 1 };
+const PR = { body: 'Keep the new module in sync.', number: 42, title: 'Update module', head: { sha: HEAD }, base: { sha: BASE }, changed_files: 1 };
 const FILE = { filename: 'src/module.ts', status: 'modified', additions: 1, deletions: 1, patch: '@@ -1 +1 @@\n-old\n+new' };
+
+function jsonText(value: string) { return { ...OK, output: Buffer.from(value) }; }
 
 function json(value: unknown) {
   return { ...OK, output: Buffer.from(JSON.stringify(value)) };
@@ -41,8 +43,21 @@ describe('GitHub pull requests', () => {
   it('includes complete patches and binds them to the pull request head', async () => {
     gh.mockResolvedValueOnce(json(PR)).mockResolvedValueOnce(json([FILE])).mockResolvedValueOnce(json(PR));
     const snapshot = await readChange('unused', workspace, 'pr', '42');
-    expect(snapshot).toEqual({ commit: HEAD, title: 'Update module', partial: false, files: ['src/module.ts'],
+    expect(snapshot).toEqual({ commit: HEAD, base: BASE, description: PR.body, repository: 'octo/project', title: 'Update module', partial: false, files: ['src/module.ts'],
       diff: '--- a/src/module.ts\n+++ b/src/module.ts\n@@ -1 +1 @@\n-old\n+new\n' });
+  });
+
+  it('lists pull requests for a local GitHub origin without forwarding its URL to gh', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'delve-pr-origin-'));
+    try {
+      git.mockResolvedValueOnce(jsonText(HEAD + '\n')).mockResolvedValueOnce(jsonText(HEAD + '\0Commit\0'))
+        .mockResolvedValueOnce(jsonText('git@github.com:Octo/Project.git\n'));
+      gh.mockResolvedValueOnce(json([{ number: 42, title: 'Local origin PR' }]));
+      const result = await listChanges(repo, { ...workspace, kind: 'git', source: repo });
+      expect(result.changes).toHaveLength(2);
+      expect(result.changes[0]?.kind).toBe('pr');
+      expect(gh.mock.calls[0]?.[1].at(-1)).toContain('repos/octo/project/pulls?');
+    } finally { await rm(repo, { recursive: true, force: true }); }
   });
 
   it('marks missing, truncated, excluded and unlisted files partial', async () => {

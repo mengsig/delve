@@ -39,6 +39,7 @@
 .repository-onboarding { max-width: 780px; }
 .repository-onboarding .toolrow { margin-bottom: 16px; }
 .repository-setup-link { margin: 0 0 14px; }
-.repository-brief-title { margin-block: 0 12px; }
 .learn-intent { margin-bottom: 14px; overflow-wrap: anywhere; }
 .learn-intent .actions, .repository-actions { margin-top: 12px; }
+.change-source { margin-top: 16px; }
+.change-source summary { cursor: pointer; }

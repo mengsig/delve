@@ -90,8 +90,8 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
   return <div className={'atlas ' + view}>
     <Topline workspace={workspace} name={name} blurb={blurb} onSwitch={onSwitch} />
     {graph.demo && <button className="repository-setup-link" onClick={props.onFirstRun}>Set up your workspace →</button>}
-    {!graph.demo && !graph.baselineCommit && workspace.kind !== 'topic' && selected &&
-      <button className="repository-setup-link" onClick={props.onMap}>Map this repository →</button>}
+    {!graph.demo && workspace.kind !== 'topic' && selected &&
+      <button className="repository-setup-link" onClick={props.onMap}>{graph.baselineCommit ? 'Map another repository slice →' : 'Map this repository →'}</button>}
     {selected && target ? <div className="split"><div>
       {view === 'contour'
         ? <ContourMap model={model} selected={selected} recommendedId={recommendedId} workspaceId={workspace.id} depth={depth}

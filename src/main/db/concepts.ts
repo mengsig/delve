@@ -65,29 +65,32 @@ function requireConcept(db: Db, id: number): Concept {
 
 /** Creates or updates a concept by stable key; a portable concept is shared, never duplicated. */
 export function upsertConcept(db: Db, input: ConceptInput): Concept {
+  return transaction(db, () => upsertConceptInTransaction(db, input));
+}
+
+export function upsertConceptInTransaction(db: Db, input: ConceptInput): Concept {
+  assert.ok(db.isTransaction, 'concept writes require a transaction');
   const title = input.title.trim();
   if (title.length === 0) throw new DomainError('INVALID_CONCEPT', 'A concept needs a title.');
   const key = conceptStorageKey(input.key, input.portable, input.workspaceId);
-  return transaction(db, () => {
-    const existing = getConceptByKey(db, key);
-    if (existing && existing.portable !== input.portable) {
-      throw new DomainError('CONCEPT_CONFLICT', `Concept "${key}" already exists with a different portability.`);
-    }
-    const ownerId = input.portable ? null : (input.workspaceId ?? null);
-    assert.ok(input.portable || ownerId, 'a local concept has an owning workspace');
-    const now = nowIso();
-    db.prepare(
-      `INSERT INTO concepts (key, title, summary, portable, workspace_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (key) DO UPDATE SET title = excluded.title, summary = excluded.summary, updated_at = excluded.updated_at`,
-    ).run(key, title, input.summary?.trim() ?? existing?.summary ?? '', input.portable ? 1 : 0, ownerId, now, now);
-    const saved = getConceptByKey(db, key);
-    assert.ok(saved, 'upserted concept must be readable');
-    if (input.workspaceId) {
-      db.prepare('INSERT OR IGNORE INTO workspace_concepts (workspace_id, concept_id) VALUES (?, ?)').run(input.workspaceId, saved.id);
-    }
-    return saved;
-  });
+  const existing = getConceptByKey(db, key);
+  if (existing && existing.portable !== input.portable) {
+    throw new DomainError('CONCEPT_CONFLICT', `Concept "${key}" already exists with a different portability.`);
+  }
+  const ownerId = input.portable ? null : (input.workspaceId ?? null);
+  assert.ok(input.portable || ownerId, 'a local concept has an owning workspace');
+  const now = nowIso();
+  db.prepare(
+    `INSERT INTO concepts (key, title, summary, portable, workspace_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (key) DO UPDATE SET title = excluded.title, summary = excluded.summary, updated_at = excluded.updated_at`,
+  ).run(key, title, input.summary?.trim() ?? existing?.summary ?? '', input.portable ? 1 : 0, ownerId, now, now);
+  const saved = getConceptByKey(db, key);
+  assert.ok(saved, 'upserted concept must be readable');
+  if (input.workspaceId) {
+    db.prepare('INSERT OR IGNORE INTO workspace_concepts (workspace_id, concept_id) VALUES (?, ?)').run(input.workspaceId, saved.id);
+  }
+  return saved;
 }
 
 /** True when `from` already (transitively) requires `to`. */
@@ -116,20 +119,23 @@ function assertEdgeScope(concept: Concept, prerequisite: Concept): void {
 
 /** Records that `conceptId` requires `prerequisiteId`. Rejects self-loops and cycles; idempotent. */
 export function addPrerequisite(db: Db, conceptId: number, prerequisiteId: number): void {
+  transaction(db, () => addPrerequisiteInTransaction(db, conceptId, prerequisiteId));
+}
+
+export function addPrerequisiteInTransaction(db: Db, conceptId: number, prerequisiteId: number): void {
+  assert.ok(db.isTransaction, 'edge writes require a transaction');
   if (conceptId === prerequisiteId) throw new DomainError('CYCLE', 'A concept cannot require itself.');
-  transaction(db, () => {
-    const concept = requireConcept(db, conceptId);
-    const prerequisite = requireConcept(db, prerequisiteId);
-    assertEdgeScope(concept, prerequisite);
-    if (requires(db, prerequisiteId, conceptId)) {
-      throw new DomainError('CYCLE', `"${prerequisite.title}" already depends on "${concept.title}"; that edge would create a cycle.`);
-    }
-    db.prepare('INSERT OR IGNORE INTO concept_edges (concept_id, prerequisite_id, created_at) VALUES (?, ?, ?)').run(
-      conceptId,
-      prerequisiteId,
-      nowIso(),
-    );
-  });
+  const concept = requireConcept(db, conceptId);
+  const prerequisite = requireConcept(db, prerequisiteId);
+  assertEdgeScope(concept, prerequisite);
+  if (requires(db, prerequisiteId, conceptId)) {
+    throw new DomainError('CYCLE', `"${prerequisite.title}" already depends on "${concept.title}"; that edge would create a cycle.`);
+  }
+  db.prepare('INSERT OR IGNORE INTO concept_edges (concept_id, prerequisite_id, created_at) VALUES (?, ?, ?)').run(
+    conceptId,
+    prerequisiteId,
+    nowIso(),
+  );
 }
 
 /** Direct prerequisites, ordered by title. */

@@ -9,6 +9,8 @@ import { createGenerator, createTutorRunner } from './tutor/provider';
 import { TutorSession } from './tutor/session';
 import { readerHandlers } from './reader/ipc';
 import { graphHandlers } from './graph-ipc';
+import { LearnInbox } from './repository/intents';
+import { RepositoryLearning } from './repository/service';
 import { LabHost } from './environment/host';
 import { registerIpc, type IpcHandlers } from './ipc';
 import { registerAppScheme, serveRenderer } from './protocol';
@@ -51,7 +53,7 @@ function createWindow(labs: LabHost): BrowserWindow {
   return window;
 }
 
-function buildHandlers(db: Db, tutor: TutorSession, labs: LabHost): IpcHandlers {
+function buildHandlers(db: Db, tutor: TutorSession, labs: LabHost, learning: RepositoryLearning, links: LearnInbox): IpcHandlers {
   return {
     'workspaces:list': () => listWorkspaces(db),
     'workspaces:add': async (input) => {
@@ -75,18 +77,31 @@ function buildHandlers(db: Db, tutor: TutorSession, labs: LabHost): IpcHandlers 
     ...readerHandlers(db),
     ...tutorHandlers(db, tutor),
     ...graphHandlers(db),
+    'repo:files': ({ workspaceId }) => learning.files(workspaceId),
+    'repo:changes': ({ workspaceId }) => learning.changes(workspaceId),
+    'repo:preview': request => learning.preview(request),
+    'repo:saved': request => learning.saved(request),
+    'repo:generate': ({ token, requestId }) => learning.generate(token, requestId),
+    'repo:cancel': ({ requestId }) => learning.cancel(requestId),
+    'learn:pending': () => links.peek(),
+    'learn:resolve': ({ id, accept }) => {
+      const workspace = links.resolve(db, id, accept);
+      if (workspace) labs.clear();
+      return workspace;
+    },
     'lab:open': request => labs.open(request),
     'lab:input': request => labs.input(request),
     'lab:close': request => labs.close(request),
   };
 }
 
-async function start(): Promise<void> {
+async function start(links: LearnInbox): Promise<void> {
   await app.whenReady();
   applySecurityPolicy(devServerUrl);
   serveRenderer(join(__dirname, '../renderer'), devServerUrl);
   const db = openDatabase(join(app.getPath('userData'), 'delve.sqlite'));
   const runner = createTutorRunner();
+  const learning = new RepositoryLearning(db, join(app.getPath('userData'), 'repositories'), runner);
   const tutor = new TutorSession(db, createGenerator(runner));
   let draining = false;
   let drained = false;
@@ -96,12 +111,12 @@ async function start(): Promise<void> {
     if (draining) return;
     draining = true;
     tutor.close();
-    void runner.drain().then(() => { drained = true; app.quit(); });
+    void Promise.all([learning.close(), runner.drain()]).then(() => { drained = true; app.quit(); });
   });
   app.on('will-quit', () => db.close());
   seedDemoWorkspaces(db);
   const labs = new LabHost(db);
-  registerIpc(ipcMain, buildHandlers(db, tutor, labs), (url) => isAppUrl(url, devServerUrl));
+  registerIpc(ipcMain, buildHandlers(db, tutor, labs, learning, links), (url) => isAppUrl(url, devServerUrl));
   createWindow(labs);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(labs);
@@ -112,7 +127,22 @@ registerAppScheme();
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  const links = new LearnInbox();
+  const receive = (url: string) => {
+    try { links.receive(url); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid learn link.';
+      void app.whenReady().then(() => dialog.showMessageBox({ type: 'warning', title: 'Learn link', message }));
+    }
+  };
+  const receiveArgs = (args: string[]) => args.filter(arg => /^delve:\/\//i.test(arg)).slice(0, 16).forEach(receive);
+  app.on('open-url', (event, url) => { event.preventDefault(); receive(url); });
+  receiveArgs(process.argv);
+  if (app.isPackaged && !app.isDefaultProtocolClient('delve') && !app.setAsDefaultProtocolClient('delve')) {
+    console.warn('[delve] The OS did not register delve:// links. Select Delve as the handler in system settings.');
+  }
+  app.on('second-instance', (_event, argv) => {
+    receiveArgs(argv);
     const [window] = BrowserWindow.getAllWindows();
     if (window?.isMinimized()) window.restore();
     window?.focus();
@@ -120,7 +150,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
-  start().catch((error: unknown) => {
+  start(links).catch((error: unknown) => {
     console.error('[delve] startup failed', error);
     dialog.showErrorBox('Delve could not start', String(error));
     app.exit(1);

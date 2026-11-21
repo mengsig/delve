@@ -10,7 +10,7 @@ const prNumber = z.number().int().positive().max(9_999_999_999);
 const prSummary = z.object({ number: prNumber, title: z.string() });
 const gitId = z.object({ sha: z.string().regex(OBJECT_ID) });
 const prMetadata = prSummary.extend({
-  base: gitId, head: gitId, changed_files: z.number().int().nonnegative(),
+  body: z.string().nullish(), base: gitId, head: gitId, changed_files: z.number().int().nonnegative(),
 });
 const prFile = z.object({
   filename: z.string(), previous_filename: z.string().nullish(), status: z.string(),
@@ -106,12 +106,13 @@ export async function readPullRequest(source: string, ref: string): Promise<Chan
   const endpoint = `repos/${slug}/pulls/${ref}`;
   const before = await githubApi(endpoint, prMetadata);
   assert.equal(before.number, Number(ref));
-  const result: ChangeSnapshot = { commit: before.head.sha, title: changeTitle(before.title), diff: '', partial: false, files: [] };
+  const description = before.body && sourceText(Buffer.from(before.body))?.trim().slice(0, 4000);
+  const result: ChangeSnapshot = { commit: before.head.sha, base: before.base.sha, description: description || undefined, title: changeTitle(before.title), diff: '', partial: false, files: [] };
   let files: z.infer<typeof prFile>[];
   try {
     files = await githubApi(`${endpoint}/files?per_page=${MAX_DIFF_FILES}`, z.array(prFile).max(MAX_DIFF_FILES));
   } catch (cause) {
-    if (cause instanceof DomainError && cause.code === 'SOURCE_LIMIT') return { ...result, partial: true };
+    if (cause instanceof DomainError) return { ...result, partial: true, coverageNote: 'Pull request metadata only. ' + cause.message };
     throw cause;
   }
   const after = await githubApi(endpoint, prMetadata);

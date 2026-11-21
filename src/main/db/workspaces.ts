@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, isAbsolute, normalize } from 'node:path';
 import { WORKSPACE_KINDS, type AddWorkspaceInput, type Workspace, type WorkspaceKind, type WorkspaceList } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
+import { matchesDemo } from './demo-fixtures';
 import { nowIso, transaction, type Db } from './connection';
 
 const GITHUB_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -112,7 +113,7 @@ export function listWorkspaces(db: Db): WorkspaceList {
   const workspaces = rows.map(toWorkspace);
   const active = db.prepare('SELECT value FROM app_state WHERE key = ?').get(ACTIVE_WORKSPACE_KEY) as { value: string } | undefined;
   const activeId = active && workspaces.some((w) => w.id === active.value) ? active.value : null;
-  return { workspaces, activeId };
+  return { workspaces, activeId, hasUserWorkspace: workspaces.some(workspace => !matchesDemo(workspace)) };
 }
 
 export function isActiveWorkspace(db: Db, id: string): boolean {

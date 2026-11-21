@@ -27,7 +27,7 @@ export function ProviderReview({ generation, provider, depth, workflow }: Props)
       <h3 id="repo-request-title" ref={heading} tabIndex={-1}>Review provider request</h3>
       <p>{PROVIDER_LABELS[provider]} · {preview.model} · {depth} depth · {preview.bytes.toLocaleString()} bytes</p>
       <p className="repository-ref"><strong>{preview.title}</strong> · <code>{preview.commit}</code></p>
-      {preview.partial && <p className="repository-notice" role="status">Partial coverage. The provider request uses only the available content shown here.</p>}
+      {preview.partial && <p className="repository-notice" role="status">Partial coverage. {preview.coverageNote ?? 'The provider request uses only the available content shown here.'}</p>}
       {preview.files.length > 0 && <p>Files included: {preview.files.join(', ')}</p>}
       <details open><summary>Exact request</summary><pre aria-label="Exact provider request" tabIndex={0}>{preview.prompt}</pre></details>
       <div className="actions">

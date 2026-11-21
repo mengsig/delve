@@ -19,6 +19,10 @@ export interface ChangeSnapshot {
   commit: string;
   title: string;
   diff: string;
+  base?: string;
+  description?: string;
+  coverageNote?: string;
+  repository?: string;
   partial: boolean;
   files: string[];
 }
@@ -141,6 +145,7 @@ export async function readGitFiles(path: string, commit: string, paths: string[]
   if (completedOutput(type, 'That Git snapshot is unavailable.').toString('utf8').trim() !== 'commit') {
     throw new DomainError('INVALID_COMMIT', 'The snapshot must identify a Git commit.');
   }
+  await requireReachable(reader, commit);
   const files: { path: string; text: string }[] = [];
   let bytes = 0;
   for (let offset = 0; offset < requested.length; offset += 16) {

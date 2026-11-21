@@ -16,7 +16,7 @@ interface ChangedFile {
   regular: boolean;
 }
 
-async function commitInfo(reader: GitReader, commit: string): Promise<{ title: string; parent: string | undefined }> {
+async function commitInfo(reader: GitReader, commit: string): Promise<{ title: string; parent: string | undefined; description?: string }> {
   assert.ok(OBJECT_ID.test(commit));
   const raw = await reader.run(['cat-file', 'commit', commit], 128 * 1024);
   if (!raw.truncated) completedOutput(raw, 'Could not read the Git commit.');
@@ -27,7 +27,9 @@ async function commitInfo(reader: GitReader, commit: string): Promise<{ title: s
   const metadata = await reader.run(['log', '--no-notes', '--no-show-signature', '--encoding=UTF-8',
     '--max-count=1', '--format=%s', commit, '--'], 128 * 1024);
   if (!metadata.truncated) completedOutput(metadata, 'Could not read the Git commit title.');
-  return { parent, title: changeTitle(metadata.output.toString('utf8')) };
+  const message = sourceText(raw.output.subarray(headers + 2));
+  const body = message?.split(/\n\s*\n/).slice(1).join('\n\n').trim().slice(0, 4000);
+  return { parent, title: changeTitle(metadata.output.toString('utf8')), description: body || undefined };
 }
 
 async function changedFiles(reader: GitReader, revisions: string[]): Promise<{ files: ChangedFile[]; partial: boolean }> {
@@ -67,8 +69,8 @@ export async function readGitChange(path: string, ref: string): Promise<ChangeSn
   const reader = await gitReader(path);
   const commit = await resolveCommit(reader, ref);
   await requireReachable(reader, commit);
-  const { title, parent } = await commitInfo(reader, commit);
-  const snapshot: ChangeSnapshot = { commit, title, diff: '', partial: false, files: [] };
+  const { title, parent, description } = await commitInfo(reader, commit);
+  const snapshot: ChangeSnapshot = { commit, base: parent, title, description, diff: '', partial: false, files: [] };
   if (parent) {
     const check = await reader.run(['cat-file', '-t', parent], 1024);
     if (check.status !== 0) return { ...snapshot, partial: true };

@@ -3,8 +3,9 @@
 Learn the codebase your agents are building. A local-first, open-source desktop app (Electron) that keeps developers in touch with a repository: learn it from scratch, then follow what changed and why, at three depths.
 
 Open the Atlas to explore prerequisites on a terrain map or switch to the Folio relationship list.
-The first launch includes labeled Archon, Relay and Photography demo workspaces. Add a local
-repository, GitHub repository or topic with **+ Add**. Each workspace has its own atlas.
+On first launch, choose a local repository, GitHub repository or topic, your starting depth and a
+signed-in CLI. **Explore demo atlas** opens the offline Archon, Relay and Photography workspaces.
+Use **+ Add** for more workspaces.
 Progress shows the evidence behind each reading depth and where to reset a shared record.
 
 Open a concept at High, Medium or Low depth to read its lesson and ask the tutor a question.
@@ -14,8 +15,31 @@ and recent conversation from the local graph. No repository files are attached. 
 individual questions, cancel a turn and retry. The optional check updates local evidence, and the
 tutor explains its next suggestion. Reset a check in **Progress** at its recorded workspace.
 
-The demo tutor runs entirely offline. The Archon demo also includes an illustrative change brief
-for PR #184. Repository lessons use the concepts and snapshot already stored in the workspace.
+## Learn a repository
+
+Choose a local Git working tree or enter a GitHub URL or `owner/name`. Delve reads the selected
+commit from the object database. GitHub workspaces use a shallow bare clone of the default branch
+in Delve’s user data directory. Install Git and use `gh auth login` for private repositories and
+pull requests. Delve uses read-only operations with that login.
+
+Select the files to include and review their names, sizes, revision and exact provider request.
+**Approve and map** generates concepts, prerequisites and a suggested first step at the selected
+depth. Demonstrated portable concepts carry their evidence across repositories. You can add another
+slice from the Atlas. Each slice contains at most 128 text files, 128 KiB per file and 1 MiB total.
+
+In **Changes**, choose a recent commit or pull request and preview its diff before approving a brief.
+GitHub workspaces and local repositories with a GitHub origin list pull requests. Local commit briefs
+compare against the first parent. The footprint links to the affected concepts and the brief opens
+as a tutor conversation. A partial coverage notice identifies missing or omitted diff material.
+Saved briefs remain available offline. **Refresh diff preview** checks for an updated revision.
+
+Installed packages accept learn links such as
+`delve://learn?workspace=octo/site&pr=184`. Use an existing repository workspace UUID or a GitHub
+`owner/name` and exactly one of `pr`, `commit` (a hexadecimal Git ID), or `proposed` (a reference
+to discuss). Delve displays the incoming workspace and reference for approval. Opening a repository
+or preparing a request requires a separate decision from sending material to the provider.
+
+The demo tutor runs entirely offline. The Archon demo includes an illustrative brief for PR #184.
 
 - Product direction: [`docs/product.md`](docs/product.md)
 - Binding requirements (R1–R17): [`docs/requirements.md`](docs/requirements.md)

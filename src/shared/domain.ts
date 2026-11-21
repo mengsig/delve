@@ -19,6 +19,7 @@ export type AddWorkspaceInput =
 export interface WorkspaceList {
   workspaces: Workspace[];
   activeId: string | null;
+  hasUserWorkspace?: boolean;
 }
 
 /** Shallow to deep: each depth adds detail to the one before it. */

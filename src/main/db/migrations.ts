@@ -121,6 +121,36 @@ export const MIGRATIONS: readonly Migration[] = [
           SELECT e.workspace_id, e.concept_id FROM evidence e JOIN concepts c ON c.id = e.concept_id
           WHERE e.workspace_id IS NOT NULL AND c.portable = 1;`,
   },
+  {
+    version: 3,
+    name: 'bind repository maps and change conversations to reviewed sources',
+    sql: `CREATE TABLE snapshot_concepts (
+      snapshot_id INTEGER NOT NULL REFERENCES snapshots ON DELETE CASCADE,
+      concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
+      PRIMARY KEY (snapshot_id, concept_id)
+    );
+    CREATE TABLE repository_generations (
+      id INTEGER PRIMARY KEY,
+      cache_key TEXT UNIQUE NOT NULL,
+      workspace_id TEXT NOT NULL REFERENCES workspaces ON DELETE CASCADE,
+      snapshot_id INTEGER NOT NULL REFERENCES snapshots ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('baseline', 'commit', 'pr')),
+      ref TEXT NOT NULL,
+      depth TEXT NOT NULL CHECK (depth IN ('high', 'medium', 'low')),
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      schema_version TEXT NOT NULL,
+      result TEXT NOT NULL CHECK (json_valid(result)),
+      proposal TEXT NOT NULL CHECK (json_valid(proposal)),
+      last_used INTEGER NOT NULL UNIQUE,
+      next_concept INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX repository_saved ON repository_generations (workspace_id, kind, ref, depth, provider, model, last_used);
+    CREATE INDEX repository_path ON repository_generations (workspace_id, depth, last_used);
+    CREATE INDEX snapshot_membership ON snapshot_concepts (concept_id, snapshot_id);`,
+  },
 ];
 
 function assertOrdered(migrations: readonly Migration[]): void {

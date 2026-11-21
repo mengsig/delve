@@ -144,7 +144,7 @@ describe('Git change read boundaries', () => {
     const head = commit('Change');
     const shallow = join(root, 'shallow.git');
     git('clone', '--bare', '--depth=1', '--no-local', repo, shallow);
-    expect(await readChange(shallow, workspace, 'commit', head)).toEqual({
+    expect(await readChange(shallow, workspace, 'commit', head)).toMatchObject({
       commit: head, title: 'Change', diff: '', files: [], partial: true,
     });
   });

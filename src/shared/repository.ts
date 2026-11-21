@@ -32,6 +32,8 @@ export interface RepoPreview {
   bytes: number;
   files: string[];
   commit: string;
+  base?: string;
+  coverageNote?: string;
   title: string;
   partial: boolean;
 }
@@ -42,11 +44,17 @@ export interface ChangeBrief {
   summary: string;
   what: string;
   why: string;
+  mechanics: string | null;
+  boundary: string | null;
   before: string;
   after: string;
+  base?: string;
+  coverageNote?: string;
   commit: string;
   files: string[];
   partial: boolean;
+  trace: string[];
+  excerpt: string[];
   touched: { id: number; title: string }[];
   recommendation: { conceptId: number; reason: string };
 }

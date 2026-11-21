@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { DEPTHS, PROVIDER_IDS } from '../../shared/domain';
 
 export const commitRef = z.string().regex(/^[0-9a-f]{7,64}$/i);
-export const prRef = z.string().regex(/^[1-9][0-9]{0,8}$/);
+export const prRef = z.string().regex(/^[1-9][0-9]{0,9}$/);
 const workspace = z.strictObject({ workspaceId: z.uuid() });
 const scope = workspace.extend({ provider: z.enum(PROVIDER_IDS), depth: z.enum(DEPTHS) });
 const commit = z.strictObject({ kind: z.literal('commit'), ref: commitRef });
@@ -30,6 +30,8 @@ const graph = z.strictObject({
 });
 export const baselineReply = graph.extend({ schema: z.literal('delve.map/1') });
 export const changeReply = graph.extend({ schema: z.literal('delve.change/1'), concepts: z.array(concept).max(60),
-  recommendation: z.strictObject({ key: key.nullable(), reason: text }), summary: text, what: text, why: text, before: text, after: text });
+  recommendation: z.strictObject({ key: key.nullable(), reason: text }), summary: text, what: text, why: text, before: text, after: text,
+  mechanics: text.nullable(), boundary: text.nullable(), trace: z.array(z.string().trim().min(1).max(160)).max(8),
+  excerpt: z.array(z.string().max(2000)).max(16) });
 export type GraphProposal = z.infer<typeof baselineReply> | z.infer<typeof changeReply>;
 export type ChangeReply = z.infer<typeof changeReply>;

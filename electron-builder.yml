@@ -24,8 +24,6 @@ linux:
     - AppImage
     - deb
   category: Education
-  mimeTypes:
-    - x-scheme-handler/delve
   maintainer: mengsig <https://github.com/mengsig>
   artifactName: ${productName}-${version}-${arch}.${ext}
 mac:

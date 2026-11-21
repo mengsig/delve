@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { getConceptByKey } from './concepts';
 import { nowIso, transaction, type Db } from './connection';
-import { DEMO_CONCEPTS, DEMO_PORTABLE, DEMO_WORKSPACES, type DemoConceptId, type DemoWorkspace } from './demo-fixtures';
+import { DEMO_CONCEPTS, DEMO_PORTABLE, DEMO_WORKSPACES, matchesDemo, type DemoConceptId, type DemoWorkspace } from './demo-fixtures';
 import { bindSnapshot } from './lessons';
 import { ACTIVE_WORKSPACE_KEY, getWorkspace } from './workspaces';
 
@@ -9,8 +9,8 @@ const SEED_MARKER = 'demo_seed_v1';
 const demoSource = (demo: DemoWorkspace): string => `Demo: ${demo.title}`;
 
 export function isDemoWorkspace(db: Db, workspaceId: string): boolean {
-  const fixture = DEMO_WORKSPACES.find(({ id }) => id === workspaceId);
-  return fixture !== undefined && getWorkspace(db, workspaceId)?.source === demoSource(fixture);
+  const workspace = getWorkspace(db, workspaceId);
+  return workspace !== null && matchesDemo(workspace);
 }
 
 function linkDemoConcept(db: Db, workspaceId: string, id: DemoConceptId, timestamp: string): number {

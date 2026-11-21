@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import type { LessonAddress } from '../../shared/reader';
 import { DomainError } from '../../shared/errors';
+import { learningSnapshot } from '../db/repository-snapshot';
 import type { Db } from '../db/connection';
 import { isDemoWorkspace } from '../db/demo';
 import { createDemoLesson, type LessonContext } from './demo';
@@ -13,8 +14,7 @@ export function lessonContext(db: Db, address: LessonAddress): LessonContext {
     JOIN concepts c ON c.id = wc.concept_id JOIN workspaces w ON w.id = wc.workspace_id
     WHERE wc.workspace_id = ? AND wc.concept_id = ? AND (c.portable = 1 OR c.workspace_id = w.id)`).get(workspaceId, conceptId);
   if (!row) throw new DomainError('CONCEPT_NOT_FOUND', 'This workspace does not contain the selected concept.');
-  const snapshot = db.prepare(`SELECT id, commit_sha FROM snapshots
-    WHERE workspace_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`).get(workspaceId);
+  const snapshot = learningSnapshot(db, workspaceId, conceptId);
   assert.ok(typeof row.key === 'string' && typeof row.title === 'string' && typeof row.summary === 'string');
   assert.ok(!snapshot || (typeof snapshot.id === 'number' && typeof snapshot.commit_sha === 'string'));
   return {
