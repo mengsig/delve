@@ -21,6 +21,7 @@ export class InstrumentHost {
   private readonly lifetime: number;
   private readonly startup: number;
   private pending = false;
+  private ready = false;
   private accepted = 0;
   private closed = false;
 
@@ -48,7 +49,6 @@ export class InstrumentHost {
   }
 
   private start() {
-    window.clearTimeout(this.startup);
     const { manifest: { config }, state } = this.opening;
     if (config.pack === 'bundle@1') {
       this.display({ program: config });
@@ -62,10 +62,15 @@ export class InstrumentHost {
     const message = this.channel.read(raw, performance.now());
     if (!message) return;
     if (message.kind === 'failed') { this.fail(new Error(message.reason)); return; }
-    if (message.kind === 'ready') { this.start(); this.events.onReady(); return; }
+    if (message.kind === 'ready') { this.start(); return; }
     if (message.kind === 'layout') {
       this.frame.height = String(message.height);
       this.frame.style.visibility = 'visible';
+      if (!this.ready) {
+        this.ready = true;
+        window.clearTimeout(this.startup);
+        this.events.onReady();
+      }
       return;
     }
     const { manifest: { config }, session } = this.opening;

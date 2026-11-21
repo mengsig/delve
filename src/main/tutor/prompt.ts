@@ -73,7 +73,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const selected = storedLesson(db, context);
   const mastery = loadMastery(db, context, selected, hasVerifiedMastery(db, context));
   const intent = request.intent;
-  const needsDiagram = intent.kind === 'ask' && /\b(diagrams?|visual(?:ly|i[sz]e)?|flowcharts?)\b|\bdraw\s+(?:me\s+)?(?:(?:a|an)\s+)?(?:diagram|picture|graph|system trace|this|it)\b/i.test(intent.text);
+  const needsDiagram = intent.kind === 'ask' && /\b(diagrams?|visual(?:s|ly|i[sz](?:e|ation))?|flowcharts?)\b|\bdraw\s+(?:me\s+)?(?:(?:a|an|the)\s+)?(?:diagram|picture|graph|flow|system trace|this|it)\b/i.test(intent.text);
   if (intent.kind === 'review') requireMasteryRevision(mastery, intent.revision, ['teaching', 'review', 'understood', 'skipped']);
   const response = intent.kind === 'answer' ? checkResponse(mastery, intent) : null;
   const reused = mastery.stage === 'understood';

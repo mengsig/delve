@@ -402,6 +402,8 @@ it('identifies visual requests without treating every use of draw as a diagram r
   const ask = (text: string) => prepareTurn(db, { ...request, intent: { kind: 'ask', text } });
   expect(ask('Show some diagrams').needsDiagram).toBe(true);
   expect(ask('Explain this visually').preview.prompt).toContain('"visualRequired": true');
+  expect(ask('Draw the flow').needsDiagram).toBe(true);
+  expect(ask('A visualization, please').needsDiagram).toBe(true);
   expect(ask('Draw a conclusion from this').needsDiagram).toBe(false);
 });
 

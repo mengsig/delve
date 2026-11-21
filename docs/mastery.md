@@ -24,6 +24,6 @@ Delve saves the current question, stage, and attempt counts locally with the les
 depth. It writes a grade, transcript, and evidence in one transaction. An answer approved for an
 earlier question cannot change a newer one. Resetting mastery clears its active progress and
 invalidates previous approvals. Verified mastery at the same depth carries across source revisions
-and shared workspaces; a new review round still requires fresh checks. Earlier evidence from one-off checks and activities remains
-recorded and appears as **Revisit** in the atlas. Curated sample evidence can demonstrate how
+and shared workspaces; a new review round still requires fresh checks. Earlier evidence from one-off
+checks and activities remains recorded and appears as **Revisit** in the atlas. Curated sample evidence can demonstrate how
 mastery transfers across demo workspaces.
