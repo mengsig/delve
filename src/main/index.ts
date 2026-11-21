@@ -4,6 +4,7 @@ import { openDatabase, type Db } from './db/connection';
 import { seedDemoWorkspaces } from './db/demo';
 import { addWorkspace, listWorkspaces, switchWorkspace } from './db/workspaces';
 import { assertGitRepository } from './git';
+import { readerHandlers } from './reader/ipc';
 import { graphHandlers } from './graph-ipc';
 import { registerIpc, type IpcHandlers } from './ipc';
 import { registerAppScheme, serveRenderer } from './protocol';
@@ -58,6 +59,7 @@ function buildHandlers(db: Db): IpcHandlers {
       return result.canceled ? null : (result.filePaths[0] ?? null);
     },
     'providers:detect': () => detectProviders(),
+    ...readerHandlers(db),
     ...graphHandlers(db),
   };
 }

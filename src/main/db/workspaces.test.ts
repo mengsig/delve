@@ -33,7 +33,7 @@ describe('migrations', () => {
   it('rolls back a failing migration', () => {
     const db = memoryDb();
     const broken = [...MIGRATIONS, { version: MIGRATIONS.length + 1, name: 'broken', sql: 'CREATE TABLE ok (x); NOT SQL' }];
-    expect(() => migrate(db, broken)).toThrow(/Migration 2 \(broken\) failed/);
+    expect(() => migrate(db, broken)).toThrow(`Migration ${MIGRATIONS.length + 1} (broken) failed`);
     expect(schemaVersion(db)).toBe(MIGRATIONS.length);
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'ok'").get()).toBeUndefined();
   });

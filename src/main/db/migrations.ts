@@ -110,7 +110,15 @@ CREATE TABLE evidence (
 );
 `;
 
-export const MIGRATIONS: readonly Migration[] = [{ version: 1, name: 'initial schema', sql: INITIAL_SCHEMA }];
+export const MIGRATIONS: readonly Migration[] = [
+  { version: 1, name: 'initial schema', sql: INITIAL_SCHEMA },
+  {
+    version: 2,
+    name: 'scope reader conversations by depth',
+    sql: `ALTER TABLE conversations ADD COLUMN depth TEXT CHECK (depth IN ('high', 'medium', 'low'));
+          CREATE UNIQUE INDEX conversations_by_depth ON conversations (workspace_id, concept_id, depth);`,
+  },
+];
 
 function assertOrdered(migrations: readonly Migration[]): void {
   migrations.forEach((migration, index) => {
