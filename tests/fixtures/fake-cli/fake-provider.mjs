@@ -75,13 +75,14 @@ async function main() {
   if (argv[0] === '--version') return console.log(`fake-${invokedAs} 1.0.0`);
   if (argv[0] === 'auth' || argv[0] === 'login') return handleStatus();
 
-  if (process.env.FAKE_PROVIDER_COUNTER) bump(process.env.FAKE_PROVIDER_COUNTER);
   if (process.env.FAKE_PROVIDER_SELF_PID) fs.writeFileSync(process.env.FAKE_PROVIDER_SELF_PID, String(process.pid));
   const stdin = await readStdin();
   if (process.env.FAKE_PROVIDER_RECORD) {
     const record = { argv, cwd: process.cwd(), cwdEntries: fs.readdirSync(process.cwd()), envKeys: Object.keys(process.env), stdin };
     fs.writeFileSync(process.env.FAKE_PROVIDER_RECORD, JSON.stringify(record));
   }
+  if (process.env.FAKE_PROVIDER_COUNTER) bump(process.env.FAKE_PROVIDER_COUNTER);
+
   if (mode === 'hang') return setInterval(() => undefined, 1000);
   if (mode === 'flood') return flood();
   if (mode === 'orphan' || mode === 'orphan-hang') spawnDescendant(false);
