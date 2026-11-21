@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { DEPTHS, type Depth } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
+import type { GraphEvidence } from '../../shared/graph';
 import { getConceptByKey } from './concepts';
 import { nowIso, transaction, type Db } from './connection';
 import { resolveScope } from './scope';
+import { getWorkspace } from './workspaces';
 
 export const EVIDENCE_STATUSES = ['demonstrated', 'partial', 'revisit'] as const;
 export type EvidenceStatus = (typeof EVIDENCE_STATUSES)[number];
@@ -46,18 +48,17 @@ interface EvidenceRow {
   recorded_at: string;
 }
 
-function toEvidence(row: EvidenceRow): Evidence {
+function evidenceDetails(row: EvidenceRow): Omit<Evidence, 'id' | 'snapshotId'> {
   assert.ok((DEPTHS as readonly string[]).includes(row.depth), `unknown depth ${row.depth}`);
   assert.ok((EVIDENCE_STATUSES as readonly string[]).includes(row.status), `unknown status ${row.status}`);
+  assert.ok((EVIDENCE_SOURCES as readonly string[]).includes(row.source), `unknown source ${row.source}`);
   return {
-    id: row.id,
     conceptId: row.concept_id,
     depth: row.depth as Depth,
     status: row.status as EvidenceStatus,
     source: row.source as EvidenceSource,
     note: row.note,
     workspaceId: row.workspace_id,
-    snapshotId: row.snapshot_id,
     revision: row.revision,
     recordedAt: row.recorded_at,
   };
@@ -78,6 +79,9 @@ export function recordEvidence(db: Db, input: EvidenceInput): Evidence {
   assertInput(input);
   return transaction(db, () => {
     const scope = resolveScope(db, input.conceptId, input.workspaceId, input.snapshotId);
+    if (scope.workspaceId !== null) {
+      db.prepare('INSERT OR IGNORE INTO workspace_concepts (workspace_id, concept_id) VALUES (?, ?)').run(scope.workspaceId, input.conceptId);
+    }
     db.prepare(
       `INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
@@ -99,13 +103,38 @@ export function listEvidence(db: Db, conceptId: number): Evidence[] {
        ORDER BY CASE depth WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END`,
     )
     .all(conceptId) as unknown as EvidenceRow[];
-  return rows.map(toEvidence);
+  return rows.map((row) => ({ ...evidenceDetails(row), id: row.id, snapshotId: row.snapshot_id }));
 }
 
-/**
- * Forgets evidence for a concept, at one depth or all, as seen from `workspaceId` when given: a local
- * concept of another workspace is refused before anything is deleted. Returns how many were removed.
- */
+export function listWorkspaceEvidence(db: Db, workspaceId: string): GraphEvidence[] {
+  const rows = db.prepare(
+    `SELECT e.*, origin.name AS workspace_name
+     FROM workspace_concepts wc
+     JOIN concepts c ON c.id = wc.concept_id
+     JOIN evidence e ON e.concept_id = c.id
+     LEFT JOIN workspaces origin ON origin.id = e.workspace_id
+     WHERE wc.workspace_id = ?
+       AND (c.portable = 1 OR (c.workspace_id = wc.workspace_id AND e.workspace_id = wc.workspace_id))
+     ORDER BY e.concept_id, CASE e.depth WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END`,
+  ).all(workspaceId) as unknown as (EvidenceRow & { workspace_name: string | null })[];
+  return rows.map((row) => {
+    assert.equal(row.workspace_id === null, row.workspace_name === null, 'provenance must refer to an existing workspace');
+    assert.ok(Number.isSafeInteger(row.revision) && row.revision >= 1, 'evidence revision must be a positive integer');
+    return { ...evidenceDetails(row), workspaceName: row.workspace_name };
+  });
+}
+
+function assertResetOrigin(db: Db, workspaceId: string, conceptId: number, depth?: Depth): void {
+  if (!getWorkspace(db, workspaceId)) throw new DomainError('WORKSPACE_NOT_FOUND', 'That workspace no longer exists.');
+  const membership = db.prepare('SELECT 1 FROM workspace_concepts WHERE workspace_id = ? AND concept_id = ?');
+  if (!membership.get(workspaceId, conceptId)) throw new DomainError('SCOPE_MISMATCH', 'That concept is not linked to this workspace.');
+  const target = listEvidence(db, conceptId).filter((e) => depth === undefined || e.depth === depth);
+  if (target.some((e) => e.workspaceId !== null && e.workspaceId !== workspaceId)) {
+    throw new DomainError('SCOPE_MISMATCH', 'Reset this evidence from the workspace where it was recorded.');
+  }
+}
+
+/** Removes canonical evidence. Scoped resets require membership and the recorded origin, when one exists. */
 export function resetEvidence(db: Db, conceptId: number, options: { depth?: Depth; workspaceId?: string } = {}): number {
   const { depth, workspaceId } = options;
   if (depth !== undefined && !(DEPTHS as readonly string[]).includes(depth)) {
@@ -113,12 +142,14 @@ export function resetEvidence(db: Db, conceptId: number, options: { depth?: Dept
   }
   return transaction(db, () => {
     resolveScope(db, conceptId, workspaceId);
+    if (workspaceId !== undefined) assertResetOrigin(db, workspaceId, conceptId, depth);
     const result =
       depth === undefined
         ? db.prepare('DELETE FROM evidence WHERE concept_id = ?').run(conceptId)
         : db.prepare('DELETE FROM evidence WHERE concept_id = ? AND depth = ?').run(conceptId, depth);
     const removed = Number(result.changes);
-    assert.ok(Number.isInteger(removed) && removed >= 0 && removed <= DEPTHS.length, 'at most one record per depth');
+    assert.ok(Number.isSafeInteger(removed) && removed >= 0, 'deletion must report a non-negative integer');
+    assert.ok(removed <= (depth === undefined ? DEPTHS.length : 1), 'at most one record per depth');
     return removed;
   });
 }

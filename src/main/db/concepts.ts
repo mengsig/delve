@@ -148,7 +148,8 @@ export function listWorkspaceConcepts(db: Db, workspaceId: string): Concept[] {
   const rows = db
     .prepare(
       `SELECT c.* FROM workspace_concepts wc JOIN concepts c ON c.id = wc.concept_id
-       WHERE wc.workspace_id = ? ORDER BY c.title`,
+       WHERE wc.workspace_id = ? AND (c.portable = 1 OR c.workspace_id = wc.workspace_id)
+       ORDER BY c.title`,
     )
     .all(workspaceId) as unknown as ConceptRow[];
   return rows.map(toConcept);

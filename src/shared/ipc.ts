@@ -1,15 +1,20 @@
-import type { AddWorkspaceInput, ProviderStatus, Workspace, WorkspaceList } from './domain';
+import type { ReaderContract } from './reader';
+import type { AddWorkspaceInput, Depth, ProviderStatus, Workspace, WorkspaceList } from './domain';
+import type { WorkspaceCoverage, WorkspaceGraph } from './graph';
 
 /**
  * The one typed channel map shared by main, preload and renderer.
  * Adding a channel here forces a main handler (see src/main/ipc.ts).
  */
-export interface IpcContract {
+export interface IpcContract extends ReaderContract {
   'workspaces:list': { request: null; response: WorkspaceList };
   'workspaces:add': { request: AddWorkspaceInput; response: Workspace };
   'workspaces:switch': { request: { id: string }; response: WorkspaceList };
   'workspaces:pick-folder': { request: null; response: string | null };
   'providers:detect': { request: null; response: ProviderStatus[] };
+  'graph:read': { request: { workspaceId: string }; response: WorkspaceGraph };
+  'progress:read': { request: null; response: WorkspaceCoverage[] };
+  'evidence:reset': { request: { workspaceId: string; conceptId: number; depth: Depth }; response: boolean };
 }
 
 export type IpcChannel = keyof IpcContract;
@@ -23,6 +28,12 @@ const CHANNEL_FLAGS: Record<IpcChannel, true> = {
   'workspaces:switch': true,
   'workspaces:pick-folder': true,
   'providers:detect': true,
+  'reader:lesson': true,
+  'reader:message': true,
+  'reader:answer': true,
+  'graph:read': true,
+  'progress:read': true,
+  'evidence:reset': true,
 };
 
 export const IPC_CHANNELS = Object.freeze(Object.keys(CHANNEL_FLAGS) as IpcChannel[]);

@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { z } from 'zod';
@@ -180,7 +180,8 @@ export class ProviderRunner {
   }
 
   private async runOnce<T>(req: RunRequest<T>, command: Command, signal: AbortSignal): Promise<T> {
-    const root = await mkdtemp(path.join(this.deps.tempRoot ?? tmpdir(), 'delve-run-'));
+    const tempRoot = await realpath(this.deps.tempRoot ?? tmpdir());
+    const root = await mkdtemp(path.join(tempRoot, 'delve-run-'));
     const attempt: Attempt = { command, root, workDir: path.join(root, 'work'), ioDir: path.join(root, 'io') };
     let outcome: { ok: true; value: T } | { ok: false; error: unknown };
     try {

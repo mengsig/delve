@@ -1,0 +1,75 @@
+.reader-layout {
+  margin-top: 18px;
+  overflow-wrap: anywhere;
+}
+.reader-layout pre {
+  overflow-x: auto;
+  white-space: pre;
+}
+.reader-author {
+  margin-bottom: 14px;
+}
+.reader-thread .reader-notice {
+  margin-bottom: 14px;
+  border-left: 3px solid var(--gold);
+  padding-left: 12px;
+}
+.reader-notice button {
+  margin-top: 8px;
+}
+.reader-conversation {
+  margin-top: 16px;
+}
+.reader-conversation form {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+.reader-conversation label {
+  color: var(--ink);
+  font-weight: 600;
+}
+.reader-conversation textarea {
+  resize: vertical;
+  min-height: 64px;
+  max-height: 40vh;
+  padding: 12px 14px;
+  width: 100%;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+  font: inherit;
+}
+.reader-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 18px;
+  flex-wrap: wrap;
+}
+.reader-composer-footer p {
+  flex: 1 1 210px;
+  margin: 0;
+}
+.reader-message {
+  margin-block: 12px;
+  padding: 10px 14px;
+  border-inline-start: 2px solid var(--rule);
+}
+.reader-message p {
+  margin-top: 5px;
+  white-space: pre-wrap;
+}
+.reader-message-learner {
+  background: var(--soft);
+  border-radius: 8px;
+  border-color: var(--green);
+  margin-inline-start: 16px;
+}
+.reader-comparison {
+  margin-top: 10px;
+}
+.reader-comparison .note {
+  margin: 0;
+}

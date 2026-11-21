@@ -2,8 +2,13 @@
 
 Learn the codebase your agents are building. A local-first, open-source desktop app (Electron) that keeps developers in touch with a repository: learn it from scratch, then follow what changed and why, at three depths.
 
-Status: early development. This is the foundation: the hardened desktop shell, the local knowledge
-graph, the provider runner and a minimal workspace page. The Contour interface comes next.
+Open the Atlas to explore prerequisites on a terrain map or switch to the Folio relationship list.
+The first launch includes labeled Archon, Relay and Photography demo workspaces. Add a local
+repository, GitHub repository or topic with **+ Add**. Each workspace has its own atlas.
+Progress shows the evidence behind each reading depth and where to reset a shared record.
+
+The demo includes an offline lesson conversation and the illustrative Archon change brief for
+PR #184. New workspaces show their stored knowledge graph, lessons and source snapshot as available.
 
 - Product direction: [`docs/product.md`](docs/product.md)
 - Binding requirements (R1–R17): [`docs/requirements.md`](docs/requirements.md)
@@ -40,7 +45,7 @@ npm run dev       # start the app with hot reload
 | `npm run typecheck` | TypeScript for main/preload and for the renderer |
 | `npm test` | Vitest unit tests (database, IPC, security guards, provider runner with a fake CLI) |
 | `npm run test:providers` | Only the provider runner tests; CI runs them on Linux, macOS and Windows |
-| `npm run test:smoke` | Builds, then launches the app with Playwright and drives the workspace page |
+| `npm run test:smoke` | Builds, then launches the app with Playwright and drives workspace, graph and evidence flows |
 | `npm run build` | Builds main, preload and renderer into `out/` |
 | `npm run package` | Builds installers for the current platform into `release/` |
 | `npm run package:linux` / `:mac` / `:win` | Builds AppImage + deb, dmg, or NSIS |

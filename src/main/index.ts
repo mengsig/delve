@@ -1,8 +1,11 @@
 import { join, resolve } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { openDatabase, type Db } from './db/connection';
+import { seedDemoWorkspaces } from './db/demo';
 import { addWorkspace, listWorkspaces, switchWorkspace } from './db/workspaces';
 import { assertGitRepository } from './git';
+import { readerHandlers } from './reader/ipc';
+import { graphHandlers } from './graph-ipc';
 import { registerIpc, type IpcHandlers } from './ipc';
 import { registerAppScheme, serveRenderer } from './protocol';
 import { detectProviders } from './providers/detect';
@@ -56,6 +59,8 @@ function buildHandlers(db: Db): IpcHandlers {
       return result.canceled ? null : (result.filePaths[0] ?? null);
     },
     'providers:detect': () => detectProviders(),
+    ...readerHandlers(db),
+    ...graphHandlers(db),
   };
 }
 
@@ -65,6 +70,7 @@ async function start(): Promise<void> {
   serveRenderer(join(__dirname, '../renderer'));
   const db = openDatabase(join(app.getPath('userData'), 'delve.sqlite'));
   app.on('will-quit', () => db.close());
+  seedDemoWorkspaces(db);
   registerIpc(ipcMain, buildHandlers(db), (url) => isAppUrl(url, devServerUrl));
   createWindow();
   app.on('activate', () => {

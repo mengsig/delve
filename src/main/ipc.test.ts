@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DomainError } from '../shared/errors';
 import { IPC_CHANNELS } from '../shared/ipc';
+import { upsertConcept } from './db/concepts';
+import { openDatabase } from './db/connection';
+import { recordEvidence } from './db/evidence';
+import { addWorkspace } from './db/workspaces';
+import { graphHandlers } from './graph-ipc';
 import { dispatch, registerIpc, type IpcHandlers, type IpcRegistrar } from './ipc';
 
 const workspace = { id: '0b0f5f56-1d3c-4a5e-9a51-3c8f4c2f3e10', kind: 'topic', name: 'Chess', source: 'chess', createdAt: 'now', lastOpenedAt: null } as const;
@@ -12,6 +17,12 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
     'workspaces:switch': () => ({ workspaces: [workspace], activeId: workspace.id }),
     'workspaces:pick-folder': () => null,
     'providers:detect': () => [],
+    'reader:lesson': () => { throw new Error('Unexpected lesson request'); },
+    'reader:message': () => { throw new Error('Unexpected message request'); },
+    'reader:answer': () => { throw new Error('Unexpected answer request'); },
+    'graph:read': ({ workspaceId }) => ({ workspaceId, concepts: [], edges: [], evidence: [], snapshot: null, demo: false }),
+    'progress:read': () => [],
+    'evidence:reset': () => false,
     ...overrides,
   };
 }
@@ -39,6 +50,59 @@ describe('dispatch', () => {
     expect(JSON.stringify(result)).not.toContain('secret');
     expect(log).toHaveBeenCalledOnce();
     log.mockRestore();
+  });
+});
+
+describe('graph IPC', () => {
+  it('validates graph, coverage and evidence reset requests before dispatch', async () => {
+    const read = vi.fn<IpcHandlers['graph:read']>();
+    const reset = vi.fn<IpcHandlers['evidence:reset']>();
+    const coverage = vi.fn<IpcHandlers['progress:read']>();
+    const h = handlers({ 'graph:read': read, 'evidence:reset': reset, 'progress:read': coverage });
+    const invalid = { ok: false, error: { code: 'INVALID_REQUEST' } };
+    expect(await dispatch(h, 'graph:read', { workspaceId: 'invalid' })).toMatchObject(invalid);
+    expect(await dispatch(h, 'graph:read', { workspaceId: workspace.id, source: 'anything' })).toMatchObject(invalid);
+    expect(await dispatch(h, 'progress:read', { workspaceId: workspace.id })).toMatchObject(invalid);
+    for (const conceptId of [0, -1, 1.2, '1', Number.MAX_SAFE_INTEGER + 1]) {
+      expect(await dispatch(h, 'evidence:reset', { workspaceId: workspace.id, conceptId, depth: 'medium' })).toMatchObject(invalid);
+    }
+    expect(await dispatch(h, 'evidence:reset', { workspaceId: workspace.id, conceptId: 1, depth: 'other' })).toMatchObject(invalid);
+    expect(await dispatch(h, 'evidence:reset', { workspaceId: workspace.id, conceptId: 1, depth: 'high', all: true })).toMatchObject(invalid);
+    expect(read).not.toHaveBeenCalled();
+    expect(coverage).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+  });
+
+  it('reads coverage and resets only exact evidence owned by the requesting workspace', async () => {
+    const db = openDatabase(':memory:');
+    try {
+      const origin = addWorkspace(db, { kind: 'topic', title: 'Origin' });
+      const linked = addWorkspace(db, { kind: 'topic', title: 'Linked' });
+      const input = { key: 'queue', title: 'Queue', portable: true };
+      const concept = upsertConcept(db, { ...input, workspaceId: origin.id });
+      upsertConcept(db, { ...input, workspaceId: linked.id });
+      recordEvidence(db, { conceptId: concept.id, depth: 'medium', status: 'demonstrated', source: 'check', workspaceId: origin.id });
+      const h = handlers(graphHandlers(db));
+      expect(await dispatch(h, 'progress:read', null)).toEqual({
+        ok: true,
+        value: [origin, linked].map(({ id }) => ({ workspaceId: id, total: 1, known: { high: 0, medium: 1, low: 0 } })),
+      });
+      const reset = { workspaceId: origin.id, conceptId: concept.id, depth: 'medium' };
+      expect(await dispatch(h, 'evidence:reset', { ...reset, workspaceId: linked.id })).toMatchObject({
+        ok: false, error: { code: 'SCOPE_MISMATCH' },
+      });
+      expect(await dispatch(h, 'graph:read', { workspaceId: linked.id })).toMatchObject({
+        ok: true, value: { evidence: [{ workspaceId: origin.id, workspaceName: 'Origin' }] },
+      });
+      expect(await dispatch(h, 'evidence:reset', reset)).toEqual({ ok: true, value: true });
+      expect(await dispatch(h, 'evidence:reset', reset)).toEqual({ ok: true, value: false });
+      expect(await dispatch(h, 'graph:read', { workspaceId: linked.id })).toMatchObject({ ok: true, value: { evidence: [] } });
+      expect(await dispatch(h, 'graph:read', { workspaceId: workspace.id })).toMatchObject({
+        ok: false, error: { code: 'WORKSPACE_NOT_FOUND' },
+      });
+    } finally {
+      db.close();
+    }
   });
 });
 

@@ -1,0 +1,464 @@
+{
+  "queue": {
+    "mechanics": "The ingress module appends work before dispatch scans it.",
+    "detail": "A committed row is visible after restart; an in-memory notification is only a hint.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "Why keep a durable queue?",
+        "options": [
+          "Make polling faster",
+          "Retain work across restarts"
+        ],
+        "expected": 1
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "The process restarts. Where should pending work come from?",
+        "options": [
+          "Persisted queue",
+          "Last wake-up signal"
+        ],
+        "expected": 0
+      },
+      "low": {
+        "type": "check",
+        "prompt": "After process death, which artifact proves acceptance?",
+        "options": [
+          "A committed task row",
+          "A sent wake-up signal"
+        ],
+        "expected": 0
+      }
+    }
+  },
+  "clock": {
+    "mechanics": "The scheduler compares its own clock with the stored claim deadline.",
+    "detail": "Eligibility begins at now ≥ deadline; a client clock cannot extend the boundary.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "Why put a deadline on a claim?",
+        "options": [
+          "Count completed jobs",
+          "Recover abandoned work"
+        ],
+        "expected": 1
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "Whose clock decides that a claim has expired?",
+        "options": [
+          "The worker’s display",
+          "The scheduler’s clock"
+        ],
+        "expected": 1
+      },
+      "low": {
+        "type": "check",
+        "prompt": "At exactly the stored deadline, is the old claim eligible for replacement here?",
+        "options": [
+          "No: only now > deadline",
+          "Yes: now ≥ deadline"
+        ],
+        "expected": 1
+      }
+    }
+  },
+  "lease": {
+    "mechanics": "The dispatcher grants a lease. After expiry it can grant a new one. The result writer must still distinguish the two owners.",
+    "detail": "A lease carries a monotonically increasing generation. Commit checks the active generation atomically; an expired worker cannot overwrite a newer attempt.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "Why give ownership an expiry?",
+        "options": [
+          "Let abandoned work move on",
+          "Prevent every duplicate execution"
+        ],
+        "expected": 0
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "Two workers finished. Which result may become durable?",
+        "options": [
+          "The first to report",
+          "The current lease holder’s"
+        ],
+        "expected": 1
+      },
+      "low": {
+        "type": "check",
+        "prompt": "Which predicate belongs in the atomic result write?",
+        "options": [
+          "Task ID and active generation",
+          "Task ID and worker start time"
+        ],
+        "expected": 0
+      }
+    }
+  },
+  "fence": {
+    "mechanics": "The result writer matches the claim generation against the active lease before publishing output.",
+    "detail": "Commit and generation comparison share one transaction. A stale generation affects zero rows.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "Why fence writes?",
+        "options": [
+          "Keep an old owner from replacing a newer result",
+          "Stop old workers from using CPU"
+        ],
+        "expected": 0
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "Which comparison protects a write after reassignment?",
+        "options": [
+          "Task name matches",
+          "Active generation matches"
+        ],
+        "expected": 1
+      },
+      "low": {
+        "type": "check",
+        "prompt": "The guarded update touched zero rows. What should the old worker infer?",
+        "options": [
+          "Its claim is stale",
+          "Its payload is already current"
+        ],
+        "expected": 0
+      }
+    }
+  },
+  "journal": {
+    "mechanics": "The journal records accepted state transitions; the dashboard projects them into a timeline.",
+    "detail": "A stable event ID makes replay idempotent; the cursor advances only after application.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "Why keep a journal?",
+        "options": [
+          "Predict future task duration",
+          "Reconstruct accepted transitions"
+        ],
+        "expected": 1
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "During replay, the same event appears twice. What matters?",
+        "options": [
+          "Its stable ID",
+          "Its screen position"
+        ],
+        "expected": 0
+      },
+      "low": {
+        "type": "check",
+        "prompt": "When can a replay cursor advance?",
+        "options": [
+          "After applying the event",
+          "As soon as the event is read"
+        ],
+        "expected": 0
+      }
+    }
+  },
+  "recovery": {
+    "mechanics": "The recovery pass reloads queued tasks, checks leases and reconciles the journal.",
+    "detail": "A live generation must not be displaced by a restart; only expired claims become eligible.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "What is recovery trying to preserve?",
+        "options": [
+          "Only the latest process ID",
+          "Pending work and live ownership"
+        ],
+        "expected": 1
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "After restart, which task is eligible for reassignment?",
+        "options": [
+          "Any visible task",
+          "One with an expired claim"
+        ],
+        "expected": 1
+      },
+      "low": {
+        "type": "check",
+        "prompt": "A recovery scan sees a live unexpired claim. What happens?",
+        "options": [
+          "Bump its generation on every scan",
+          "Leave its generation intact"
+        ],
+        "expected": 1
+      }
+    }
+  },
+  "retry": {
+    "mechanics": "The delivery loop schedules a bounded retry rather than immediately flooding the receiver.",
+    "detail": "Persist attempt number and next eligible time with the job.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "Why delay another delivery attempt?",
+        "options": [
+          "Erase the earlier failure",
+          "Let the receiver recover"
+        ],
+        "expected": 1
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "When should a failed delivery be retried?",
+        "options": [
+          "After its scheduled delay",
+          "Continuously"
+        ],
+        "expected": 0
+      },
+      "low": {
+        "type": "check",
+        "prompt": "Which fields must survive a retry-loop restart?",
+        "options": [
+          "Attempt count and next eligible time",
+          "Only the latest exception text"
+        ],
+        "expected": 0
+      }
+    }
+  },
+  "delivery": {
+    "mechanics": "The dispatcher measures a response and acknowledges successful deliveries.",
+    "detail": "A durable acknowledgment suppresses replay of a confirmed job.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "What does the delivery loop connect?",
+        "options": [
+          "Logs to the user interface",
+          "Queued work to the receiver"
+        ],
+        "expected": 1
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "What should remove a job from pending delivery?",
+        "options": [
+          "Sending bytes",
+          "Confirmed acknowledgment"
+        ],
+        "expected": 1
+      },
+      "low": {
+        "type": "check",
+        "prompt": "What prevents replay after success?",
+        "options": [
+          "A persisted acknowledgment",
+          "A worker-local success flag"
+        ],
+        "expected": 0
+      }
+    }
+  },
+  "light": {
+    "mechanics": "Changing the light changes the exposure available at a fixed aperture.",
+    "detail": "Twice the light gives one stop more exposure at identical settings.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "What does available light describe?",
+        "options": [
+          "Illumination reaching the scene",
+          "The crop of the final image"
+        ],
+        "expected": 0
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "With fixed camera settings, doubling the light does what?",
+        "options": [
+          "Brightens the exposure",
+          "Freezes the subject"
+        ],
+        "expected": 0
+      },
+      "low": {
+        "type": "check",
+        "prompt": "The scene light doubles at fixed settings. What changes?",
+        "options": [
+          "One stop more exposure",
+          "Two stops more exposure"
+        ],
+        "expected": 0
+      }
+    }
+  },
+  "frame": {
+    "mechanics": "Give a moving subject room in its direction of travel.",
+    "detail": "A crop alters composition, not the time recorded by the shutter.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "Which choice changes framing?",
+        "options": [
+          "Move the rider toward the edge",
+          "Raise ISO one stop"
+        ],
+        "expected": 0
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "Does a tighter crop shorten the exposure time?",
+        "options": [
+          "Yes",
+          "No"
+        ],
+        "expected": 1
+      },
+      "low": {
+        "type": "check",
+        "prompt": "A digital crop changes which of these?",
+        "options": [
+          "Exposure duration",
+          "Image composition"
+        ],
+        "expected": 1
+      }
+    }
+  },
+  "exposure": {
+    "mechanics": "Use a shorter exposure to limit motion blur. Raise ISO to brighten the recorded result at the fixed aperture.",
+    "detail": "This simplified scene is calibrated to 1/125 s at ISO 200. Moving from 1/125 to 1/500 loses two stops; ISO 800 offsets the brightness change, not the lost photons.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "What makes the moving rider look smeared?",
+        "options": [
+          "Low ISO alone",
+          "Motion during the exposure"
+        ],
+        "expected": 1
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "The rider is sharp but dark. Keep the shutter time and…",
+        "options": [
+          "Raise ISO",
+          "Lower ISO"
+        ],
+        "expected": 0
+      },
+      "low": {
+        "type": "check",
+        "prompt": "In this scene, 1/125 s at ISO 200 becomes 1/500 s. Which ISO restores displayed brightness?",
+        "options": [
+          "ISO 400",
+          "ISO 800"
+        ],
+        "expected": 1
+      }
+    }
+  },
+  "shutter": {
+    "mechanics": "A shorter exposure holds a moving subject closer to one position.",
+    "detail": "Going from 1/125 to 1/500 shortens the recorded motion to one quarter at the same speed.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "Which control changes the time recorded?",
+        "options": [
+          "ISO",
+          "Shutter speed"
+        ],
+        "expected": 1
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "For a sharper moving rider, choose…",
+        "options": [
+          "1/30 s",
+          "1/500 s"
+        ],
+        "expected": 1
+      },
+      "low": {
+        "type": "check",
+        "prompt": "At fixed subject speed, going from 1/125 to 1/500 gives…",
+        "options": [
+          "Half the motion trail",
+          "One quarter of the motion trail"
+        ],
+        "expected": 1
+      }
+    }
+  },
+  "iso": {
+    "mechanics": "Choose shutter speed for motion first, then compensate brightness when aperture is fixed.",
+    "detail": "Raising ISO cannot recover photons lost to a shorter exposure; noise may become more visible.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "Which adjustment changes brightness without changing exposure time?",
+        "options": [
+          "ISO",
+          "Shutter time"
+        ],
+        "expected": 0
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "Higher ISO with the same shutter time will…",
+        "options": [
+          "Shorten motion trails",
+          "Change recorded brightness"
+        ],
+        "expected": 1
+      },
+      "low": {
+        "type": "check",
+        "prompt": "Can raising ISO recover photons lost to a faster shutter?",
+        "options": [
+          "No, it changes recorded brightness",
+          "Yes, it increases incoming light"
+        ],
+        "expected": 0
+      }
+    }
+  },
+  "pan": {
+    "mechanics": "Track the rider through the exposure so the background moves relative to the camera.",
+    "detail": "The closer subject and camera angular speeds match, the smaller the subject’s image displacement.",
+    "checks": {
+      "high": {
+        "type": "check",
+        "prompt": "What moves in a panning shot?",
+        "options": [
+          "The camera follows the subject",
+          "The camera stays fixed"
+        ],
+        "expected": 0
+      },
+      "medium": {
+        "type": "check",
+        "prompt": "While panning, follow…",
+        "options": [
+          "The rider",
+          "The background"
+        ],
+        "expected": 0
+      },
+      "low": {
+        "type": "check",
+        "prompt": "How do you minimize displacement of the rider in frame?",
+        "options": [
+          "Match only the distance to the road",
+          "Match the rider’s angular speed"
+        ],
+        "expected": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,259 @@
+@keyframes appear {
+  from {
+    opacity: 0.4;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes bloom {
+  0% {
+    box-shadow: 0 0 0 1px #91b24d;
+  }
+  65% {
+    box-shadow: 0 0 0 8px #91b24d44;
+  }
+  100% {
+    box-shadow: 0 0 0 14px transparent;
+  }
+}
+@media (min-width: 1450px) {
+  .mapbox {
+    min-height: 430px;
+  }
+  .net {
+    height: 290px;
+  }
+}
+@media (max-width: 960px) {
+  .shell {
+    width: 96%;
+  }
+  .split {
+    grid-template-columns: minmax(0, 1fr) minmax(230px, 0.52fr);
+  }
+  .app {
+    padding: 18px;
+  }
+  .maphead,
+  .mapfoot {
+    padding: 14px;
+  }
+  .mapfoot > .coord {
+    display: none;
+  }
+  .rec {
+    padding: 12px;
+    gap: 8px;
+  }
+  .rec .ico-box {
+    display: none;
+  }
+  .rec {
+    grid-template-columns: 1fr auto;
+  }
+  .windowbar {
+    padding: 12px 18px;
+  }
+  .reader {
+    grid-template-columns: minmax(0, 1fr) minmax(190px, 0.42fr);
+  }
+}
+@media (max-width: 760px) {
+  .shell {
+    margin-top: 12px;
+  }
+  .split,
+  .reader,
+  .setup-grid,
+  .grid3,
+  .folio .reader {
+    grid-template-columns: 1fr;
+  }
+  .folio .reader article,
+  .folio .reader aside {
+    grid-column: auto;
+    grid-row: auto;
+  }
+  .appnav {
+    order: 3;
+    width: 100%;
+    justify-content: space-evenly;
+  }
+  .windowbar {
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+  .recs {
+    margin-top: 10px;
+  }
+  .recs .ico-box {
+    display: grid;
+  }
+  .rec {
+    grid-template-columns: auto 1fr auto;
+  }
+  .grid2 {
+    grid-template-columns: 1fr;
+  }
+  .setup-art {
+    min-height: 190px;
+  }
+  .grid3 .card + .card {
+    margin: 0;
+  }
+  .topline {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .profile-row {
+    gap: 7px;
+    font-size: 12px;
+  }
+  .profile-row button {
+    padding: 6px;
+  }
+  .profile-row {
+    grid-template-columns: 1.25fr repeat(3, 0.8fr);
+  }
+  .inspector {
+    align-items: start;
+  }
+  .case {
+    flex-wrap: wrap;
+  }
+  .net {
+    margin: 0 12%;
+    height: 230px;
+  }
+  .node span {
+    font-size: 10px;
+  }
+  .mapbox {
+    min-height: 335px;
+  }
+  .topline {
+    gap: 12px;
+  }
+  .maphead .coord {
+    font-size: 8px;
+  }
+  .appnav button {
+    font-size: 12px;
+    padding: 6px;
+  }
+  .shell {
+    width: 97%;
+  }
+  .card,
+  .sheet {
+    padding: 16px;
+  }
+  .scope select {
+    padding: 6px;
+  }
+  .app {
+    padding: 15px;
+  }
+  .seg button {
+    padding: 6px 9px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *:before,
+  *:after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+@media print {
+  .windowbar {
+    display: none;
+  }
+  .shell {
+    width: 100%;
+    box-shadow: none;
+  }
+}
+.node.next:before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border: 1.5px dotted #f5ce86;
+  border-radius: 50%;
+}
+.node.next span:after {
+  content: " · next";
+  color: #f5ce86;
+}
+.node.success:after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 2px solid #daf89d;
+  border-radius: 50%;
+  animation: earned 0.85s ease-out forwards;
+  pointer-events: none;
+}
+#checkpoint,
+.chapter,
+.sheet {
+  scroll-margin-top: 16px;
+}
+@keyframes earned {
+  from {
+    transform: scale(0.6);
+    opacity: 1;
+  }
+  to {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+}
+.scope select {
+  max-width: 100%;
+}
+.scope {
+  max-width: 100%;
+}
+.plate,
+.map-label {
+  text-wrap: pretty;
+}
+.node:focus-visible {
+  z-index: 2;
+}
+.folio .sheet,
+.folio .ledger {
+  background: #f8f5e9;
+}
+.folio .reader aside {
+  background: transparent;
+  border-left: 2px solid #aca486;
+  border-radius: 0;
+}
+.folio .chapter h3,
+.folio .stage strong {
+  font-family: Georgia, serif;
+  font-weight: 500;
+}
+.folio .stage {
+  border-top-color: #898268;
+}
+.folio .chapter {
+  border-top-color: #dad3bf;
+}
+.folio .reader aside .eyebrow {
+  color: #726a48;
+}
+html[data-theme="dark"] .folio .sheet,
+html[data-theme="dark"] .folio .ledger {
+  background: #2b2b22;
+}
+html[data-theme="dark"] .folio .reader aside .eyebrow {
+  color: #d5cda8;
+}

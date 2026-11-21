@@ -1,0 +1,64 @@
+import assert from 'node:assert/strict';
+import { DEPTHS } from '../../shared/domain';
+import { DomainError } from '../../shared/errors';
+import type { GraphEdge, WorkspaceCoverage, WorkspaceGraph } from '../../shared/graph';
+import { listWorkspaceConcepts } from './concepts';
+import type { Db } from './connection';
+import { isDemoWorkspace } from './demo';
+import { listWorkspaceEvidence } from './evidence';
+import { getWorkspace } from './workspaces';
+
+export function readWorkspaceGraph(db: Db, workspaceId: string): WorkspaceGraph {
+  const workspace = getWorkspace(db, workspaceId);
+  if (!workspace) throw new DomainError('WORKSPACE_NOT_FOUND', 'That workspace no longer exists.');
+  const concepts = listWorkspaceConcepts(db, workspaceId)
+    .sort((a, b) => a.id - b.id)
+    .map(({ id, key, title, summary, portable }) => ({ id, key, title, summary, portable }));
+  const ids = new Set(concepts.map(({ id }) => id));
+  assert.equal(ids.size, concepts.length, 'workspace concept membership must be unique');
+  const edgeRows = db.prepare(
+    `SELECT e.concept_id AS conceptId, e.prerequisite_id AS prerequisiteId
+     FROM workspace_concepts wc JOIN concept_edges e ON e.concept_id = wc.concept_id
+     WHERE wc.workspace_id = ?
+     ORDER BY e.concept_id, e.prerequisite_id`,
+  ).all(workspaceId) as unknown as GraphEdge[];
+  const edges = edgeRows.filter(({ conceptId, prerequisiteId }) => ids.has(conceptId) && ids.has(prerequisiteId));
+  const evidence = listWorkspaceEvidence(db, workspaceId);
+  assert.ok(evidence.every((row) => ids.has(row.conceptId)), 'evidence must be in the workspace graph');
+  const snapshot = db.prepare(
+    'SELECT commit_sha FROM snapshots WHERE workspace_id = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+  ).get(workspaceId) as { commit_sha: string } | undefined;
+  return { workspaceId, concepts, edges, evidence, snapshot: snapshot?.commit_sha ?? null, demo: isDemoWorkspace(db, workspaceId) };
+}
+
+interface CoverageRow {
+  workspaceId: string;
+  total: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export function readWorkspaceCoverage(db: Db): WorkspaceCoverage[] {
+  const rows = db.prepare(
+    `SELECT w.id AS workspaceId, COUNT(DISTINCT c.id) AS total,
+       SUM(CASE WHEN e.depth = 'high' THEN 1 ELSE 0 END) AS high,
+       SUM(CASE WHEN e.depth = 'medium' THEN 1 ELSE 0 END) AS medium,
+       SUM(CASE WHEN e.depth = 'low' THEN 1 ELSE 0 END) AS low
+     FROM workspaces w
+     LEFT JOIN workspace_concepts wc ON wc.workspace_id = w.id
+     LEFT JOIN concepts c ON c.id = wc.concept_id AND (c.portable = 1 OR c.workspace_id = w.id)
+     LEFT JOIN evidence e ON e.concept_id = c.id AND e.status = 'demonstrated'
+       AND (c.portable = 1 OR e.workspace_id = w.id)
+     GROUP BY w.id ORDER BY w.rowid`,
+  ).all() as unknown as CoverageRow[];
+  return rows.map(({ workspaceId, total, high, medium, low }) => {
+    const known = { high, medium, low };
+    assert.ok(Number.isSafeInteger(total) && total >= 0, 'coverage must count a non-negative number of concepts');
+    assert.ok(
+      DEPTHS.every((depth) => Number.isSafeInteger(known[depth]) && known[depth] >= 0 && known[depth] <= total),
+      'depth coverage must fit the map',
+    );
+    return { workspaceId, total, known };
+  });
+}

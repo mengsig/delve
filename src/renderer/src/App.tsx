@@ -1,92 +1,77 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { ProviderStatus, WorkspaceList } from '../../shared/domain';
-import { call } from './api';
+import { useEffect, useRef, useState } from 'react';
+import type { Depth, Workspace, WorkspaceList } from '../../shared/domain';
 import { AddWorkspaceForm } from './AddWorkspaceForm';
+import { call } from './api';
+import { Header, type Screen } from './Header';
+import { storeDepth } from './preferences';
+import { ReadState } from './ReadState';
+import { Study } from './Study';
+import { isSwitcherShortcut } from './switcher';
+import { errorMessage, useRead } from './useRead';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
-const KIND_LABELS = { git: 'Local Git repository', github: 'GitHub repository', topic: 'Topic' } as const;
-const STATE_LABELS: Record<ProviderStatus['state'], string> = {
-  'not-found': 'not found',
-  'signed-out': 'not signed in',
-  'signed-in': 'signed in',
-  'api-key': 'not signed in with a subscription',
-  unknown: 'sign-in state unknown',
-};
+const readWorkspaces = () => call('workspaces:list', null);
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function useSwitcher() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const mac = /Mac/i.test(navigator.platform);
+    function shortcut(event: KeyboardEvent) {
+      if (isSwitcherShortcut(event, mac)) {
+        event.preventDefault();
+        if (!event.repeat) setOpen(true);
+      }
+    }
+    window.addEventListener('keydown', shortcut);
+    return () => window.removeEventListener('keydown', shortcut);
+  }, []);
+  return { open, show: () => setOpen(true), hide: () => setOpen(false) };
 }
 
-function Workspaces({ list, onSwitch }: { list: WorkspaceList; onSwitch: (id: string) => void }) {
-  if (list.workspaces.length === 0) return <p className="muted">No workspaces yet. Add one below.</p>;
-  return (
-    <ul aria-label="Workspaces">
-      {list.workspaces.map((workspace) => {
-        const active = workspace.id === list.activeId;
-        return (
-          <li key={workspace.id} className={active ? 'active' : undefined} aria-current={active ? 'true' : undefined}>
-            <span>{workspace.name}</span>
-            <span className="muted">{KIND_LABELS[workspace.kind]}</span>
-            {active ? <span>(active)</span> : <button onClick={() => onSwitch(workspace.id)}>Switch to {workspace.name}</button>}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
+function Desktop({ initial }: { initial: WorkspaceList }) {
+  const [list, setList] = useState(initial);
+  const [screen, setScreen] = useState<Screen>(initial.activeId ? 'atlas' : 'setup');
+  const [error, setError] = useState('');
+  const palette = useSwitcher();
+  const main = useRef<HTMLElement>(null);
+  const active = list.workspaces.find(workspace => workspace.id === list.activeId);
+  useEffect(() => {
+    main.current?.focus({ preventScroll: true });
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [screen, list.activeId]);
 
-function Providers({ statuses }: { statuses: ProviderStatus[] | null }) {
-  if (statuses === null) return <p className="muted">Checking installed CLIs…</p>;
-  return (
-    <ul aria-label="Providers">
-      {statuses.map((status) => (
-        <li key={status.id} data-provider={status.id} data-state={status.state}>
-          <span>{status.id === 'claude' ? 'Claude Code' : 'Codex'}</span>
-          <span>{STATE_LABELS[status.state]}</span>
-          <span className="muted">{status.version ?? status.detail}</span>
-        </li>
-      ))}
-    </ul>
-  );
+  async function select(id: string, destination: Screen) {
+    const next = await call('workspaces:switch', { id });
+    setList(next);
+    setError('');
+    setScreen(destination);
+  }
+  function added(workspace: Workspace, depth: Depth) {
+    storeDepth(workspace.id, depth);
+    setList(previous => ({ activeId: workspace.id, workspaces: [workspace, ...previous.workspaces] }));
+    setScreen('atlas');
+  }
+  return <>
+    <a className="skip-link" href="#workspace-page">Skip to workspace</a>
+    <section className="shell" aria-label="Delve desktop">
+      <Header screen={screen} go={setScreen} openSwitcher={palette.show} />
+      <main id="workspace-page" ref={main} tabIndex={-1} className="app">
+        {error && <p role="alert">{error}</p>}
+        <div className="screen" key={list.activeId}>
+          {screen === 'setup' || !active ? <AddWorkspaceForm onAdded={added} onCancel={() => setScreen('atlas')} /> :
+            <Study workspace={active} workspaces={list.workspaces} screen={screen} go={setScreen} onSwitch={palette.show}
+              onSelect={id => void select(id, 'progress').catch(cause => setError(errorMessage(cause)))} />}
+        </div>
+      </main>
+    </section>
+    {palette.open && <WorkspaceSwitcher activeId={list.activeId} workspaces={list.workspaces} onClose={palette.hide}
+      onSelect={id => select(id, 'atlas')} onAdd={() => setScreen('setup')} />}
+  </>;
 }
 
 export function App() {
-  const [list, setList] = useState<WorkspaceList>({ workspaces: [], activeId: null });
-  const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const run = useCallback(async (work: () => Promise<void>) => {
-    try {
-      setError(null);
-      await work();
-    } catch (failure) {
-      setError(errorText(failure));
-    }
-  }, []);
-
-  useEffect(() => {
-    const report = (failure: unknown) => setError(errorText(failure));
-    call('workspaces:list', null).then(setList, report);
-    call('providers:detect', null).then(setProviders, report);
-  }, []);
-
-  const switchTo = (id: string) => void run(async () => setList(await call('workspaces:switch', { id })));
-  const active = list.workspaces.find((w) => w.id === list.activeId);
-  return (
-    <main>
-      <h1>Delve</h1>
-      <WorkspaceSwitcher list={list} onSwitch={switchTo} />
-      <p data-testid="active-workspace">{active ? `Active: ${active.name}` : 'No active workspace'}</p>
-      {error && <p role="alert" className="error">{error}</p>}
-      <section aria-labelledby="workspaces-heading">
-        <h2 id="workspaces-heading">Workspaces</h2>
-        <Workspaces list={list} onSwitch={switchTo} />
-        <AddWorkspaceForm onAdded={() => run(async () => setList(await call('workspaces:list', null)))} onError={setError} />
-      </section>
-      <section aria-labelledby="providers-heading">
-        <h2 id="providers-heading">Providers</h2>
-        <Providers statuses={providers} />
-      </section>
-    </main>
-  );
+  const { result, refresh } = useRead(readWorkspaces);
+  if (result.status === 'ready') return <Desktop initial={result.value} />;
+  return <main className="shell app"><ReadState label="Workspaces" retry={refresh}
+    message={result.status === 'error' ? result.message : undefined} /></main>;
 }

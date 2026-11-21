@@ -1,104 +1,114 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import type { WorkspaceList } from '../../shared/domain';
-import { filterWorkspaces, isSwitcherShortcut, moveIndex } from './switcher';
-
-const IS_MAC = navigator.userAgent.includes('Mac');
-const SHORTCUT_LABEL = IS_MAC ? '⌘K' : 'Ctrl+K';
-const ARIA_SHORTCUT = IS_MAC ? 'Meta+K' : 'Control+K';
-const LISTBOX_ID = 'workspace-switcher-options';
-const optionId = (id: string): string => `workspace-option-${id}`;
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import type { Workspace } from '../../shared/domain';
+import { filterWorkspaces, moveIndex } from './switcher';
+import './setup.css';
 
 interface Props {
-  list: WorkspaceList;
-  onSwitch: (id: string) => void;
+  workspaces: Workspace[];
+  activeId: string | null;
+  onSelect: (id: string) => Promise<void>;
+  onClose: () => void;
+  onAdd: () => void;
 }
 
-/** The filter box and listbox inside the switcher; remounted on each open so it starts fresh. */
-function SwitcherOptions({ list, onChoose }: { list: WorkspaceList; onChoose: (id: string) => void }) {
+const KIND_LABELS = { git: 'Local Git repository', github: 'GitHub repository', topic: 'Topic' };
+const OPTIONS_ID = 'workspace-switcher-options';
+const optionId = (id: string) => `workspace-option-${id}`;
+
+function SwitcherSearch({ workspaces, activeId, onChoose, pending }: Pick<Props, 'workspaces' | 'activeId'> & {
+  onChoose: (id: string) => void;
+  pending: boolean;
+}) {
   const [query, setQuery] = useState('');
-  const [highlight, setHighlight] = useState(() => Math.max(list.workspaces.findIndex((w) => w.id === list.activeId), 0));
-  const matches = filterWorkspaces(list.workspaces, query);
+  const [highlight, setHighlight] = useState(() => Math.max(0, workspaces.findIndex((item) => item.id === activeId)));
+  const matches = filterWorkspaces(workspaces, query);
   const current = Math.min(highlight, matches.length - 1);
   const highlighted = matches[current];
+  const selected = useRef<HTMLLIElement>(null);
 
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
+  useEffect(() => { selected.current?.scrollIntoView({ block: 'nearest' }); }, [highlighted?.id]);
+
+  function navigate(event: KeyboardEvent<HTMLInputElement>) {
+    if (pending || event.nativeEvent.isComposing) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
-      setHighlight(moveIndex(current, event.key === 'ArrowDown' ? 1 : -1, matches.length));
-      return;
+      if (matches.length) setHighlight(moveIndex(current, event.key === 'ArrowDown' ? 1 : -1, matches.length));
+    } else if (event.key === 'Enter' && highlighted) {
+      event.preventDefault();
+      onChoose(highlighted.id);
     }
-    if (event.key !== 'Enter' || highlighted === undefined) return;
-    event.preventDefault();
-    onChoose(highlighted.id);
-  };
+  }
 
   return (
     <>
-      <input
-        type="text" role="combobox" aria-label="Find a workspace" aria-expanded="true" aria-controls={LISTBOX_ID}
+      <input type="text" role="combobox" aria-label="Find a workspace" aria-expanded="true" aria-controls={OPTIONS_ID}
         aria-autocomplete="list" aria-activedescendant={highlighted ? optionId(highlighted.id) : undefined}
-        value={query} autoFocus onKeyDown={onKeyDown}
-        onChange={(event) => {
-          setQuery(event.target.value);
-          setHighlight(0);
-        }}
-      />
-      <ul id={LISTBOX_ID} role="listbox" aria-label="Workspaces to switch to">
+        autoComplete="off" placeholder="Find a workspace…" value={query} readOnly={pending}
+        onKeyDown={navigate} onChange={(event) => { setQuery(event.target.value); setHighlight(0); }} />
+      <ul id={OPTIONS_ID} className="palette-list" role="listbox" aria-label="Workspaces to switch to" aria-busy={pending}>
         {matches.map((workspace, index) => (
           <li key={workspace.id} id={optionId(workspace.id)} role="option" aria-selected={index === current}
-            className={index === current ? 'highlighted' : undefined} onClick={() => onChoose(workspace.id)}>
-            {workspace.name}
-            {workspace.id === list.activeId && <span className="muted"> (active)</span>}
+            ref={index === current ? selected : undefined} onClick={() => onChoose(workspace.id)}>
+            <div>
+              <strong>{workspace.name}</strong>
+              <small>{KIND_LABELS[workspace.kind]}{workspace.kind === 'git' && ` · ${workspace.source}`}</small>
+            </div>
+            {workspace.id === activeId && <span className="tag">Current</span>}
           </li>
         ))}
       </ul>
-      {matches.length === 0 && <p className="muted">No workspace matches “{query}”.</p>}
+      {matches.length === 0 && <p className="palette-empty" role="status">{query ? `No workspace matches “${query}”.` : 'No workspaces yet.'}</p>}
     </>
   );
 }
 
-/**
- * A modal workspace switcher: Ctrl/Cmd+K or the button opens it, typing filters, arrow keys move the
- * highlight, Enter switches and Escape closes. Built on <dialog>, so focus stays inside while open.
- */
-export function WorkspaceSwitcher({ list, onSwitch }: Props) {
+export function WorkspaceSwitcher({ workspaces, activeId, onSelect, onClose, onAdd }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const opener = useRef<HTMLElement | null>(null);
-  const [session, setSession] = useState(0);
-  const hasWorkspaces = list.workspaces.length > 0;
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
 
-  const open = useCallback((): void => {
+  useLayoutEffect(() => {
     const element = dialog.current;
-    if (element === null || element.open || !hasWorkspaces) return;
-    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setSession((n) => n + 1);
+    const opener = document.activeElement;
+    if (!element) throw new Error('The workspace switcher needs a mounted dialog.');
+    const finder = element.querySelector('input');
+    if (!finder) throw new Error('The workspace switcher needs a search field.');
     element.showModal();
-  }, [hasWorkspaces]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (!isSwitcherShortcut(event, IS_MAC)) return;
-      event.preventDefault();
-      open();
+    finder.focus();
+    return () => {
+      element.close();
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open]);
+  }, []);
 
-  const choose = (id: string): void => {
-    dialog.current?.close();
-    if (id !== list.activeId) onSwitch(id);
-  };
+  async function choose(id: string) {
+    if (pending) return;
+    if (id === activeId) return onClose();
+    setError('');
+    setPending(true);
+    try {
+      await onSelect(id);
+      onClose();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setPending(false);
+    }
+  }
 
   return (
-    <>
-      <button type="button" aria-haspopup="dialog" aria-keyshortcuts={ARIA_SHORTCUT} onClick={open} hidden={!hasWorkspaces}>
-        Switch workspace <kbd className="muted">{SHORTCUT_LABEL}</kbd>
-      </button>
-      <dialog ref={dialog} aria-labelledby="switcher-title" onClose={() => opener.current?.focus()}>
+    <dialog className="workspace-palette" ref={dialog} aria-labelledby="switcher-title"
+      onCancel={(event) => { event.preventDefault(); if (!pending) onClose(); }}>
+      <div className="palette-header">
         <h2 id="switcher-title">Switch workspace</h2>
-        {session > 0 && <SwitcherOptions key={session} list={list} onChoose={choose} />}
-      </dialog>
-    </>
+        <button type="button" className="palette-close" disabled={pending} aria-label="Close switcher" onClick={onClose}>Esc</button>
+      </div>
+      <SwitcherSearch workspaces={workspaces} activeId={activeId} onChoose={choose} pending={pending} />
+      {error && <p className="setup-error" role="alert">{error}</p>}
+      <div className="palette-footer">
+        <span><kbd>↑</kbd> <kbd>↓</kbd> to navigate · <kbd>Enter</kbd> to open</span>
+        <button type="button" disabled={pending} onClick={() => { onClose(); onAdd(); }}>+ Add workspace</button>
+      </div>
+    </dialog>
   );
 }
