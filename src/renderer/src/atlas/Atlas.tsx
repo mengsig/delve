@@ -1,3 +1,4 @@
+import type { ChangeRef } from '../../../shared/repository';
 import { useMemo, useState } from 'react';
 import type { Depth, Workspace } from '../../../shared/domain';
 import type { WorkspaceGraph } from '../../../shared/graph';
@@ -17,7 +18,7 @@ export interface AtlasProps {
   initialConceptId?: number;
   onView: (view: AtlasView) => void;
   onLesson: (id: number) => void;
-  onChanges: () => void;
+  onChanges: (change?: ChangeRef) => void;
   onProgress: () => void;
   onAdd: () => void;
   onFirstRun: () => void;
@@ -99,7 +100,7 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
         : <Folio model={model} selected={selected} recommendedId={recommendedId} workspaceId={workspace.id} changedId={demo?.changed?.id} onSelect={setSelection} />}
       <Inspector selected={selected} status={statusText(selected, workspace.id, selected.id === demo?.changed?.id)}
         onSelect={setSelection} onLesson={onLesson} />
-    </div><FieldGuide model={model} target={target} reason={adaptive && suggestion?.reason} workspace={workspace} demo={demo} onLesson={onLesson} onChanges={onChanges} /></div>
+    </div><FieldGuide suggestedChange={graph.changeSuggestions?.[depth]} model={model} target={target} reason={adaptive && suggestion?.reason} workspace={workspace} demo={demo} onLesson={onLesson} onChanges={onChanges} /></div>
       : <section className="sheet atlas-empty"><h3>No concepts mapped yet</h3>
         <p>This workspace has no saved concepts to explore.</p>
         <div className="actions">{workspace.kind === 'topic'

@@ -14,7 +14,7 @@ export interface IpcContract extends RepositoryContract, ReaderContract, TutorCo
   'workspaces:switch': { request: { id: string }; response: WorkspaceList };
   'workspaces:pick-folder': { request: null; response: string | null };
   'providers:detect': { request: null; response: ProviderStatus[] };
-  'graph:read': { request: { workspaceId: string }; response: WorkspaceGraph };
+  'graph:read': { request: { workspaceId: string; includeChangeLessons?: boolean }; response: WorkspaceGraph };
   'progress:read': { request: null; response: WorkspaceCoverage[] };
   'evidence:reset': { request: { workspaceId: string; conceptId: number; depth: Depth }; response: boolean };
 }
@@ -40,6 +40,8 @@ const CHANNEL_FLAGS: Record<IpcChannel, true> = {
   'graph:read': true,
   'progress:read': true,
   'evidence:reset': true,
+  'repo:stage': true,
+  'repo:attach': true,
   'repo:files': true,
   'repo:preview': true,
   'repo:generate': true,
@@ -68,5 +70,6 @@ export function isIpcChannel(value: unknown): value is IpcChannel {
 
 /** The API the preload exposes on `window.delve`. */
 export interface DelveApi {
+  droppedPath(file: File): string;
   invoke<C extends IpcChannel>(channel: C, request: IpcRequest<C>): Promise<IpcResult<IpcResponse<C>>>;
 }

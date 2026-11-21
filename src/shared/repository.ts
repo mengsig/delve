@@ -1,4 +1,4 @@
-import type { Depth, ProviderId, Workspace } from './domain';
+import type { AddWorkspaceInput, Depth, ProviderId, Workspace } from './domain';
 
 export interface ChangeRef {
   kind: 'commit' | 'pr';
@@ -56,12 +56,14 @@ export interface ChangeBrief {
   trace: string[];
   excerpt: string[];
   touched: { id: number; title: string }[];
-  recommendation: { conceptId: number; reason: string };
+  recommendation: { conceptId: number; title: string; reason: string };
 }
 
 export interface LearnIntent {
   id: string;
   workspace: string;
+  name?: string;
+  source?: string;
   kind: 'pr' | 'commit' | 'proposed';
   ref: string;
 }
@@ -69,7 +71,11 @@ export interface LearnIntent {
 export type GenerationResult = { kind: 'baseline' } | { kind: 'change'; brief: ChangeBrief };
 export type SavedRequest = Omit<RepoRequest, 'selection'> & ChangeRef;
 
+export type RepositoryInput = Exclude<AddWorkspaceInput, { kind: 'topic' }>;
+
 export interface RepositoryContract {
+  'repo:stage': { request: { source: RepositoryInput }; response: { workspace: Workspace; inventory: RepositoryInventory } };
+  'repo:attach': { request: { token: string }; response: Workspace };
   'repo:files': { request: { workspaceId: string }; response: RepositoryInventory };
   'repo:preview': { request: RepoRequest; response: RepoPreview };
   'repo:generate': { request: { token: string; requestId: string }; response: GenerationResult };

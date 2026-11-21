@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import type { ChangeRef, ChangeBrief, GenerationResult, RepoPreview, RepoRequest, SavedRequest } from '../../shared/repository';
 import { DomainError } from '../../shared/errors';
-import { addPrerequisiteInTransaction, getConceptByKey, upsertConceptInTransaction, type Concept } from '../db/concepts';
+import { addPrerequisiteInTransaction, conceptStorageKey, getConceptByKey, upsertConceptInTransaction, type Concept } from '../db/concepts';
 import { nowIso, transaction, type Db } from '../db/connection';
 import { bindSnapshot, saveLessonInTransaction } from '../db/lessons';
 import { documentSchema } from '../reader/document';
@@ -23,7 +23,30 @@ export function digest(value: unknown): string {
 
 function invalid(message: string): never { throw new DomainError('INVALID_PROPOSAL', message + ' Retry the request.'); }
 
-function mergeGraph(db: Db, workspaceId: string, snapshotId: number, proposal: GraphProposal) {
+function bindChangeConcepts(db: Db, source: ApprovedSource, snapshotId: number, reply: ChangeReply) {
+  const workspaceId = source.request.workspaceId;
+  const mapped = new Map<string, Concept>();
+  const bind = db.prepare('INSERT OR IGNORE INTO snapshot_concepts (snapshot_id, concept_id) VALUES (?, ?)');
+  for (const input of reply.concepts) {
+    if (mapped.has(input.key)) invalid('The provider supplied a duplicate concept key.');
+    const existing = getConceptByKey(db, conceptStorageKey(input.key, input.portable, workspaceId));
+    const reviewed = existing && db.prepare('SELECT 1 FROM workspace_concepts WHERE workspace_id = ? AND concept_id = ? AND on_atlas = 1')
+      .get(workspaceId, existing.id);
+    const key = existing || input.portable ? input.key : 'change/' + digest([source.revision, input.key]);
+    const concept = upsertConceptInTransaction(db, { ...input, workspaceId, key,
+      title: existing?.title ?? input.title, summary: existing?.summary ?? input.summary }, false);
+    // Reading a PR may add a discussion, but cannot move an established concept to a different commit.
+    if (!reviewed) bind.run(snapshotId, concept.id);
+    mapped.set(input.key, concept);
+  }
+  for (const edge of reply.edges) {
+    if (!mapped.has(edge.concept) || !mapped.has(edge.prerequisite)) invalid('A prerequisite is missing from the change proposal.');
+  }
+  assert.equal(mapped.size, reply.concepts.length);
+  return mapped;
+}
+
+function mergeBaseline(db: Db, workspaceId: string, snapshotId: number, proposal: Extract<GraphProposal, {schema: 'delve.map/1'}>) {
   assert.ok(db.isTransaction);
   const mapped = new Map<string, Concept>();
   const bind = db.prepare('INSERT OR IGNORE INTO snapshot_concepts (snapshot_id, concept_id) VALUES (?, ?)');
@@ -48,9 +71,9 @@ function mergeGraph(db: Db, workspaceId: string, snapshotId: number, proposal: G
 function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: ChangeReply, concepts: Map<string, Concept>): ChangeBrief {
   const { request, preview, cacheKey } = source;
   assert.notEqual(request.selection.kind, 'baseline');
-  const localKey = 'change/' + source.revision;
+  const localKey = 'change/' + digest([source.revision, request.provider, preview.model]);
   const change = upsertConceptInTransaction(db, { workspaceId: request.workspaceId, key: localKey, portable: false,
-    title: preview.title, summary: reply.summary });
+    title: preview.title, summary: reply.summary }, false);
   db.prepare('INSERT OR IGNORE INTO snapshot_concepts (snapshot_id, concept_id) VALUES (?, ?)').run(snapshotId, change.id);
   const trace = request.depth === 'high' ? [] : reply.trace;
   const excerpt = request.depth === 'low' ? reply.excerpt : [];
@@ -68,12 +91,16 @@ function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: Ch
   ] });
   saveLessonInTransaction(db, { workspaceId: request.workspaceId, snapshotId, conceptId: change.id, cacheKey,
     depth: request.depth, model: preview.model, provider: request.provider, schemaVersion: document.schema, body: document });
-  const touched = Array.from(concepts.values(), ({ id, title }) => ({ id, title }));
+  const touched = [...new Set(reply.touched)].map(key => {
+    const concept = concepts.get(key);
+    if (!concept) invalid('The change footprint refers to an unknown concept.');
+    return { id: concept.id, title: concept.title };
+  });
   const target = reply.recommendation.key === null ? change : concepts.get(reply.recommendation.key);
   if (!target) invalid('The change recommendation refers to an unknown concept.');
   return { conceptId: change.id, title: preview.title, summary: reply.summary, what: reply.what, why: reply.why,
     before: reply.before, after: reply.after, base: preview.base, commit: preview.commit, files: preview.files, partial: preview.partial, mechanics, boundary, coverageNote: preview.coverageNote, touched, trace, excerpt,
-    recommendation: { conceptId: target.id, reason: reply.recommendation.reason } };
+    recommendation: { conceptId: target.id, title: target.title, reason: reply.recommendation.reason } };
 }
 
 export function cachedGeneration(db: Db, cacheKey: string): GenerationResult | null {
@@ -91,7 +118,7 @@ export function useCachedGeneration(db: Db, source: ApprovedSource): GenerationR
     assert.ok(row && typeof row.snapshot_id === 'number');
     if (cached.kind === 'baseline') {
       const proposal = baselineReply.parse(JSON.parse(String(row.proposal)));
-      mergeGraph(db, source.request.workspaceId, row.snapshot_id, proposal);
+      mergeBaseline(db, source.request.workspaceId, row.snapshot_id, proposal);
     }
     const updated = db.prepare(`UPDATE repository_generations SET last_used = (SELECT max(last_used) + 1 FROM repository_generations),
       created_at = ? WHERE cache_key = ?`).run(nowIso(), source.cacheKey);
@@ -128,7 +155,8 @@ export function persistGeneration(db: Db, source: ApprovedSource, proposal: Grap
     if (existing) return existing;
     assert.equal(selection.kind === 'baseline', proposal.schema === 'delve.map/1');
     const snapshotId = bindSnapshot(db, workspaceId, preview.commit);
-    const concepts = mergeGraph(db, workspaceId, snapshotId, proposal);
+    const concepts = proposal.schema === 'delve.map/1' ? mergeBaseline(db, workspaceId, snapshotId, proposal)
+      : bindChangeConcepts(db, source, snapshotId, proposal);
     const result: GenerationResult = proposal.schema === 'delve.change/1'
       ? { kind: 'change', brief: saveBrief(db, source, snapshotId, proposal, concepts) } : { kind: 'baseline' };
     const next = result.kind === 'change' ? result.brief.recommendation.conceptId : concepts.get(proposal.recommendation.key ?? '')?.id;

@@ -56,6 +56,13 @@ export class LearnInbox {
 
   peek(): LearnIntent | null { return this.pending[0] ?? null; }
 
+  preview(db: Db): LearnIntent | null {
+    const intent = this.peek();
+    if (!intent) return null;
+    const workspace = getWorkspace(db, intent.workspace.toLowerCase());
+    return workspace ? { ...intent, name: workspace.name, source: workspace.source } : intent;
+  }
+
   resolve(db: Db, id: string, accept: boolean): Workspace | null {
     const intent = this.peek();
     if (!intent || intent.id !== id) throw new DomainError('STALE_LINK', 'That learn link has already been handled.');

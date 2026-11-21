@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Workspace } from '../../shared/domain';
-import type { RepositoryInventory, RepoRequest, SavedRequest } from '../../shared/repository';
+import type { RepositoryInput, RepositoryInventory, RepoRequest, SavedRequest } from '../../shared/repository';
 import { DomainError } from '../../shared/errors';
 import type { Db } from '../db/connection';
 import { isDemoWorkspace } from '../db/demo';
-import { getWorkspace } from '../db/workspaces';
+import { addWorkspace, getWorkspace, listWorkspaces, resolveWorkspaceSource } from '../db/workspaces';
 import type { ProviderRunner } from '../providers/runner';
 import { listChanges, listFiles, repositoryPath } from './source';
 import { prepareSource } from './preview';
@@ -22,7 +23,8 @@ const formats = { baseline: outputSchema(baselineReply), change: outputSchema(ch
 
 export class RepositoryLearning {
   private readonly previews = new Map<string, ApprovedSource>();
-  private readonly inventories = new Map<string, RepositoryInventory>();
+  private readonly inventories = new Map<string, { path: string; inventory: RepositoryInventory }>();
+  private readonly staged = new Map<string, { source: RepositoryInput; workspace: Workspace }>();
   private readonly runs = new Map<string, AbortController>();
   private readonly reads = new Set<Promise<unknown>>();
   private closed = false;
@@ -42,13 +44,39 @@ export class RepositoryLearning {
     return workspace;
   }
 
-  files(id: string) { return this.whileOpen(() => this.inventory(id)); }
+  stage(source: RepositoryInput) {
+    return this.whileOpen(async () => {
+      const resolved = resolveWorkspaceSource(source);
+      if (listWorkspaces(this.db).workspaces.some(w => w.kind === resolved.kind && w.source === resolved.source)) {
+        throw new DomainError('DUPLICATE_WORKSPACE', 'This repository is already in your workspace switcher.');
+      }
+      const workspace = { ...resolved, id: randomUUID(), createdAt: new Date().toISOString(), lastOpenedAt: null };
+      const inventory = await this.inventory(workspace);
+      if (this.staged.size >= 12) this.staged.delete(this.staged.keys().next().value!);
+      this.staged.set(workspace.id, { source, workspace });
+      return { workspace, inventory };
+    });
+  }
 
-  private async inventory(id: string): Promise<RepositoryInventory> {
-    const inventory = await listFiles(await repositoryPath(this.workspace(id), this.cacheRoot));
-    const key = id + '/' + inventory.commit;
+  attach(token: string): Workspace {
+    const approved = this.previews.get(token);
+    const staged = approved && this.staged.get(approved.request.workspaceId);
+    if (!staged || approved?.request.selection.kind !== 'baseline') {
+      throw new DomainError('STALE_PREVIEW', 'Refresh the file preview before adding this repository.');
+    }
+    const workspace = addWorkspace(this.db, staged.source, staged.workspace.id);
+    this.staged.delete(workspace.id);
+    return workspace;
+  }
+
+  files(id: string) { return this.whileOpen(() => this.inventory(this.workspace(id))); }
+
+  private async inventory(workspace: Workspace): Promise<RepositoryInventory> {
+    const path = await repositoryPath(workspace, this.cacheRoot);
+    const inventory = await listFiles(path);
+    const key = workspace.id + '/' + inventory.commit;
     if (this.inventories.size >= 12) this.inventories.delete(this.inventories.keys().next().value!);
-    this.inventories.set(key, inventory);
+    this.inventories.set(key, { inventory, path });
     return inventory;
   }
 
@@ -73,11 +101,13 @@ export class RepositoryLearning {
   preview(request: RepoRequest) { return this.whileOpen(() => this.prepare(request)); }
 
   private async prepare(request: RepoRequest) {
-    const workspace = this.workspace(request.workspaceId);
-    const path = workspace.kind === 'github' && request.selection.kind === 'pr'
-      ? null : await repositoryPath(workspace, this.cacheRoot);
-    const inventory = request.selection.kind === 'baseline' ? this.inventories.get(workspace.id + '/' + request.selection.commit) : undefined;
-    const source = await prepareSource(this.db, path, workspace, request, inventory);
+    const pending = this.staged.get(request.workspaceId);
+    if (pending && request.selection.kind !== 'baseline') throw new DomainError('INVALID_REPO', 'Add this repository before reading changes.');
+    const workspace = pending?.workspace ?? this.workspace(request.workspaceId);
+    const listed = request.selection.kind === 'baseline' ? this.inventories.get(workspace.id + '/' + request.selection.commit) : undefined;
+    const path = listed?.path ?? (workspace.kind === 'github' && request.selection.kind === 'pr'
+      ? null : await repositoryPath(workspace, this.cacheRoot));
+    const source = await prepareSource(this.db, path, workspace, request, listed?.inventory);
     if (this.closed) throw new DomainError('REPO_CLOSED', 'Delve is closing.');
     if (this.previews.size >= 12) this.previews.delete(this.previews.keys().next().value!);
     this.previews.set(source.preview.token, source);
@@ -88,6 +118,7 @@ export class RepositoryLearning {
     const source = this.previews.get(token);
     if (!source || this.closed) throw new DomainError('STALE_PREVIEW', 'Review the repository request again before sending it.');
     if (this.runs.has(requestId)) throw new DomainError('DUPLICATE_REQUEST', 'This request is already running.');
+    if (!getWorkspace(this.db, source.request.workspaceId)) throw new DomainError('UNCONFIRMED_REPO', 'Confirm the repository before building its map.');
     const cached = useCachedGeneration(this.db, source);
     if (cached) return cached;
     const controller = new AbortController();
@@ -117,6 +148,7 @@ export class RepositoryLearning {
     assert.ok([...this.runs.values()].every(c => c.signal.aborted));
     await Promise.allSettled(this.reads);
     this.inventories.clear();
+    this.staged.clear();
     assert.equal(this.reads.size, 0);
   }
 }

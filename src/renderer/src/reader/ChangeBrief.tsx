@@ -27,10 +27,10 @@ interface Props {
 }
 
 export function ChangeFootprint({ brief, onLesson, onFollowUp }: Props) {
-  const { conceptId, reason } = brief.recommendation;
-  const target = brief.touched.find(concept => concept.id === conceptId);
+  const { conceptId, reason, title } = brief.recommendation;
+  const target = conceptId !== brief.conceptId;
   return <aside className="card" aria-label="Change footprint">
-    <span className="eyebrow">Change footprint</span><h3>{target?.title ?? brief.title}</h3>
+    <span className="eyebrow">Change footprint</span><h3>{title}</h3>
     <p>{reason}</p>
     <div className="impact"><span className="plate">{brief.base ? 'Base → head' : 'Source revision'}</span><div className="mono mini repository-ref" title={[brief.base, brief.commit].filter(Boolean).join(' → ')}>{[brief.base, brief.commit].filter(Boolean).map(sha => sha?.slice(0, 12)).join(' → ')}</div></div>
     <div className="impact"><button className="primary-btn" onClick={() => target ? onLesson(conceptId) : onFollowUp(brief.conceptId)}>

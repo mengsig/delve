@@ -4,6 +4,7 @@ import type { RepositoryInventory, RepoRequest } from '../../shared/repository';
 import type { Workspace } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
 import { type Db } from '../db/connection';
+import { getWorkspace } from '../db/workspaces';
 import { readWorkspaceGraph } from '../db/graph';
 import { depthGuide, modelFor } from '../tutor/prompt';
 import { readChange, readFiles } from './source';
@@ -46,7 +47,8 @@ async function material(path: string | null, workspace: Workspace, request: Repo
 }
 
 function learningContext(db: Db, request: RepoRequest) {
-  const graph = readWorkspaceGraph(db, request.workspaceId);
+  const graph = getWorkspace(db, request.workspaceId) ? readWorkspaceGraph(db, request.workspaceId)
+    : { concepts: [], evidence: [], edges: [] };
   const evidence = new Map(graph.evidence.filter(e => e.depth === request.depth).map(e => [e.conceptId, e.status]));
   const concepts = graph.concepts.filter(c => !c.key.startsWith('ws/' + request.workspaceId + '/change/')).slice(0, 160)
     .map(c => ({ key: c.portable ? c.key : c.key.slice(('ws/' + request.workspaceId + '/').length), title: c.title.slice(0, 200),
@@ -61,7 +63,7 @@ function learningContext(db: Db, request: RepoRequest) {
 }
 
 const mapTask = 'Map the approved files into concepts and prerequisite edges. Recommend one first step whose prerequisites the learner knows. Give a specific reason.';
-const changeTask = 'Teach what changed, why it matters, and the before and after. At Medium and Low explain how the parts interact in mechanics. At Low explain the protocol edge or boundary condition in boundary. Use null for fields outside the chosen depth or unavailable in the material. At Medium and Low include a short ordered trace of affected components or operations when supported. At Low return a short contiguous excerpt copied verbatim from the diff including patch prefixes. Return empty arrays where unavailable or outside the chosen depth. Distinguish observed behavior from inferred motivation. Include only touched concepts or their required foundations. Recommend studying a feature, a prerequisite, or this change brief itself (key null), and explain why. When the diff is unavailable or partial, describe the limit without guessing details.';
+const changeTask = 'Teach what changed, why it matters, and the before and after. At Medium and Low explain how the parts interact in mechanics. At Low explain the protocol edge or boundary condition in boundary. Use null for fields outside the chosen depth or unavailable in the material. At Medium and Low include a short ordered trace of affected components or operations when supported. At Low return a short contiguous excerpt copied verbatim from the diff including patch prefixes. Return empty arrays where unavailable or outside the chosen depth. Distinguish observed behavior from inferred motivation. Include affected concepts and their required foundations in concepts. List only directly affected keys in touched. Recommend studying a feature, a prerequisite, or this change brief itself (key null), and explain why. When the diff is unavailable or partial, describe the limit without guessing details.';
 
 export async function prepareSource(db: Db, path: string | null, workspace: Workspace, request: RepoRequest, inventory?: RepositoryInventory): Promise<ApprovedSource> {
   const { commit, base, repository, description, coverageNote, title, partial, files, data } = await material(path, workspace, request, inventory);

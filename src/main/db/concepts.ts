@@ -68,7 +68,7 @@ export function upsertConcept(db: Db, input: ConceptInput): Concept {
   return transaction(db, () => upsertConceptInTransaction(db, input));
 }
 
-export function upsertConceptInTransaction(db: Db, input: ConceptInput): Concept {
+export function upsertConceptInTransaction(db: Db, input: ConceptInput, onAtlas = true): Concept {
   assert.ok(db.isTransaction, 'concept writes require a transaction');
   const title = input.title.trim();
   if (title.length === 0) throw new DomainError('INVALID_CONCEPT', 'A concept needs a title.');
@@ -88,7 +88,9 @@ export function upsertConceptInTransaction(db: Db, input: ConceptInput): Concept
   const saved = getConceptByKey(db, key);
   assert.ok(saved, 'upserted concept must be readable');
   if (input.workspaceId) {
-    db.prepare('INSERT OR IGNORE INTO workspace_concepts (workspace_id, concept_id) VALUES (?, ?)').run(input.workspaceId, saved.id);
+    db.prepare(`INSERT INTO workspace_concepts (workspace_id, concept_id, on_atlas) VALUES (?, ?, ?)
+      ON CONFLICT (workspace_id, concept_id) DO UPDATE SET on_atlas = max(on_atlas, excluded.on_atlas)`)
+      .run(input.workspaceId, saved.id, Number(onAtlas));
   }
   return saved;
 }
@@ -150,13 +152,13 @@ export function listPrerequisites(db: Db, conceptId: number): Concept[] {
 }
 
 /** Concepts a workspace uses: its own plus the portable ones linked to it. */
-export function listWorkspaceConcepts(db: Db, workspaceId: string): Concept[] {
+export function listWorkspaceConcepts(db: Db, workspaceId: string, includeChangeLessons = false): Concept[] {
   const rows = db
     .prepare(
       `SELECT c.* FROM workspace_concepts wc JOIN concepts c ON c.id = wc.concept_id
-       WHERE wc.workspace_id = ? AND (c.portable = 1 OR c.workspace_id = wc.workspace_id)
+       WHERE wc.workspace_id = ? AND (wc.on_atlas = 1 OR ? = 1) AND (c.portable = 1 OR c.workspace_id = wc.workspace_id)
        ORDER BY c.title`,
     )
-    .all(workspaceId) as unknown as ConceptRow[];
+    .all(workspaceId, Number(includeChangeLessons)) as unknown as ConceptRow[];
   return rows.map(toConcept);
 }

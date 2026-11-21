@@ -32,7 +32,7 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
     'lab:open': () => { throw new Error('Unexpected activity'); },
     'lab:input': () => { throw new Error('Unexpected activity input'); },
     'lab:close': () => false,
-    'repo:files': unexpected, 'repo:preview': unexpected, 'repo:generate': unexpected, 'repo:cancel': unexpected,
+    'repo:stage': unexpected, 'repo:attach': unexpected, 'repo:files': unexpected, 'repo:preview': unexpected, 'repo:generate': unexpected, 'repo:cancel': unexpected,
     'repo:changes': unexpected, 'repo:saved': unexpected, 'learn:pending': unexpected, 'learn:resolve': unexpected,
     ...overrides,
   };

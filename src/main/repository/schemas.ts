@@ -9,7 +9,13 @@ const commit = z.strictObject({ kind: z.literal('commit'), ref: commitRef });
 const pr = z.strictObject({ kind: z.literal('pr'), ref: prRef });
 const baseline = z.strictObject({ kind: z.literal('baseline'), commit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
   paths: z.array(z.string().min(1).max(4096)).min(1).max(128) });
+const source = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('git'), path: z.string().min(1).max(4096) }),
+  z.strictObject({ kind: z.literal('github'), owner: z.string().min(1).max(39), repo: z.string().min(1).max(104) }),
+]);
 export const repoSchemas = {
+  'repo:stage': z.strictObject({ source }),
+  'repo:attach': z.strictObject({ token: z.uuid() }),
   'repo:files': workspace,
   'repo:changes': workspace,
   'repo:preview': scope.extend({ selection: z.discriminatedUnion('kind', [baseline, commit, pr]) }),
@@ -31,7 +37,7 @@ const graph = z.strictObject({
 export const baselineReply = graph.extend({ schema: z.literal('delve.map/1') });
 export const changeReply = graph.extend({ schema: z.literal('delve.change/1'), concepts: z.array(concept).max(60),
   recommendation: z.strictObject({ key: key.nullable(), reason: text }), summary: text, what: text, why: text, before: text, after: text,
-  mechanics: text.nullable(), boundary: text.nullable(), trace: z.array(z.string().trim().min(1).max(160)).max(8),
+  touched: z.array(key).max(60), mechanics: text.nullable(), boundary: text.nullable(), trace: z.array(z.string().trim().min(1).max(160)).max(8),
   excerpt: z.array(z.string().max(2000)).max(16) });
 export type GraphProposal = z.infer<typeof baselineReply> | z.infer<typeof changeReply>;
 export type ChangeReply = z.infer<typeof changeReply>;

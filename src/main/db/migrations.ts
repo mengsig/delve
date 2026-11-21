@@ -124,7 +124,8 @@ export const MIGRATIONS: readonly Migration[] = [
   {
     version: 3,
     name: 'bind repository maps and change conversations to reviewed sources',
-    sql: `CREATE TABLE snapshot_concepts (
+    sql: `ALTER TABLE workspace_concepts ADD COLUMN on_atlas INTEGER NOT NULL DEFAULT 1 CHECK (on_atlas IN (0, 1));
+    CREATE TABLE snapshot_concepts (
       snapshot_id INTEGER NOT NULL REFERENCES snapshots ON DELETE CASCADE,
       concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
       PRIMARY KEY (snapshot_id, concept_id)

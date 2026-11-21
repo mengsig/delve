@@ -71,7 +71,8 @@ export function LearnLink({ onAccepted }: { onAccepted: (intent: LearnIntent, wo
     <h2 id="learn-intent-title">Incoming learn link</h2>
     <p>This request came from a link opened outside Delve. Review the source before accepting.</p>
     <dl>
-      <dt>Workspace</dt><dd><code>{intent.workspace}</code></dd>
+      <dt>Workspace</dt><dd>{intent.name ?? intent.workspace}</dd>
+      {intent.source && <><dt>Source</dt><dd><code>{intent.source}</code></dd></>}
       <dt>{LINK_KIND[intent.kind]}</dt><dd><code>{intent.ref}</code></dd>
     </dl>
     <div className="actions">

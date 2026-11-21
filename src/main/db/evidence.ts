@@ -109,17 +109,17 @@ export function listEvidence(db: Db, conceptId: number): Evidence[] {
   return rows.map((row) => ({ ...evidenceDetails(row), id: row.id, snapshotId: row.snapshot_id }));
 }
 
-export function listWorkspaceEvidence(db: Db, workspaceId: string): GraphEvidence[] {
+export function listWorkspaceEvidence(db: Db, workspaceId: string, includeChangeLessons = false): GraphEvidence[] {
   const rows = db.prepare(
     `SELECT e.*, origin.name AS workspace_name
      FROM workspace_concepts wc
      JOIN concepts c ON c.id = wc.concept_id
      JOIN evidence e ON e.concept_id = c.id
      LEFT JOIN workspaces origin ON origin.id = e.workspace_id
-     WHERE wc.workspace_id = ?
+     WHERE wc.workspace_id = ? AND (wc.on_atlas = 1 OR ? = 1)
        AND (c.portable = 1 OR (c.workspace_id = wc.workspace_id AND e.workspace_id = wc.workspace_id))
      ORDER BY e.concept_id, CASE e.depth WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END`,
-  ).all(workspaceId) as unknown as (EvidenceRow & { workspace_name: string | null })[];
+  ).all(workspaceId, Number(includeChangeLessons)) as unknown as (EvidenceRow & { workspace_name: string | null })[];
   return rows.map((row) => {
     assert.equal(row.workspace_id === null, row.workspace_name === null, 'provenance must refer to an existing workspace');
     assert.ok(Number.isSafeInteger(row.revision) && row.revision >= 1, 'evidence revision must be a positive integer');

@@ -3,7 +3,7 @@ import type { RepoSelection } from '../../shared/repository';
 import { openDatabase, type Db } from '../db/connection';
 import { upsertConcept } from '../db/concepts';
 import { recordEvidence } from '../db/evidence';
-import { readWorkspaceGraph } from '../db/graph';
+import { readWorkspaceCoverage, readWorkspaceGraph } from '../db/graph';
 import { addWorkspace } from '../db/workspaces';
 import { readLesson } from '../reader/ipc';
 import { modelFor } from '../tutor/prompt';
@@ -17,6 +17,9 @@ const mapped = baselineReply.parse({ schema: 'delve.map/1', concepts: [
 recommendation: { key: 'web/route', reason: 'Build on the proxy you have demonstrated.' } });
 const baseline = 'a'.repeat(40);
 const previous = 'b'.repeat(40);
+const change = changeReply.parse({ ...mapped, schema: 'delve.change/1', touched: mapped.concepts.map(c => c.key), mechanics: null, boundary: null,
+  trace: [], excerpt: [], what: 'The proxy now checks its route.', why: 'Avoid stale routes.',
+  summary: 'Route validation', before: 'Old routes were retained.', after: 'Expired routes are removed.' });
 let db: Db;
 let workspaceId: string;
 
@@ -77,12 +80,14 @@ describe('atomic repository generation', () => {
     }
   });
 
+});
+
+describe('change conversations', () => {
   it('saves a change as a chat lesson at its own commit without moving the baseline, and reads it offline by depth and model', () => {
     persistGeneration(db, source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline), mapped);
     const selection = { kind: 'commit', ref: previous } as const;
     const selected = source(selection, previous);
-    const reply = changeReply.parse({ ...mapped, schema: 'delve.change/1', mechanics: null, boundary: null, trace: [], excerpt: [], what: 'The proxy now checks its route.', why: 'Avoid stale routes.',
-      summary: 'Route validation', before: 'Old routes were retained.', after: 'Expired routes are removed.' });
+    const reply = change;
     const result = persistGeneration(db, selected, reply);
     expect(result.kind).toBe('change');
     if (result.kind !== 'change') throw new Error('missing brief');
@@ -95,4 +100,23 @@ describe('atomic repository generation', () => {
     expect(latestBrief(db, { ...address, depth: 'low' })).toBeNull();
     expect(latestBrief(db, { ...address, provider: 'claude' })).toBeNull();
   });
+  it('retains the reviewed graph and coverage when an unmerged PR changes a definition and introduces a feature', () => {
+    persistGeneration(db, source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline), mapped);
+    const reviewed = readWorkspaceGraph(db, workspaceId);
+    const newConcept = { key: 'web/new', title: 'New feature', summary: 'Only on the PR branch', portable: false };
+    const proposal = { ...change, touched: ['web/route', newConcept.key], concepts: [...change.concepts.map(c => ({ ...c, title: 'PR title', summary: 'PR description' })), newConcept],
+      edges: [{ concept: 'web/route', prerequisite: newConcept.key }], recommendation: { key: null, reason: 'Consider the change first.' } };
+    const result = persistGeneration(db, source({ kind: 'pr', ref: '19' }, previous), proposal);
+    if (result.kind !== 'change') throw new Error('Expected a change brief');
+    const current = readWorkspaceGraph(db, workspaceId);
+    expect(current.concepts).toEqual(reviewed.concepts);
+    expect(current.edges).toEqual(reviewed.edges);
+    expect(current.changeSuggestions?.medium).toMatchObject({ kind: 'pr', ref: '19', reason: 'Consider the change first.' });
+    expect(current.snapshot).toBe(baseline);
+    expect(readWorkspaceCoverage(db)).toMatchObject([{ total: 2 }]);
+    expect(result.brief.touched.map(c => c.title)).toEqual(['Routing policy', 'New feature']);
+    expect(readWorkspaceGraph(db, workspaceId, true).concepts).toHaveLength(4);
+    expect(readLesson(db, { workspaceId, conceptId: result.brief.conceptId, depth: 'medium' }).source).toBe(previous);
+  });
+
 });

@@ -77,13 +77,19 @@ function buildHandlers(db: Db, tutor: TutorSession, labs: LabHost, learning: Rep
     ...readerHandlers(db),
     ...tutorHandlers(db, tutor),
     ...graphHandlers(db),
+    'repo:stage': ({ source }) => learning.stage(source),
+    'repo:attach': ({ token }) => {
+      const workspace = learning.attach(token);
+      labs.clear();
+      return workspace;
+    },
     'repo:files': ({ workspaceId }) => learning.files(workspaceId),
     'repo:changes': ({ workspaceId }) => learning.changes(workspaceId),
     'repo:preview': request => learning.preview(request),
     'repo:saved': request => learning.saved(request),
     'repo:generate': ({ token, requestId }) => learning.generate(token, requestId),
     'repo:cancel': ({ requestId }) => learning.cancel(requestId),
-    'learn:pending': () => links.peek(),
+    'learn:pending': () => links.preview(db),
     'learn:resolve': ({ id, accept }) => {
       const workspace = links.resolve(db, id, accept);
       if (workspace) labs.clear();

@@ -5,7 +5,7 @@ import type { IpcHandlers } from './ipc';
 
 export function graphHandlers(db: Db): Pick<IpcHandlers, 'graph:read' | 'progress:read' | 'evidence:reset'> {
   return {
-    'graph:read': ({ workspaceId }) => readWorkspaceGraph(db, workspaceId),
+    'graph:read': ({ workspaceId, includeChangeLessons }) => readWorkspaceGraph(db, workspaceId, includeChangeLessons),
     'progress:read': () => readWorkspaceCoverage(db),
     'evidence:reset': ({ workspaceId, conceptId, depth }) => resetEvidence(db, conceptId, { workspaceId, depth }) === 1,
   };

@@ -74,14 +74,13 @@ export function getWorkspace(db: Db, id: string): Workspace | null {
 }
 
 /** Adds a workspace and makes it active. Adding the same source twice is rejected. */
-export function addWorkspace(db: Db, input: AddWorkspaceInput): Workspace {
+export function addWorkspace(db: Db, input: AddWorkspaceInput, id: string = randomUUID()): Workspace {
   const resolved = resolveWorkspaceSource(input);
   return transaction(db, () => {
     const existing = db
       .prepare('SELECT name FROM workspaces WHERE kind = ? AND source = ?')
       .get(resolved.kind, resolved.source) as { name: string } | undefined;
     if (existing) throw new DomainError('DUPLICATE_WORKSPACE', `"${existing.name}" is already in your workspaces.`);
-    const id = randomUUID();
     const now = nowIso();
     db.prepare('INSERT INTO workspaces (id, kind, name, source, created_at, last_opened_at) VALUES (?, ?, ?, ?, ?, ?)').run(
       id,
