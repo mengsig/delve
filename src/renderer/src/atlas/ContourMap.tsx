@@ -37,6 +37,7 @@ function motionDuration() {
 }
 
 function revealNode(button: HTMLButtonElement, id: number, flow: ReactFlowInstance<ConceptNode>) {
+  if (!button.matches(':focus-visible')) return;
   const canvas = button.closest('.atlas-canvas')?.getBoundingClientRect();
   const node = flow.getNode(String(id));
   if (!canvas || !node) return;

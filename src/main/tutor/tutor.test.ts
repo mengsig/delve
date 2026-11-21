@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { TutorIntent, TutorRequest } from '../../shared/reader';
 import { addPrerequisite, upsertConcept } from '../db/concepts';
@@ -8,10 +11,11 @@ import { listEvidence, recordEvidence, resetEvidence } from '../db/evidence';
 import { readWorkspaceGraph } from '../db/graph';
 import { bindSnapshot, saveLesson } from '../db/lessons';
 import { addWorkspace } from '../db/workspaces';
+import { makeShimDir, makeTempDir, setupRunner } from '../providers/test-helpers';
 import { readLesson } from '../reader/ipc';
 import { tutorSchemas } from './ipc';
 import { prepareTurn } from './prompt';
-import type { Generate, TutorReply } from './provider';
+import { createGenerator, type Generate, type TutorReply } from './provider';
 import { TutorSession } from './session';
 
 let db: Db;
@@ -24,12 +28,44 @@ const opening: TutorReply = {
 };
 
 beforeEach(() => {
+  vi.stubEnv('CODEX_HOME', join(tmpdir(), `delve-missing-${randomUUID()}`));
   db = openDatabase(':memory:');
   const workspaceId = addWorkspace(db, { kind: 'topic', title: 'Networking' }).id;
   const concept = upsertConcept(db, { key: 'routing', title: 'Routing', workspaceId, portable: true });
   request = { workspaceId, conceptId: concept.id, depth: 'medium', provider: 'codex', intent: { kind: 'teach' } };
   session = new TutorSession(db, async () => opening);
 });
+
+it('uses the Codex config model unless an explicit override wins, and binds the preview to its source', async () => {
+  const home = await makeTempDir('codex-config');
+  vi.stubEnv('CODEX_HOME', home);
+  vi.stubEnv('DELVE_CODEX_MODEL', undefined);
+  const defaults = prepareTurn(db, request);
+  expect(defaults.preview).toMatchObject({ model: null, modelSource: 'default' });
+  await writeFile(join(home, 'config.toml'), 'model = "gpt-6.1-terra"\n[mcp_servers.bad]\ncommand = "ignored"\n');
+  const configured = prepareTurn(db, request);
+  expect(configured.preview).toMatchObject({ model: 'gpt-6.1-terra', modelSource: 'codex-config' });
+  expect(configured.preview.token).not.toBe(defaults.preview.token);
+  const record = join(home, 'record.json');
+  const { runner } = await setupRunner(await makeShimDir(), { FAKE_PROVIDER_RECORD: record,
+    FAKE_PROVIDER_PAYLOAD: JSON.stringify({ ...opening, lesson: { ...opening.lesson, source: null } }) });
+  await createGenerator(runner)(configured, new AbortController().signal);
+  const argv: string[] = JSON.parse(await readFile(record, 'utf8')).argv;
+  expect(argv.slice(argv.indexOf('--model'), argv.indexOf('--model') + 2)).toEqual(['--model', 'gpt-6.1-terra']);
+  expect(argv).toContain('--ignore-user-config');
+  vi.stubEnv('DELVE_CODEX_MODEL', 'gpt-override');
+  expect(prepareTurn(db, request).preview).toMatchObject({ model: 'gpt-override', modelSource: 'override' });
+});
+
+it.each(['model = "--bad"', 'model = 123', '[profile]\nmodel = "nested"', 'model = ['])(
+  'falls back to the Codex default for invalid or absent top-level model: %s', async contents => {
+    const home = await makeTempDir('codex-invalid');
+    vi.stubEnv('CODEX_HOME', home);
+    vi.stubEnv('DELVE_CODEX_MODEL', undefined);
+    await writeFile(join(home, 'config.toml'), contents);
+    expect(prepareTurn(db, request).preview).toMatchObject({ model: null, modelSource: 'default' });
+  },
+);
 afterEach(() => { session.close(); db.close(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 function run(intent: TutorIntent, base = request) {
@@ -86,6 +122,8 @@ it('reuses only a demonstrated canonical concept at the selected depth, preservi
 });
 
 it('uses the cache only for matching model, provider, depth and snapshot', async () => {
+  vi.stubEnv('DELVE_CODEX_MODEL', undefined);
+  vi.stubEnv('DELVE_CLAUDE_MODEL', undefined);
   const generate = vi.fn<Generate>(async () => opening);
   session = new TutorSession(db, generate);
   await run(request.intent);
@@ -98,6 +136,38 @@ it('uses the cache only for matching model, provider, depth and snapshot', async
   bindSnapshot(db, request.workspaceId, 'abcd001');
   await run(request.intent);
   expect(generate).toHaveBeenCalledTimes(5);
+});
+
+it.each([
+  { provider: 'codex', variable: 'DELVE_CODEX_MODEL', model: 'gpt-5.4' },
+  { provider: 'claude', variable: 'DELVE_CLAUDE_MODEL', model: 'claude-sonnet-4-6' },
+] as const)('previews the $provider default and sends the consented model selection', async ({ provider, variable, model }) => {
+  const record = join(await makeTempDir('tutor-model'), 'request.json');
+  const { runner } = await setupRunner(await makeShimDir(), {
+    FAKE_PROVIDER_RECORD: record,
+    FAKE_PROVIDER_PAYLOAD: JSON.stringify({ ...opening, lesson: { ...opening.lesson, source: null } }),
+  });
+  const generate = createGenerator(runner);
+  const { signal } = new AbortController();
+  vi.stubEnv(variable, undefined);
+  const input = { ...request, provider };
+  const defaults = prepareTurn(db, input);
+  expect(defaults.preview.model).toBeNull();
+  await generate(defaults, signal);
+  const defaultCall = JSON.parse(await readFile(record, 'utf8'));
+  expect(defaultCall.argv).not.toContain('--model');
+  expect(defaultCall.stdin).toBe(defaults.preview.prompt);
+
+  vi.stubEnv(variable, model);
+  const override = prepareTurn(db, input);
+  expect(override.preview.model).toBe(model);
+  expect(override.cacheKey).not.toBe(defaults.cacheKey);
+  expect(() => session.run({ ...input, requestId: randomUUID(), token: defaults.preview.token })).toThrow(/changed/);
+  await generate(override, signal);
+  const overrideCall = JSON.parse(await readFile(record, 'utf8'));
+  const modelFlag = overrideCall.argv.indexOf('--model');
+  expect(overrideCall.argv.slice(modelFlag, modelFlag + 2)).toEqual(['--model', model]);
+  expect(overrideCall.stdin).toBe(override.preview.prompt);
 });
 
 it('preserves a valid lesson and transcript on invalid output and rejects stale or mismatched requests', async () => {

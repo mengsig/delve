@@ -3,16 +3,16 @@ import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { makeShimDir, makeTempDir, request, setupRunner } from './test-helpers';
 
+let binDir: string;
+
+beforeAll(async () => {
+  binDir = await makeShimDir();
+});
+
+const setup = (env: NodeJS.ProcessEnv = {}) => setupRunner(binDir, env);
+const counterIn = async (): Promise<string> => path.join(await makeTempDir('cnt'), 'n');
+
 describe('ProviderRunner failures', () => {
-  let binDir: string;
-
-  beforeAll(async () => {
-    binDir = await makeShimDir();
-  });
-
-  const setup = (env: NodeJS.ProcessEnv = {}) => setupRunner(binDir, env);
-  const counterIn = async (): Promise<string> => path.join(await makeTempDir('cnt'), 'n');
-
   it('fails with PROVIDER_INVALID_OUTPUT after bounded retries', async () => {
     const counter = await counterIn();
     const { runner } = await setup({ FAKE_PROVIDER_MODE: 'invalid', FAKE_PROVIDER_COUNTER: counter });
@@ -67,4 +67,17 @@ describe('ProviderRunner failures', () => {
     setTimeout(() => controller.abort(), 200);
     await expect(second).rejects.toMatchObject({ code: 'PROVIDER_CANCELLED' });
   }, 15_000);
+});
+
+it.each([
+  { provider: 'codex', mode: 'model-rejected', model: 'gpt-test', hint: 'update the model in Codex config' },
+  { provider: 'claude', mode: 'model-rejected', model: 'claude-test', hint: 'Set DELVE_CLAUDE_MODEL' },
+  { provider: 'claude', mode: 'model-rejected-zero-exit', model: undefined, hint: 'set DELVE_CLAUDE_MODEL' },
+] as const)('reports $provider $mode in a single attempt', async ({ provider, mode, model, hint }) => {
+  const counter = await counterIn();
+  const { runner } = await setup({ FAKE_PROVIDER_MODE: mode, FAKE_PROVIDER_COUNTER: counter });
+  await expect(runner.run(request({ provider, model, maxRetries: 3 }))).rejects.toMatchObject({
+    code: 'PROVIDER_MODEL', message: expect.stringContaining(hint),
+  });
+  expect(await readFile(counter, 'utf8')).toBe('1');
 });

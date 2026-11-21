@@ -1,10 +1,12 @@
 import { DomainError } from '../../shared/errors';
 import type { ProviderId } from '../../shared/domain';
+import { MODEL_OVERRIDE_ENV } from './env';
 
 export type ProviderErrorCode =
   | 'PROVIDER_NOT_FOUND'
   | 'PROVIDER_AUTH'
   | 'PROVIDER_QUOTA'
+  | 'PROVIDER_MODEL'
   | 'PROVIDER_TIMEOUT'
   | 'PROVIDER_CANCELLED'
   | 'PROVIDER_FAILED'
@@ -70,9 +72,19 @@ export function invalidOutputError(p: ProviderId, detail: string, cause?: unknow
 
 const AUTH_PATTERN = /not logged in|please run .*login|invalid api key|authentication/i;
 const QUOTA_PATTERN = /usage limit|rate limit|quota|limit reached|\b429\b/i;
+const MODEL_PATTERN = /\bmodel_not_found\b|\bmodel(?:[ \t]+\\?["'][^"'\r\n]+?\\?["'])?[ \t]+(?:not found|was not found|does not exist|is not (?:a recognized model id|supported|available))\b/i;
+const CLAUDE_MODEL_PATTERN = /issue with the selected model|not available with the Claude \w+ plan/i;
 
-/** Returns an auth/quota error when the text says so, otherwise null. */
-export function classifyText(p: ProviderId, text: string): ProviderError | null {
+/** Classifies recognized CLI diagnostics that should end the run. */
+export function classifyText(p: ProviderId, text: string, model?: string): ProviderError | null {
+  if (MODEL_PATTERN.test(text) || (p === 'claude' && CLAUDE_MODEL_PATTERN.test(text))) {
+    const variable = MODEL_OVERRIDE_ENV[p];
+    const message = model === undefined
+      ? `Update ${DISPLAY_NAME[p]} or set ${variable} to a model available to your subscription, then relaunch Delve.`
+      : `Set ${variable} to a model available to your subscription${p === 'codex' ? ', or update the model in Codex config' : ''}, then relaunch Delve.`;
+    const requested = model === undefined ? 'its default model' : `the requested model ${model}`;
+    return new ProviderError('PROVIDER_MODEL', p, `${DISPLAY_NAME[p]} rejected ${requested}. ${message}`);
+  }
   if (AUTH_PATTERN.test(text)) return authError(p);
   if (QUOTA_PATTERN.test(text)) return quotaError(p);
   return null;
