@@ -1,9 +1,9 @@
 import assert from 'node:assert';
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { ProviderId } from '../../shared/domain';
 import { cancelledError, failedError, notFoundError, timeoutError } from './errors';
-import { MARKER_VAR, readProcessTable, selectTargets, windowsSystemTool } from './proctable';
+import { killWindowsTargets, MARKER_VAR, readProcessTable, selectTargets, type ProcessEntry } from './proctable';
 
 export interface CaptureOptions {
   provider: ProviderId;
@@ -24,19 +24,17 @@ export interface CaptureResult {
   stderr: string;
 }
 
-/** A spawned CLI and what identifies its descendants: the run marker and the spawn time. */
+/** A spawned CLI and what identifies its descendants: the run marker, the spawn time and the exit time. */
 export interface RunTree {
   child: ChildProcessWithoutNullStreams;
   marker: string;
   startedMs: number;
+  exitedMs: number | null;
 }
 
 const DEFAULT_KILL_GRACE_MS = 2_000;
 // After the CLI exits and leftovers are reaped, how long its pipes may stay open before we stop waiting.
 const DRAIN_MS = 500;
-// Tolerates clock granularity between Date.now() and Windows process creation times.
-const CREATION_SLACK_MS = 1_000;
-const TASKKILL_NOT_FOUND = 128;
 const IS_WINDOWS = process.platform === 'win32';
 
 function signalPosix(pid: number, signal: NodeJS.Signals): Error | null {
@@ -49,14 +47,26 @@ function signalPosix(pid: number, signal: NodeJS.Signals): Error | null {
   }
 }
 
-function taskkill(pid: number): Promise<Error | null> {
-  return new Promise((resolve) => {
-    execFile(windowsSystemTool('taskkill.exe'), ['/PID', String(pid), '/T', '/F'], { windowsHide: true, shell: false }, (error) => {
-      if (!error) return resolve(null);
-      const exitCode: unknown = (error as { code?: unknown }).code;
-      resolve(exitCode === TASKKILL_NOT_FOUND ? null : error);
-    });
-  });
+/**
+ * Stops the CLI itself without ever acting on a reused pid. Windows terminates it through Node's own
+ * handle; POSIX signals its group, unless it has exited and its pid is held by another process (or unknown).
+ */
+function stopRoot(tree: RunTree, entries: ProcessEntry[] | null, signal: NodeJS.Signals): Error | null {
+  const { child } = tree;
+  assert(child.pid !== undefined, 'only a spawned child can be stopped');
+  const running = child.exitCode === null && child.signalCode === null;
+  if (IS_WINDOWS) {
+    if (!running || child.kill('SIGKILL') || child.exitCode !== null) return null;
+    return new Error(`could not terminate process ${child.pid}`);
+  }
+  const pid = child.pid;
+  if (!running && (entries === null || entries.some((entry) => entry.pid === pid))) return null;
+  return signalPosix(-pid, signal);
+}
+
+async function stopTargets(targets: ProcessEntry[], signal: NodeJS.Signals): Promise<Error | null> {
+  if (IS_WINDOWS) return killWindowsTargets(targets).then(() => null, (error: Error) => error);
+  return targets.map((target) => signalPosix(target.pid, signal)).find((e) => e !== null) ?? null;
 }
 
 /**
@@ -67,20 +77,19 @@ function taskkill(pid: number): Promise<Error | null> {
 export async function reapTree(tree: RunTree, signal: NodeJS.Signals): Promise<Error | null> {
   const pid = tree.child.pid;
   assert(pid !== undefined && pid > 0, 'only a spawned child can be reaped');
-  let targets: number[];
+  let entries: ProcessEntry[] | null = null;
+  let scanError: Error | null = null;
   try {
-    targets = selectTargets(await readProcessTable(tree.marker), pid, tree.startedMs - CREATION_SLACK_MS);
+    entries = await readProcessTable(tree.marker);
   } catch (error) {
-    // Still stop what we can reach, and report that the scan failed.
-    const rootError = IS_WINDOWS ? await taskkill(pid) : signalPosix(-pid, signal);
-    return rootError ?? (error as Error);
+    // Still stop the CLI itself, and report that its descendants could not be listed.
+    scanError = error as Error;
   }
-  if (IS_WINDOWS) {
-    const errors = await Promise.all([pid, ...targets].map(taskkill));
-    return errors.find((e) => e !== null) ?? null;
-  }
-  const errors = [signalPosix(-pid, signal), ...targets.map((target) => signalPosix(target, signal))];
-  return errors.find((e) => e !== null) ?? null;
+  // Read the exit time after the scan: an exit seen during it bounds which parent links are the CLI's.
+  const origin = { pid, startedMs: IS_WINDOWS ? tree.startedMs : null, exitedMs: tree.exitedMs };
+  const rootError = stopRoot(tree, entries, signal);
+  if (entries === null) return rootError ?? scanError;
+  return rootError ?? (await stopTargets(selectTargets(entries, origin), signal));
 }
 
 function startChild(opts: CaptureOptions, marker: string): ChildProcessWithoutNullStreams {
@@ -112,7 +121,7 @@ class CapturedRun {
   ) {
     const marker = randomUUID();
     const startedMs = Date.now();
-    this.tree = { child: startChild(opts, marker), marker, startedMs };
+    this.tree = { child: startChild(opts, marker), marker, startedMs, exitedMs: null };
   }
 
   start(): void {
@@ -135,6 +144,11 @@ class CapturedRun {
   }
 
   private readonly onAbort = (): void => this.stop(cancelledError(this.opts.provider));
+
+  // A failed reap is reported through settle like any other cleanup failure, never left unhandled.
+  private reap(signal: NodeJS.Signals): Promise<Error | null> {
+    return reapTree(this.tree, signal).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
+  }
 
   private settle(error: Error | null): void {
     if (this.done) return;
@@ -162,9 +176,9 @@ class CapturedRun {
     this.verdict = reason;
     if (this.tree.child.pid === undefined) return this.settle(reason);
     const { provider } = this.opts;
-    void reapTree(this.tree, 'SIGTERM').then((e) => e && this.settle(failedError(provider, 'could not stop the CLI', e)));
+    void this.reap('SIGTERM').then((e) => e && this.settle(failedError(provider, 'could not stop the CLI', e)));
     const forceKill = (): void => {
-      void reapTree(this.tree, 'SIGKILL').then((e) => this.settle(e ? failedError(provider, 'could not kill the CLI', e) : reason));
+      void this.reap('SIGKILL').then((e) => this.settle(e ? failedError(provider, 'could not kill the CLI', e) : reason));
     };
     this.timers.push(setTimeout(forceKill, this.opts.killGraceMs ?? DEFAULT_KILL_GRACE_MS));
   }
@@ -172,7 +186,8 @@ class CapturedRun {
   // Reap descendants that outlived the CLI, then wait briefly for pipes they may still hold.
   private onExit(code: number | null): void {
     this.code = code;
-    void reapTree(this.tree, 'SIGKILL').then((error) => {
+    this.tree.exitedMs = Math.max(Date.now(), this.tree.startedMs);
+    void this.reap('SIGKILL').then((error) => {
       if (this.done) return;
       if (error) return this.settle(failedError(this.opts.provider, 'could not stop leftover processes', error));
       this.reaped = true;

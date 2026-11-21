@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { environHasMarker, MARKER_VAR, parseProcStatPpid, parsePsTable, parseWindowsTable, readProcessTable, selectTargets, type ProcessEntry } from './proctable';
+import { environHasMarker, MARKER_VAR, parseProcStatPpid, parsePsTable, parseWindowsTable, readProcessTable, selectTargets, windowsKillScript, type ProcessEntry } from './proctable';
 
 const entry = (pid: number, ppid: number, over: Partial<ProcessEntry> = {}): ProcessEntry => ({ pid, ppid, marked: false, startedMs: null, ...over });
 
@@ -29,19 +29,50 @@ describe('process table parsing', () => {
 });
 
 describe('selectTargets', () => {
-  it('collects marked processes and descendants of the root, never the root itself', () => {
-    const entries = [entry(1, 0), entry(100, 1), entry(101, 100), entry(102, 101), entry(200, 1, { marked: true }), entry(300, 1)];
-    expect(selectTargets(entries, 100, 0)).toEqual([101, 102, 200]);
+  const posix = (pid: number, exitedMs: number | null = null) => ({ pid, startedMs: null, exitedMs });
+  const windows = (pid: number, startedMs: number, exitedMs: number | null = null) => ({ pid, startedMs, exitedMs });
+  const pids = (list: ProcessEntry[]) => list.map((e) => e.pid);
+
+  it('collects marked processes and descendants of a live root, never the root itself', () => {
+    const entries = [entry(1, 0), entry(100, 1), entry(101, 100), entry(102, 101), entry(200, 1, { marked: true }), entry(201, 200), entry(300, 1)];
+    expect(pids(selectTargets(entries, posix(100)))).toEqual([101, 102, 200, 201]);
   });
 
-  it('skips processes created before the run, so a reused parent pid is not followed', () => {
-    const entries = [entry(100, 7, { startedMs: 5_000 }), entry(101, 100, { startedMs: 900 }), entry(102, 100, { startedMs: 6_000 })];
-    expect(selectTargets(entries, 100, 4_000)).toEqual([102]);
+  it('does not walk a POSIX root that has exited, since its pid may be reused', () => {
+    const entries = [entry(100, 1), entry(101, 100), entry(200, 1, { marked: true })];
+    expect(pids(selectTargets(entries, posix(100, 5_000)))).toEqual([200]);
   });
 
-  it('terminates on parent cycles and rejects an invalid root', () => {
-    expect(selectTargets([entry(5, 6), entry(6, 5)], 5, 0)).toEqual([6]);
-    expect(() => selectTargets([], 0, 0)).toThrow();
+  it('follows Windows parent links only for children created during the parent lifetime', () => {
+    const entries = [entry(101, 100, { startedMs: 1_500 }), entry(102, 101, { startedMs: 1_600 }), entry(103, 101, { startedMs: 1_400 }), entry(104, 100, { startedMs: 900 })];
+    expect(pids(selectTargets(entries, windows(100, 1_000)))).toEqual([101, 102]);
+  });
+
+  it('ignores an unrelated process that reused the exited root pid, and its newer children', () => {
+    const genuine = entry(101, 100, { startedMs: 1_500 });
+    const reusedRoot = entry(100, 4, { startedMs: 3_000 });
+    const unrelated = [entry(150, 100, { startedMs: 3_100 }), entry(151, 150, { startedMs: 3_200 })];
+    expect(pids(selectTargets([genuine, reusedRoot, ...unrelated], windows(100, 1_000, 2_000)))).toEqual([101]);
+  });
+
+  it('terminates on parent cycles and rejects an invalid origin', () => {
+    expect(pids(selectTargets([entry(5, 6), entry(6, 5)], posix(5)))).toEqual([6]);
+    expect(() => selectTargets([], posix(0))).toThrow();
+    expect(() => selectTargets([], windows(5, 2_000, 1_000))).toThrow();
+  });
+});
+
+describe('windowsKillScript', () => {
+  it('kills each target only when its start time still matches', () => {
+    const script = windowsKillScript([entry(101, 100, { startedMs: 1_500 }), entry(102, 101, { startedMs: 1_600 })]);
+    expect(script).toContain("@('101:1500','102:1600')");
+    expect(script).toContain('-ne $ms) { continue }');
+    expect(windowsKillScript([entry(7, 1, { startedMs: 9 })])).toContain("@('7:9')");
+  });
+
+  it('refuses targets without an identity', () => {
+    expect(() => windowsKillScript([entry(101, 100)])).toThrow(/creation time/);
+    expect(() => windowsKillScript([])).toThrow();
   });
 });
 

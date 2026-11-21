@@ -65,29 +65,68 @@ export function parseWindowsTable(text: string): ProcessEntry[] {
   return entries;
 }
 
+/** Where a walk starts: the CLI, with its spawn and exit times (Windows) or null times (POSIX). */
+export interface WalkOrigin {
+  pid: number;
+  startedMs: number | null;
+  exitedMs: number | null;
+}
+
 /**
- * Pids to stop besides the root: every process carrying the marker, and the root's descendants by parent
- * link. Windows keeps a dead parent's pid as ParentProcessId, so creation time filters out reused pids.
+ * Whether `child` was created by the process that held `parent.pid`. POSIX parent links are current,
+ * so only a live parent counts; Windows keeps stale links, so creation must fall in the parent's lifetime.
  */
-export function selectTargets(entries: ProcessEntry[], rootPid: number, sinceMs: number): number[] {
-  assert(Number.isInteger(rootPid) && rootPid > 0, 'root pid must be a positive integer');
+function bornUnder(child: ProcessEntry, parent: WalkOrigin): boolean {
+  if (parent.startedMs === null) return parent.exitedMs === null;
+  if (child.startedMs === null || child.startedMs < parent.startedMs) return false;
+  return parent.exitedMs === null || child.startedMs <= parent.exitedMs;
+}
+
+/**
+ * Processes to stop besides the CLI itself: every one carrying the run marker, and the descendants of
+ * the CLI and of marked processes through parent links that cannot belong to a reused pid.
+ */
+export function selectTargets(entries: ProcessEntry[], origin: WalkOrigin): ProcessEntry[] {
+  assert(Number.isInteger(origin.pid) && origin.pid > 0, 'root pid must be a positive integer');
+  assert(origin.exitedMs === null || origin.startedMs === null || origin.exitedMs >= origin.startedMs, 'exit follows start');
   const children = new Map<number, ProcessEntry[]>();
   for (const entry of entries) children.set(entry.ppid, [...(children.get(entry.ppid) ?? []), entry]);
-  const found = new Set(entries.filter((e) => e.marked).map((e) => e.pid));
-  const seen = new Set([rootPid]);
-  const queue = [rootPid];
+  const selected = new Map(entries.filter((e) => e.marked && e.pid !== origin.pid).map((e) => [e.pid, e]));
+  const queue: WalkOrigin[] = [origin, ...[...selected.values()].map((e) => ({ pid: e.pid, startedMs: e.startedMs, exitedMs: null }))];
+  const visited = new Set<number>();
   while (queue.length > 0) {
-    for (const child of children.get(queue.pop() as number) ?? []) {
-      if (seen.has(child.pid) || (child.startedMs !== null && child.startedMs < sinceMs)) continue;
-      seen.add(child.pid);
-      found.add(child.pid);
-      queue.push(child.pid);
+    const parent = queue.pop() as WalkOrigin;
+    if (visited.has(parent.pid)) continue;
+    visited.add(parent.pid);
+    for (const child of children.get(parent.pid) ?? []) {
+      if (child.pid === origin.pid || !bornUnder(child, parent)) continue;
+      selected.set(child.pid, child);
+      queue.push({ pid: child.pid, startedMs: child.startedMs, exitedMs: null });
     }
   }
-  found.delete(rootPid);
-  found.delete(process.pid);
-  assert(![...found].some((pid) => pid <= 0), 'never target pid 0 or process groups');
-  return [...found].sort((a, b) => a - b);
+  selected.delete(process.pid);
+  assert(![...selected.keys()].some((pid) => pid <= 0), 'never target pid 0 or process groups');
+  return [...selected.values()].sort((a, b) => a.pid - b.pid);
+}
+
+/**
+ * PowerShell that kills each target only through a handle whose start time matches the scan, so a pid
+ * reused since the scan is never touched. Exits 1 listing the targets it could not stop.
+ */
+export function windowsKillScript(targets: ProcessEntry[]): string {
+  assert(targets.length > 0, 'nothing to kill');
+  const pairs = targets.map((t) => {
+    assert(Number.isInteger(t.pid) && t.pid > 0, `invalid pid ${t.pid}`);
+    assert(t.startedMs !== null && Number.isInteger(t.startedMs) && t.startedMs > 0, `pid ${t.pid} needs a creation time`);
+    return `'${t.pid}:${t.startedMs}'`;
+  });
+  return [
+    `$failed = @(); foreach ($s in @(${pairs.join(',')})) { $t = $s.Split(':'); $id = [int]$t[0]; $ms = [long]$t[1]`,
+    '$p = Get-Process -Id $id -ErrorAction SilentlyContinue; if ($null -eq $p) { continue }',
+    'if (([DateTimeOffset]$p.StartTime).ToUnixTimeMilliseconds() -ne $ms) { continue }',
+    'try { $p.Kill() } catch { $p.Refresh(); if (-not $p.HasExited) { $failed += "${id}: $($_.Exception.Message)" } } }',
+    'if ($failed.Count -gt 0) { [Console]::Error.WriteLine($failed -join "; "); exit 1 }',
+  ].join('\n');
 }
 
 async function readProcFile(pid: number, name: string): Promise<string | null> {
@@ -124,13 +163,20 @@ export function windowsSystemTool(relative: string, env: NodeJS.ProcessEnv = pro
 const WINDOWS_QUERY =
   'Get-CimInstance Win32_Process | ForEach-Object { $t = 0; if ($_.CreationDate) { $t = ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() }; "$($_.ProcessId) $($_.ParentProcessId) $t" }';
 
+function windowsPowerShell(command: string): Promise<string> {
+  return execText(windowsSystemTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', command]);
+}
+
+/** Kills Windows targets after checking each one's identity; see windowsKillScript. */
+export async function killWindowsTargets(targets: ProcessEntry[]): Promise<void> {
+  if (targets.length === 0) return;
+  await windowsPowerShell(windowsKillScript(targets));
+}
+
 /** Snapshot of the processes this user can see, with each one's run marker (POSIX) or creation time (Windows). */
 export async function readProcessTable(marker: string): Promise<ProcessEntry[]> {
   assert(/^[A-Za-z0-9-]+$/.test(marker), 'marker must be a plain token');
-  if (process.platform === 'win32') {
-    const shell = windowsSystemTool('WindowsPowerShell\\v1.0\\powershell.exe');
-    return parseWindowsTable(await execText(shell, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_QUERY]));
-  }
+  if (process.platform === 'win32') return parseWindowsTable(await windowsPowerShell(WINDOWS_QUERY));
   if (process.platform === 'linux') {
     const pids = (await readdir('/proc')).filter((name) => /^\d+$/.test(name)).map(Number);
     const entries = await Promise.all(pids.map((pid) => readLinuxEntry(pid, marker)));
