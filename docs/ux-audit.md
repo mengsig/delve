@@ -40,6 +40,8 @@ A click, Enter to submit or a keyboard shortcut counts as one action. Typing the
 
 ## Verification
 
+The map retains a small, muted React Flow attribution in both themes. Delve and React Flow are MIT-licensed; [React Flow's attribution policy](https://reactflow.dev/remove-attribution) asks projects that remove the badge to subscribe. Keeping it acknowledges the library while fitting the Contour map, unlike the unbadged mockup.
+
 CI runs the journey assertions against the built desktop as part of `npm run test:smoke`. The [action counter](../tests/smoke/action-budget.ts) measures trusted pointer and keyboard events. [Tutor](../tests/smoke/tutor.spec.ts), [repository](../tests/smoke/repository.spec.ts), [Changes](../tests/smoke/explorer.spec.ts) and [navigation](../tests/smoke/navigation.spec.ts) cover the budgets above. Tests exercise actual Git operations and the normal CLI boundary with deterministic provider and GitHub fixtures.
 
 The packaged before/after artifact, **delve-ux-journeys**, includes matching 1280 × 800 captures of setup, Atlas, search, first-use consent, the first lesson, repository attachment, map progress and the selected PR. The accessibility checks exercise keyboard focus, native dialogs, reduced motion and the dark and light designs. Automated checks complement the keyboard and viewport journeys. Verification used Linux and fixture subscription responses.

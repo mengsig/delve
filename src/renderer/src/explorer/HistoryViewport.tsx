@@ -80,6 +80,7 @@ function findSelectedNode(nodes: HistoryNode[], key?: string) {
 export function HistoryViewport({ query, nodes, layout, selected, more, loadMore, onSelect, onOpen }: ViewportProps) {
   const width = useMemo(() => graphWidth(layout), [layout]);
   const { viewport, bounds, scroll } = useViewport(nodes.length, loadMore);
+  const pointerFocus = useRef(false);
   const [focus, setFocus] = useState<{ query: string; index?: number }>({ query });
   if (focus.query !== query) setFocus({ query });
   const selectedKey = selected && changeKey(selected);
@@ -114,7 +115,11 @@ export function HistoryViewport({ query, nodes, layout, selected, more, loadMore
   return <div id="change-timeline" ref={viewport} className="timeline-viewport"
     tabIndex={active < 0 ? -1 : 0} role={active < 0 ? 'region' : 'listbox'}
     aria-labelledby="change-timeline-label" aria-activedescendant={active < 0 ? undefined : `change-timeline-row-${active}`}
-    onFocus={event => { if (active >= 0 && event.target === event.currentTarget) reveal(event.currentTarget, active); }}
+    onPointerDownCapture={() => { pointerFocus.current = true; }}
+    onPointerUpCapture={() => { pointerFocus.current = false; }}
+    onPointerCancelCapture={() => { pointerFocus.current = false; }}
+    onPointerLeave={() => { pointerFocus.current = false; }}
+    onFocus={event => { if (!pointerFocus.current && active >= 0 && event.target === event.currentTarget) reveal(event.currentTarget, active); }}
     onScroll={scroll} onKeyDown={handleKey}>
     <div role="presentation" className="timeline-list" style={{ height: nodes.length * ROW_HEIGHT }}>
       {indices.map(index => {
@@ -123,7 +128,9 @@ export function HistoryViewport({ query, nodes, layout, selected, more, loadMore
         return <TimelineRow key={changeKey(node)} node={node} layout={layout?.[index]} width={width} index={index}
           size={more ? -1 : nodes.length} selected={selectedIndex === index} active={active === index}
           onSelect={() => {
+            pointerFocus.current = true;
             viewport.current?.focus({ preventScroll: true });
+            pointerFocus.current = false;
             if (viewport.current) reveal(viewport.current, index);
             setFocus({ query, index });
             choose(node);
