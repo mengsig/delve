@@ -68,6 +68,14 @@ jobs:
       - run: npm run ${{ matrix.script }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Smoke test packaged Linux app
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          version="$(node -p "require('./package.json').version")"
+          sudo chown root:root "release/$version/linux-unpacked/chrome-sandbox"
+          sudo chmod 4755 "release/$version/linux-unpacked/chrome-sandbox"
+          xvfb-run --auto-servernum -- npm run test:linux-package -- "release/$version/linux-unpacked/delve"
       - uses: actions/upload-artifact@v4
         with:
           name: delve-${{ matrix.os }}

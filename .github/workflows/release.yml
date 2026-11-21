@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify tag, lint, typecheck, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Tag must match package.json version
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${pkg}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version v${pkg}" >&2
+            exit 1
+          fi
+      - name: Changelog must have notes for this version
+        run: ./scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > /dev/null
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: Install Xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Smoke test (built app under Xvfb)
+        run: xvfb-run --auto-servernum -- npm run test:smoke
+
+  package:
+    name: Package (${{ matrix.os }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            script: package:linux
+          - os: macos-latest
+            script: package:mac
+          - os: windows-latest
+            script: package:win
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Unit tests on this platform
+        run: npm test
+      - run: npm run ${{ matrix.script }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Smoke test packaged Linux app
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          version="$(node -p "require('./package.json').version")"
+          sudo chown root:root "release/$version/linux-unpacked/chrome-sandbox"
+          sudo chmod 4755 "release/$version/linux-unpacked/chrome-sandbox"
+          xvfb-run --auto-servernum -- npm run test:linux-package -- "release/$version/linux-unpacked/delve"
+      - name: Verify macOS framework signature and launch
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          apps=(release/*/mac*/Delve.app)
+          test "${#apps[@]}" -eq 1 && test -d "${apps[0]}"
+          codesign --verify --strict "${apps[0]}/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework"
+          "${apps[0]}/Contents/MacOS/Delve" > mac-launch.log 2>&1 &
+          pid=$!
+          sleep 10
+          if ! kill -0 "$pid" 2>/dev/null; then cat mac-launch.log; wait "$pid" || true; exit 1; fi
+          kill -TERM "$pid"
+          wait "$pid" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: delve-${{ matrix.os }}
+          path: |
+            release/*/*.AppImage
+            release/*/*.deb
+            release/*/*.dmg
+            release/*/*-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub release
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: delve-*
+          merge-multiple: true
+      - name: Checksums and release notes
+        run: |
+          ./scripts/collect-release-assets.sh dist release-assets
+          ./scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > release-notes.md
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          prerelease=""
+          case "${GITHUB_REF_NAME}" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "${GITHUB_REF_NAME}" release-assets/* \
+            --title "Delve ${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md \
+            --verify-tag $prerelease
