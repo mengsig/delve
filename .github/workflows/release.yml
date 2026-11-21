@@ -72,6 +72,8 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y xvfb
           version="$(node -p "require('./package.json').version")"
+          sudo chown root:root "release/$version/linux-unpacked/chrome-sandbox"
+          sudo chmod 4755 "release/$version/linux-unpacked/chrome-sandbox"
           xvfb-run --auto-servernum -- npm run test:linux-package -- "release/$version/linux-unpacked/delve"
       - name: Verify macOS framework signature and launch
         if: matrix.os == 'macos-latest'
