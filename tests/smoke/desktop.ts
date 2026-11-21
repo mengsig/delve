@@ -19,7 +19,7 @@ async function launch(userData: string, firstRun: boolean, fakeBin?: string, lin
     if (!git) throw new Error('Repository smoke requires Git.');
     providerEnv.PATH += delimiter + dirname(git);
   }
-  const env = { ...process.env, ...providerEnv, DELVE_USER_DATA_DIR: userData };
+  const env = { ...process.env, ...providerEnv, CODEX_HOME: join(userData, 'codex-home'), DELVE_USER_DATA_DIR: userData };
   delete (env as NodeJS.ProcessEnv).ELECTRON_RENDERER_URL;
   return electron.launch({ args: [resolve(__dirname, '../../out/main/index.js'), ...(link ? [link] : [])], env, timeout: 30_000 });
 }

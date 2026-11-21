@@ -17,23 +17,23 @@ function tail(text: string): string {
   return text.trim().slice(-300) || 'no output';
 }
 
-/** Throws auth/quota/failed errors for a finished child; returns when the exit looks successful. */
-export function checkExit(provider: ProviderId, res: CaptureResult): void {
+/** Classifies the diagnostic from a failed CLI exit. */
+export function checkExit(provider: ProviderId, res: CaptureResult, model?: string): void {
   assert(res.code === null || Number.isInteger(res.code), 'exit code must be an integer or null');
-  const text = `${res.stderr}\n${res.stdout}`;
-  const classified = classifyText(provider, text);
-  if (classified && res.code !== 0) throw classified;
-  if (res.code !== 0) throw failedError(provider, `exited with code ${res.code}: ${tail(res.stderr || res.stdout)}`);
+  if (res.code === 0) return;
+  const classified = classifyText(provider, `${res.stderr}\n${res.stdout}`, model);
+  throw classified ?? failedError(provider, `exited with code ${res.code}: ${tail(res.stderr || res.stdout)}`);
 }
 
 /** Extracts the structured payload from claude's single JSON result object. */
-export function extractClaudePayload(res: CaptureResult): unknown {
+export function extractClaudePayload(res: CaptureResult, model?: string): unknown {
   const envelope = parseJson('claude', res.stdout, 'claude output');
   if (typeof envelope !== 'object' || envelope === null) throw invalidOutputError('claude', 'result is not an object');
-  const obj = envelope as { is_error?: unknown; result?: unknown; structured_output?: unknown };
+  const obj = envelope as { is_error?: unknown; result?: unknown; structured_output?: unknown; errors?: unknown };
   if (obj.is_error === true) {
-    const text = typeof obj.result === 'string' ? obj.result : '';
-    throw classifyText('claude', text) ?? failedError('claude', tail(text));
+    const errors: unknown[] = Array.isArray(obj.errors) ? obj.errors : [];
+    const text = [obj.result, ...errors].filter(item => typeof item === 'string').join('\n');
+    throw classifyText('claude', `${res.stderr}\n${text}`, model) ?? failedError('claude', tail(text || res.stderr));
   }
   if (obj.structured_output !== undefined && obj.structured_output !== null) return obj.structured_output;
   if (typeof obj.result !== 'string') throw invalidOutputError('claude', 'result has no structured_output or text');

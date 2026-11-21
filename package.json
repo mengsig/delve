@@ -54,6 +54,7 @@
     "vitest": "^5.1.1"
   },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
     "@xyflow/react": "^13.0.2",
     "zod": "^4.6.7"
   }
