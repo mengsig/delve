@@ -1,12 +1,12 @@
 import { useCallback, useState } from 'react';
-import type { ProviderId } from '../../../shared/domain';
 import type { IpcResponse } from '../../../shared/ipc';
-import type { ChangeBrief, ChangeRef } from '../../../shared/repository';
+import type { ChangeRef } from '../../../shared/repository';
 import { call } from '../api';
 import { preferredProvider } from '../preferences';
 import { SetupProvider } from '../SetupProvider';
 import { ReadState } from '../ReadState';
-import { ProviderReview } from '../repository/ProviderReview';
+import { changeJobKey, jobInProgress, useMapJobs, useRepositoryCompletion, type ChangeJob } from '../repository/MapJobs';
+import { CopyGitHubLogin, ProviderReview } from '../repository/ProviderReview';
 import { useRepositoryGeneration } from '../repository/useRepositoryGeneration';
 import { useRead } from '../useRead';
 import { BriefChapters, ChangeFootprint } from './ChangeBrief';
@@ -17,9 +17,9 @@ type RepositoryChanges = IpcResponse<'repo:changes'>;
 
 interface Props extends ReaderProps {
   selected?: ChangeRef;
+  openedJob?: ChangeJob;
   onSelect: (change: ChangeRef) => void;
   onFollowUp: (id: number) => void;
-  onGenerated: () => void;
 }
 
 function reference({ kind, ref }: ChangeRef) {
@@ -31,8 +31,10 @@ function ChangeList({ workspaceId, selected, onSelect }: {
 }) {
   const query = useCallback(() => call('repo:changes', { workspaceId }), [workspaceId]);
   const { result, refresh } = useRead(query);
-  if (result.status !== 'ready') return <ReadState label="Changes" retry={refresh}
-    message={result.status === 'error' ? result.message : undefined} />;
+  if (result.status !== 'ready') return <>
+    <ReadState label="Changes" retry={refresh} message={result.status === 'error' ? result.message : undefined} />
+    {result.status === 'error' && <CopyGitHubLogin message={result.message} />}
+  </>;
   return <AvailableChanges changes={result.value} selected={selected} onSelect={onSelect} onRefresh={refresh} />;
 }
 
@@ -41,7 +43,10 @@ function AvailableChanges({ changes, selected, onSelect, onRefresh }: {
 }) {
   return <section className="card" aria-labelledby="available-changes">
     <h2 id="available-changes">Available changes</h2>
-    {changes.warning && <p className="repository-notice" role="status">{changes.warning}</p>}
+    {changes.warning && <div className="repository-notice">
+      <p role="status">{changes.warning}</p>
+      <CopyGitHubLogin message={changes.warning} />
+    </div>}
     {changes.changes.length > 0 ? <ul className="repository-list">
       {changes.changes.map(change => <li key={change.kind + '/' + change.ref}>
         <button data-change-kind={change.kind} data-change-ref={change.ref}
@@ -55,23 +60,30 @@ function AvailableChanges({ changes, selected, onSelect, onRefresh }: {
   </section>;
 }
 
-function ChangeReader({ props, change }: { props: Props; change: ChangeRef }) {
+function ChangeReader({ props, change, openedJob }: { props: Props; change: ChangeRef; openedJob?: ChangeJob }) {
   const { kind, ref } = change;
-  const { workspace, depth, onLesson, onFollowUp, onGenerated } = props;
-  const [provider, choose] = useState(preferredProvider);
-  const [generatedBrief, setGeneratedBrief] = useState<{ provider: ProviderId; brief: ChangeBrief }>();
-  const fresh = generatedBrief?.provider === provider ? generatedBrief.brief : undefined;
+  const { workspace, depth, onLesson, onFollowUp } = props;
+  const [provider, choose] = useState(() => openedJob?.provider ?? preferredProvider());
   const query = useCallback(() => call('repo:saved', { workspaceId: workspace.id, kind, ref, depth, provider }),
     [workspace.id, kind, ref, depth, provider]);
   const { result, refresh } = useRead(query);
-  const generation = useRepositoryGeneration(generated => {
-    if (generated.kind !== 'change') throw new Error('Expected a change brief.');
-    setGeneratedBrief({ provider, brief: generated.brief });
-    onGenerated();
-  });
-  const brief = fresh ?? (result.status === 'ready' ? result.value : undefined);
+  useRepositoryCompletion(workspace.id, refresh);
+  const queue = useMapJobs();
+  const job = queue.jobs.get(changeJobKey(workspace.id, change, depth));
+  const previous = job ?? openedJob;
+  const running = jobInProgress(job);
+  const generation = useRepositoryGeneration(preview => queue.startChange({ workspace, depth, provider, change, preview }));
+  const brief = result.status === 'ready' ? result.value : undefined;
+  const locked = running || Boolean(generation.pending || generation.preview);
   function inspect() {
     return generation.inspect({ workspaceId: workspace.id, depth, provider, selection: { kind, ref } });
+  }
+  let previewLabel = brief ? 'Refresh diff preview' : 'Preview diff request';
+  if (generation.error?.action === 'provider') previewLabel = 'Review diff with selected provider';
+  else if (generation.error?.action === 'review') previewLabel = 'Review diff again';
+  else if (generation.error) previewLabel = 'Retry diff preview';
+  else if (previous?.phase === 'failed' || previous?.phase === 'cancelled') {
+    previewLabel = 'Review diff to retry';
   }
   return <>
     <ReaderHeader {...props} label={'Change brief / ' + workspace.name + ' / ' + reference(change)}
@@ -79,16 +91,16 @@ function ChangeReader({ props, change }: { props: Props; change: ChangeRef }) {
     {brief && <div className="reader reader-layout"><BriefChapters brief={brief} />
       <ChangeFootprint brief={brief} onLesson={onLesson} onFollowUp={onFollowUp} /></div>}
     <section className="sheet change-source" aria-label="Generation source">
-      {brief && <p className="smallprint" role="status">{fresh ? 'Brief generated' : 'Saved brief · available offline'}</p>}
-      {result.status === 'loading' && !fresh && <p role="status">Looking for a saved brief…</p>}
-      {result.status === 'error' && !fresh && <div>
+      {brief && <p className="smallprint" role="status">Saved brief · available offline</p>}
+      {result.status === 'loading' && <p role="status">Looking for a saved brief…</p>}
+      {result.status === 'error' && <div>
         <p role="alert">{result.message}</p><button onClick={refresh}>Retry saved brief</button>
       </div>}
-      <SetupProvider provider={provider} onChange={choose} label="Brief provider" disabled={Boolean(generation.pending || generation.preview)} />
-      <button disabled={Boolean(generation.pending || generation.preview)} onClick={() => void inspect()}>
-        {brief ? 'Refresh diff preview' : 'Preview diff request'}
+      <SetupProvider provider={provider} onChange={choose} label="Brief provider" disabled={locked} />
+      <button disabled={locked} onClick={() => void inspect()}>
+        {previewLabel}
       </button>
-      <ProviderReview generation={generation} provider={provider} depth={depth} workflow="explain" />
+      <ProviderReview generation={generation} provider={provider} depth={depth} workflow="explain" disabled={running} />
     </section>
     <details className="change-source"><summary>Browse another change</summary>
       <ChangeList workspaceId={workspace.id} selected={change} onSelect={props.onSelect} /></details>
@@ -96,8 +108,11 @@ function ChangeReader({ props, change }: { props: Props; change: ChangeRef }) {
 }
 
 function LiveChanges(props: Props) {
-  const { selected, onSelect } = props;
-  if (selected) return <ChangeReader key={selected.kind + '/' + selected.ref + '/' + props.depth} props={props} change={selected} />;
+  const { selected, onSelect, openedJob } = props;
+  if (selected) {
+    const key = changeJobKey(props.workspace.id, selected, props.depth);
+    return <ChangeReader key={key} props={props} change={selected} openedJob={openedJob?.key === key ? openedJob : undefined} />;
+  }
   return <>
     <ReaderHeader {...props} label={props.workspace.name} title="Repository changes"
       summary="Review a commit or pull request and follow the concepts it touches." />

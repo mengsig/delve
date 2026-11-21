@@ -9,6 +9,7 @@ import { Progress } from './progress/Progress';
 import { Changes } from './reader/Changes';
 import { Lesson } from './reader/Lesson';
 import { ReadState } from './ReadState';
+import { useRepositoryCompletion, type RepositoryJob } from './repository/MapJobs';
 import { ProposedContext } from './repository/ProposedContext';
 import { RepositoryBaseline } from './repository/RepositoryBaseline';
 import { useRead } from './useRead';
@@ -21,17 +22,28 @@ interface Props {
   onSwitch: () => void;
   onSelect: (id: string) => void;
   intent?: LearnIntent;
+  openedJob?: RepositoryJob;
 }
 
-export function Study({ workspace, workspaces, screen, go, onSwitch, onSelect, intent }: Props) {
-  const [depth, setDepth] = useState(() => workspaceDepth(workspace.id));
+function useStudyGraph(workspaceId: string, includeChangeLessons: boolean) {
+  const readGraph = useCallback(() => {
+    const request = { workspaceId, includeChangeLessons };
+    return call('graph:read', request);
+  }, [workspaceId, includeChangeLessons]);
+  const read = useRead(readGraph);
+  useRepositoryCompletion(workspaceId, read.refresh);
+  return read;
+}
+
+export function Study({ workspace, workspaces, screen, go, onSwitch, onSelect, intent, openedJob }: Props) {
+  const [depth, setDepth] = useState(() => openedJob?.depth ?? workspaceDepth(workspace.id));
   const [view, setView] = useState(atlasView);
   const [lesson, setLesson] = useState<{ id: number; question?: string; fromChange?: boolean }>();
-  const [changeSelection, setChangeSelection] = useState<{ change: ChangeRef; intentId?: string }>();
+  const [changeSelection, setChangeSelection] = useState<{ change: ChangeRef; intentId?: string } | undefined>(() =>
+    openedJob?.kind === 'change' ? { change: openedJob.change, intentId: intent?.id } : undefined);
   const linkedChange: ChangeRef | undefined = intent?.kind === 'commit' || intent?.kind === 'pr' ? { kind: intent.kind, ref: intent.ref } : undefined;
   const selected = changeSelection?.intentId === intent?.id ? changeSelection?.change ?? linkedChange : linkedChange;
-  const readGraph = useCallback(() => call('graph:read', { workspaceId: workspace.id }), [workspace.id]);
-  const { result, refresh } = useRead(readGraph);
+  const { result, refresh } = useStudyGraph(workspace.id, screen === 'lesson' || screen === 'progress');
   function changeDepth(next: Depth) {
     storeDepth(workspace.id, next);
     setDepth(next);
@@ -44,14 +56,22 @@ export function Study({ workspace, workspaces, screen, go, onSwitch, onSelect, i
     setLesson({ id, question, fromChange });
     go('lesson');
   }
+  function selectChange(change: ChangeRef) {
+    setChangeSelection({ change, intentId: intent?.id });
+  }
+  function openChanges(change?: ChangeRef) {
+    if (change) selectChange(change);
+    go('changes');
+  }
   async function startTopic() {
     const id = await call('reader:start-topic', { workspaceId: workspace.id });
     refresh();
     openLesson(id);
   }
   if (screen === 'baseline' && workspace.kind !== 'topic') {
-    return <RepositoryBaseline workspace={workspace} depth={depth} onDepth={changeDepth} onBack={() => go('atlas')}
-      onMapped={() => { refresh(); go('atlas'); }} />;
+    const reviewJob = openedJob?.kind === 'map' && openedJob.phase === 'failed' ? openedJob : undefined;
+    return <RepositoryBaseline workspace={workspace} depth={depth} onDepth={changeDepth}
+      onBack={() => go('atlas')} reviewJob={reviewJob} />;
   }
   if (result.status !== 'ready') return <ReadState label="Knowledge graph" retry={refresh}
     message={result.status === 'error' ? result.message : undefined} />;
@@ -62,10 +82,11 @@ export function Study({ workspace, workspaces, screen, go, onSwitch, onSelect, i
     {screen === 'lesson' && lesson ? <Lesson {...common} conceptId={lesson.id} initialQuestion={lesson.question} onEvidence={refresh}
       onBackToChange={lesson.fromChange ? () => go('changes') : undefined} /> :
       screen === 'changes' ? <Changes {...common} selected={selected}
-        onSelect={change => setChangeSelection({ change, intentId: intent?.id })}
-        onFollowUp={id => openLesson(id, undefined, true)} onGenerated={refresh} /> :
+        openedJob={openedJob?.kind === 'change' ? openedJob : undefined}
+        onSelect={selectChange} onLesson={id => openLesson(id, undefined, true)}
+        onFollowUp={id => openLesson(id, undefined, true)} /> :
       screen === 'progress' ? <Progress {...common} workspaces={workspaces} onSelect={onSelect} onEvidence={refresh} /> :
-      <Atlas {...common} initialConceptId={lesson?.id} onView={changeView} onChanges={() => go('changes')}
+      <Atlas {...common} initialConceptId={lesson?.id} onView={changeView} onChanges={openChanges}
         onStartTopic={startTopic} onProgress={() => go('progress')} onSwitch={onSwitch} onAdd={() => go('setup')}
         onFirstRun={() => go('first-run')} onMap={() => go('baseline')} />}
   </div>;

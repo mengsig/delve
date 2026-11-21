@@ -8,28 +8,42 @@ const STATES: Record<ProviderState, string> = {
   'signed-in': 'Signed in', 'signed-out': 'Signed out', 'api-key': 'API key detected',
   'not-found': 'CLI not found', unknown: 'Sign-in unknown',
 };
+export function useProviderDetection(enabled = true) {
+  const [version, setVersion] = useState(0);
+  const [settled, setSettled] = useState<{ version: number; statuses: ProviderStatus[]; error?: string }>();
+  const request = useRef<{ version: number; pending: Promise<ProviderStatus[]> } | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let current = true;
+    if (request.current?.version !== version) request.current = { version, pending: call('providers:detect', null) };
+    void request.current.pending.then(
+      statuses => { if (current) setSettled({ version, statuses }); },
+      failure => { if (current) setSettled({ version, statuses: [], error: errorMessage(failure) }); },
+    );
+    return () => { current = false; };
+  }, [enabled, version]);
+
+  const result = settled?.version === version ? settled : undefined;
+  return {
+    statuses: result?.statuses ?? [],
+    error: result?.error,
+    checking: !result,
+    retry: () => setVersion(value => value + 1),
+  };
+}
+
 interface Props {
   provider: ProviderId;
   onChange: (provider: ProviderId) => void;
   label?: string;
   disabled?: boolean;
+  detection?: ReturnType<typeof useProviderDetection>;
 }
 
-export function SetupProvider({ provider, onChange, label = '03  Your signed-in CLI', disabled }: Props) {
-  const [statuses, setStatuses] = useState<ProviderStatus[]>([]);
-  const [detectionError, setDetectionError] = useState('');
+export function SetupProvider({ provider, onChange, label = '03 \u00a0 Your signed-in CLI', disabled, detection }: Props) {
+  const ownDetection = useProviderDetection(!detection);
+  const { statuses, error, checking, retry } = detection ?? ownDetection;
   const [preferenceError, setPreferenceError] = useState('');
-  const request = useRef<Promise<ProviderStatus[]> | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    request.current ??= call('providers:detect', null);
-    request.current.then(
-      (detected) => { if (active) setStatuses(detected); },
-      (failure: unknown) => { if (active) setDetectionError(errorMessage(failure)); },
-    );
-    return () => { active = false; };
-  }, []);
 
   function choose(id: ProviderId) {
     try {
@@ -57,8 +71,12 @@ export function SetupProvider({ provider, onChange, label = '03  Your signed-in 
         })}
       </div>
       {preferenceError && <p role="alert" className="setup-error">{preferenceError}</p>}
-      {detectionError && <p role="alert" className="setup-error">{detectionError}</p>}
-      <p role="status" className="smallprint">{selected ? providerHint(selected) : detectionError ? '' : 'Checking installed CLIs…'}</p>
+      {error && <p role="alert" className="setup-error">Could not check the installed CLIs. {error}</p>}
+      <p role="status" className="smallprint">
+        {selected ? providerHint(selected) : checking ? 'Checking installed CLIs…' : ''}
+      </p>
+      {detection && !checking &&
+        <button className="detect-cli" type="button" onClick={retry}>Detect CLIs again</button>}
     </fieldset>
   );
 }

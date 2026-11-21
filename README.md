@@ -17,19 +17,22 @@ tutor explains its next suggestion. Reset a check in **Progress** at its recorde
 
 ## Learn a repository
 
-Choose a local Git working tree or enter a GitHub URL or `owner/name`. Delve reads the selected
+Paste a Git folder path, GitHub URL or `owner/name` into the repository field, or drop the folder
+or URL there. With a signed-in CLI, the form prepares the file list and request automatically.
+Delve reads the selected
 commit from the object database. GitHub workspaces use a shallow bare clone of the default branch
 in Delve’s user data directory. Install Git and use `gh auth login` for private repositories and
 pull requests. Delve uses read-only operations with that login.
 
 Select the files to include and review their names, sizes, revision and exact provider request.
-**Approve and map** generates concepts, prerequisites and a suggested first step at the selected
-depth. Demonstrated portable concepts carry their evidence across repositories. You can add another
+**Add and build map** attaches the repository and starts generation with one confirmation.
+The progress panel stays visible as you explore another workspace. Use **Open map** when the
+concepts, prerequisites and suggested first step are ready. Demonstrated portable concepts carry their evidence across repositories. You can add another
 slice from the Atlas. Each slice contains at most 128 text files, 128 KiB per file and 1 MiB total.
 
 In **Changes**, choose a recent commit or pull request and preview its diff before approving a brief.
 GitHub workspaces and local repositories with a GitHub origin list pull requests. Local commit briefs
-compare against the first parent. The footprint links to the affected concepts and the brief opens
+compare against the first parent. The footprint links to the affected concepts. Unmerged PRs keep their own definitions apart from the reviewed map. The brief opens
 as a tutor conversation. A partial coverage notice identifies missing or omitted diff material.
 Saved briefs remain available offline. **Refresh diff preview** checks for an updated revision.
 

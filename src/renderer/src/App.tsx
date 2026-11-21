@@ -7,6 +7,8 @@ import { Header, type Screen } from './Header';
 import { dismissOnboarding, onboardingDismissed, storeDepth } from './preferences';
 import { ReadState } from './ReadState';
 import { LearnLink } from './repository/LearnLink';
+import { MapJobsProvider, useMapJobs, type RepositoryJob } from './repository/MapJobs';
+import { MapJobStatus } from './repository/MapJobStatus';
 import { Study } from './Study';
 import { isSwitcherShortcut } from './switcher';
 import { errorMessage, useRead } from './useRead';
@@ -53,7 +55,7 @@ function useDesktopNavigation(initial: WorkspaceList) {
   function added(workspace: Workspace, depth: Depth) {
     storeDepth(workspace.id, depth);
     activate(workspace, true);
-    setScreen((screen === 'first-run' || !active) && workspace.kind !== 'topic' ? 'baseline' : 'atlas');
+    setScreen('atlas');
   }
   function activate(workspace: Workspace, created: boolean) {
     setList(previous => ({
@@ -78,6 +80,24 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
   const { list, screen, setScreen, error, setError, origin, active, select, added, accepted, cancelSetup } = useDesktopNavigation(initial);
   const palette = useSwitcher();
   const main = useRef<HTMLElement>(null);
+  const jobs = useMapJobs();
+  const [openedJob, setOpenedJob] = useState<RepositoryJob>();
+  async function openJob(job: RepositoryJob, reviewing: boolean) {
+    const destination = job.kind === 'change' ? 'changes' : reviewing ? 'baseline' : 'atlas';
+    try {
+      if (job.workspace.id === list.activeId) {
+        setError('');
+        setScreen(destination);
+        main.current?.focus({ preventScroll: true });
+      } else {
+        await select(job.workspace.id, destination);
+      }
+      setOpenedJob(job);
+      if (!reviewing) jobs.dismiss(job);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
   useEffect(() => {
     main.current?.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -89,12 +109,15 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
       <Header screen={screen} go={setScreen} openSwitcher={palette.show} />
       <main id="workspace-page" ref={main} tabIndex={-1} className="app">
         {error && <p role="alert">{error}</p>}
-        <LearnLink onAccepted={(intent, workspace) => { palette.hide(); accepted(intent, workspace); }} />
+        <LearnLink onAccepted={(intent, workspace) => { palette.hide(); setOpenedJob(undefined); accepted(intent, workspace); }} />
+        <MapJobStatus onOpen={job => void openJob(job, false)} onReview={job => void openJob(job, true)} />
         <div className="screen" key={list.activeId}>
           {screen === 'setup' || screen === 'first-run' || !active
-            ? <AddWorkspaceForm onAdded={added} onCancel={active ? cancelSetup : undefined}
+            ? <AddWorkspaceForm onOpenSwitcher={palette.show} onAdded={added} onCancel={active ? cancelSetup : undefined}
               firstRun={screen === 'first-run' || !active} />
-            : <Study workspace={active} workspaces={list.workspaces} screen={screen} go={setScreen} onSwitch={palette.show}
+            : <Study key={openedJob?.workspace.id === active.id ? openedJob.requestId : undefined}
+              workspace={active} workspaces={list.workspaces} screen={screen} go={setScreen} onSwitch={palette.show}
+              openedJob={openedJob?.workspace.id === active.id ? openedJob : undefined}
               intent={origin?.workspaceId === active.id ? origin?.intent : undefined}
               onSelect={id => void select(id, 'progress').catch(cause => setError(errorMessage(cause)))} />}
         </div>
@@ -107,7 +130,7 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
 
 export function App() {
   const { result, refresh } = useRead(readWorkspaces);
-  if (result.status === 'ready') return <Desktop initial={result.value} />;
+  if (result.status === 'ready') return <MapJobsProvider><Desktop initial={result.value} /></MapJobsProvider>;
   return <main className="shell app"><ReadState label="Workspaces" retry={refresh}
     message={result.status === 'error' ? result.message : undefined} /></main>;
 }

@@ -1,65 +1,68 @@
 import { useEffect, useRef, useState } from 'react';
-import type { GenerationResult, RepoPreview, RepoRequest } from '../../../shared/repository';
-import { call } from '../api';
+import type { RepoPreview, RepoRequest } from '../../../shared/repository';
+import { call, IpcCallError } from '../api';
 import { errorMessage } from '../useRead';
 
-type Attempt = { id: string; phase: 'preview' | 'generate' };
+export interface RepositoryFailure {
+  code?: string;
+  message: string;
+  action: 'review' | 'provider' | 'retry';
+}
 
-export function useRepositoryGeneration(onGenerated: (result: GenerationResult) => void) {
-  const active = useRef<Attempt | null>(null);
-  const [pending, setPending] = useState<Attempt['phase']>();
+export function repositoryFailure(cause: unknown): RepositoryFailure {
+  const code = cause instanceof IpcCallError ? cause.code : undefined;
+  const message = errorMessage(cause);
+  if (code === 'PROVIDER_AUTH' || code === 'PROVIDER_NOT_FOUND') return { code, message, action: 'provider' };
+  if (code?.startsWith('STALE_')) return { code, message, action: 'review' };
+  return { code, message, action: 'retry' };
+}
+
+export function useRepositoryGeneration(start: (preview: RepoPreview) => boolean) {
+  const active = useRef<RepoRequest | null>(null);
+  const [pending, setPending] = useState(false);
   const [preview, setPreview] = useState<RepoPreview>();
-  const [error, setError] = useState('');
+  const [error, setError] = useState<RepositoryFailure>();
 
-  useEffect(() => () => {
-    const attempt = active.current;
-    active.current = null;
-    if (attempt?.phase === 'generate') {
-      void call('repo:cancel', { requestId: attempt.id }).catch(error => console.error('Repository cancellation failed', error));
-    }
-  }, []);
+  useEffect(() => () => { active.current = null; }, []);
 
-  async function run(phase: Attempt['phase'], execute: (attempt: Attempt) => Promise<void>) {
+  async function inspect(request: RepoRequest) {
     if (active.current) return;
-    const attempt: Attempt = { id: crypto.randomUUID(), phase };
-    active.current = attempt;
-    setPending(phase);
-    setError('');
+    active.current = request;
+    setPending(true);
+    setError(undefined);
+    setPreview(undefined);
     try {
-      await execute(attempt);
+      const result = await call('repo:preview', request);
+      if (!result.token) throw new Error('The preview is missing an approval token. Request a new preview.');
+      if (active.current === request) setPreview(result);
     } catch (cause) {
-      if (active.current === attempt) setError(errorMessage(cause));
+      if (active.current === request) setError(repositoryFailure(cause));
     } finally {
-      if (active.current === attempt) {
+      if (active.current === request) {
         active.current = null;
-        setPending(undefined);
+        setPending(false);
       }
     }
   }
-  function inspect(request: RepoRequest) {
-    setPreview(undefined);
-    return run('preview', async attempt => {
-      const result = await call('repo:preview', request);
-      if (active.current === attempt) setPreview(result);
-    });
-  }
+
   function approve() {
-    if (!preview) return;
-    setPreview(undefined);
-    return run('generate', async attempt => {
-      const result = await call('repo:generate', { token: preview.token, requestId: attempt.id });
-      if (active.current === attempt) onGenerated(result);
-    });
-  }
-  async function cancel() {
-    const attempt = active.current;
-    if (attempt?.phase !== 'generate') return;
+    if (!preview || active.current) return;
     try {
-      const cancelled = await call('repo:cancel', { requestId: attempt.id });
-      if (!cancelled && active.current === attempt) setError('The request could not be cancelled yet.');
+      if (!start(preview)) {
+        setError({ message: 'This request is already in progress.', action: 'retry' });
+        return;
+      }
+      setPreview(undefined);
+      setError(undefined);
     } catch (cause) {
-      if (active.current === attempt) setError(errorMessage(cause));
+      setError(repositoryFailure(cause));
     }
   }
-  return { pending, preview, error, inspect, approve, cancel, close: () => setPreview(undefined) };
+
+  function close() {
+    setPreview(undefined);
+    setError(undefined);
+  }
+
+  return { pending, preview, error, inspect, approve, close };
 }
