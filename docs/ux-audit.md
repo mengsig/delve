@@ -45,6 +45,10 @@ Next lesson is recommended only after mastery. After a skip, the learner can kee
 
 The mockup's separate Atlas destination remains available through the persistent Atlas action. The change page's Teach action opens the lesson directly in one click; the footprint also opens its concept lesson directly. In repository change briefs, mapped lines and concepts still open the corresponding Atlas focus.
 
+## Shell spacing and scrolling
+
+The desktop shell starts 12px below the window edge, bringing its outer inset closer to the approved mockup. The document scrollbar no longer reserves a grey rail; native wheel, touchpad and keyboard scrolling remain available. This preserves the existing map height and navigation while giving the shell its full right margin.
+
 ## Verification
 
 The map retains a small, muted React Flow attribution in both themes. Delve and React Flow are MIT-licensed; [React Flow's attribution policy](https://reactflow.dev/remove-attribution) asks projects that remove the badge to subscribe. Keeping it acknowledges the library while fitting the Contour map, unlike the unbadged mockup.
