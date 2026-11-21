@@ -3,7 +3,7 @@ import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { makeShimDir, makeTempDir, request, setupRunner } from './test-helpers';
 
-describe.skipIf(process.platform === 'win32')('ProviderRunner failures', () => {
+describe('ProviderRunner failures', () => {
   let binDir: string;
 
   beforeAll(async () => {

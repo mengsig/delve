@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { detectProviders } from './detect';
-import { makeShimDir } from './test-helpers';
+import { makeShimDir, shimEnv } from './test-helpers';
 
-describe.skipIf(process.platform === 'win32')('detectProviders', () => {
+describe('detectProviders', () => {
   let binDir: string;
   beforeAll(async () => {
     binDir = await makeShimDir();
@@ -17,7 +17,7 @@ describe.skipIf(process.platform === 'win32')('detectProviders', () => {
   });
 
   it('reports signed-in with version and no personal fields', async () => {
-    const result = await detectProviders({ env: { PATH: binDir } });
+    const result = await detectProviders({ env: shimEnv(binDir) });
     expect(result.map((s) => s.state)).toEqual(['signed-in', 'signed-in']);
     expect(result[0]?.detail).toContain('claude.ai');
     expect(result[0]?.version).toBe('fake-claude 1.0.0');
@@ -25,7 +25,7 @@ describe.skipIf(process.platform === 'win32')('detectProviders', () => {
   });
 
   it('reports signed-out', async () => {
-    const result = await detectProviders({ env: { PATH: binDir, FAKE_PROVIDER_MODE: 'signed-out' } });
+    const result = await detectProviders({ env: shimEnv(binDir, { FAKE_PROVIDER_MODE: 'signed-out' }) });
     expect(result.map((s) => s.state)).toEqual(['signed-out', 'signed-out']);
   });
 });

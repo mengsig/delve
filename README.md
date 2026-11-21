@@ -38,6 +38,7 @@ npm run dev       # start the app with hot reload
 | `npm run lint` | ESLint over the whole project |
 | `npm run typecheck` | TypeScript for main/preload and for the renderer |
 | `npm test` | Vitest unit tests (database, IPC, security guards, provider runner with a fake CLI) |
+| `npm run test:providers` | Only the provider runner tests; CI runs them on Linux, macOS and Windows |
 | `npm run test:smoke` | Builds, then launches the app with Playwright and drives the workspace page |
 | `npm run build` | Builds main, preload and renderer into `out/` |
 | `npm run package` | Builds installers for the current platform into `release/` |
@@ -68,8 +69,11 @@ The renderer is sandboxed and context-isolated, without Node integration, and lo
 permission requests are refused. Main validates every IPC request and ignores frames from other
 origins. Packaged builds disable `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and inspector flags via
 Electron fuses. Provider CLIs run with fixed arguments, no shell, no write tools or project plugins, in an empty
-temporary directory, and without API-key environment variables; timeouts and cancellation stop the
-CLI's whole process tree.
+temporary directory, and without API-key environment variables. Timeouts, cancellation and the end of
+a run stop every process the CLI started: its process group and descendants, plus (on Linux and macOS)
+any helper that moved to its own session, found by a per-run environment marker. A helper that clears
+its environment and detaches cannot be traced. On Windows, npm `.cmd` launchers are run through Node
+directly, never through a shell.
 
 ## License
 

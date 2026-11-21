@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import { execFile } from 'node:child_process';
 import type { ProviderId, ProviderStatus } from '../../shared/domain';
+import { resolveCommand } from './command';
 import { buildChildEnv } from './env';
 import { findExecutable } from './which';
 
@@ -69,10 +70,13 @@ const PROBES: Record<ProviderId, { authArgs: string[]; parse: (r: ExecResult) =>
 async function detectOne(id: ProviderId, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<ProviderStatus> {
   const binPath = await findExecutable(id, env);
   if (binPath === null) return { id, state: 'not-found', path: null, version: null, detail: 'not found on PATH' };
+  const resolution = await resolveCommand(binPath, env);
+  if (!resolution.ok) return { id, state: 'unknown', path: binPath, version: null, detail: resolution.problem };
+  const { file, prefixArgs } = resolution.command;
   const probe = PROBES[id];
   const [versionRes, authRes] = await Promise.all([
-    runProbe(binPath, ['--version'], env, timeoutMs),
-    runProbe(binPath, probe.authArgs, env, timeoutMs),
+    runProbe(file, [...prefixArgs, '--version'], env, timeoutMs),
+    runProbe(file, [...prefixArgs, ...probe.authArgs], env, timeoutMs),
   ]);
   const version = versionRes.failure === null && versionRes.code === 0 ? versionRes.stdout.trim().split('\n')[0] ?? null : null;
   const auth = probe.parse(authRes);

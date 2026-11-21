@@ -1,7 +1,9 @@
 import assert from 'node:assert';
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import type { ProviderId } from '../../shared/domain';
 import { cancelledError, failedError, notFoundError, timeoutError } from './errors';
+import { MARKER_VAR, readProcessTable, selectTargets, windowsSystemTool } from './proctable';
 
 export interface CaptureOptions {
   provider: ProviderId;
@@ -22,95 +24,166 @@ export interface CaptureResult {
   stderr: string;
 }
 
+/** A spawned CLI and what identifies its descendants: the run marker and the spawn time. */
+export interface RunTree {
+  child: ChildProcessWithoutNullStreams;
+  marker: string;
+  startedMs: number;
+}
+
 const DEFAULT_KILL_GRACE_MS = 2_000;
-// After the CLI exits, how long its pipes may stay open (held by descendants) before we stop waiting.
+// After the CLI exits and leftovers are reaped, how long its pipes may stay open before we stop waiting.
 const DRAIN_MS = 500;
+// Tolerates clock granularity between Date.now() and Windows process creation times.
+const CREATION_SLACK_MS = 1_000;
+const TASKKILL_NOT_FOUND = 128;
 const IS_WINDOWS = process.platform === 'win32';
 
-/**
- * Signals the CLI and every descendant. On POSIX the child leads its own process group;
- * on Windows taskkill /T walks the tree. Resolves to an error only when the tree could not be signalled.
- */
-export function killTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): Promise<Error | null> {
-  assert(child.pid !== undefined, 'only a spawned child can be killed');
-  const pid = child.pid;
-  if (IS_WINDOWS) {
-    return new Promise((resolve) => {
-      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, (error) =>
-        resolve(error && child.exitCode === null ? error : null),
-      );
-    });
-  }
+function signalPosix(pid: number, signal: NodeJS.Signals): Error | null {
   try {
-    process.kill(-pid, signal);
-    return Promise.resolve(null);
+    process.kill(pid, signal);
+    return null;
   } catch (error) {
-    // ESRCH: the whole group already exited, which is the outcome we want.
-    return Promise.resolve((error as NodeJS.ErrnoException).code === 'ESRCH' ? null : (error as Error));
+    // ESRCH: the process already exited, which is the outcome we want.
+    return (error as NodeJS.ErrnoException).code === 'ESRCH' ? null : (error as Error);
   }
 }
 
-function startChild(opts: CaptureOptions): ChildProcessWithoutNullStreams {
+function taskkill(pid: number): Promise<Error | null> {
+  return new Promise((resolve) => {
+    execFile(windowsSystemTool('taskkill.exe'), ['/PID', String(pid), '/T', '/F'], { windowsHide: true, shell: false }, (error) => {
+      if (!error) return resolve(null);
+      const exitCode: unknown = (error as { code?: unknown }).code;
+      resolve(exitCode === TASKKILL_NOT_FOUND ? null : error);
+    });
+  });
+}
+
+/**
+ * Stops the CLI and every process it started: its POSIX process group, its descendants by parent link,
+ * and anything carrying the run marker (helpers that setsid or were reparented). Returns the first failure.
+ * Limit: a helper that both clears its environment and detaches before the scan cannot be traced.
+ */
+export async function reapTree(tree: RunTree, signal: NodeJS.Signals): Promise<Error | null> {
+  const pid = tree.child.pid;
+  assert(pid !== undefined && pid > 0, 'only a spawned child can be reaped');
+  let targets: number[];
+  try {
+    targets = selectTargets(await readProcessTable(tree.marker), pid, tree.startedMs - CREATION_SLACK_MS);
+  } catch (error) {
+    // Still stop what we can reach, and report that the scan failed.
+    const rootError = IS_WINDOWS ? await taskkill(pid) : signalPosix(-pid, signal);
+    return rootError ?? (error as Error);
+  }
+  if (IS_WINDOWS) {
+    const errors = await Promise.all([pid, ...targets].map(taskkill));
+    return errors.find((e) => e !== null) ?? null;
+  }
+  const errors = [signalPosix(-pid, signal), ...targets.map((target) => signalPosix(target, signal))];
+  return errors.find((e) => e !== null) ?? null;
+}
+
+function startChild(opts: CaptureOptions, marker: string): ChildProcessWithoutNullStreams {
   assert(opts.timeoutMs > 0 && opts.maxBytes > 0, 'timeout and output cap must be positive');
   assert(opts.args.every((a) => typeof a === 'string'), 'argv must be strings');
   return spawn(opts.bin, opts.args, {
-    cwd: opts.cwd, env: opts.env, shell: false, windowsHide: true, detached: !IS_WINDOWS, stdio: ['pipe', 'pipe', 'pipe'],
+    cwd: opts.cwd, env: { ...opts.env, [MARKER_VAR]: marker }, shell: false, windowsHide: true,
+    detached: !IS_WINDOWS, stdio: ['pipe', 'pipe', 'pipe'],
   });
+}
+
+/** One CLI execution: collects bounded output, enforces timeout and cancellation, reaps the tree on exit. */
+class CapturedRun {
+  private readonly out: Buffer[] = [];
+  private readonly err: Buffer[] = [];
+  private readonly timers: NodeJS.Timeout[] = [];
+  private readonly tree: RunTree;
+  private bytes = 0;
+  private verdict: Error | null = null;
+  private code: number | null = null;
+  private done = false;
+  private closed = false;
+  private reaped = false;
+
+  constructor(
+    private readonly opts: CaptureOptions,
+    private readonly resolve: (result: CaptureResult) => void,
+    private readonly reject: (error: Error) => void,
+  ) {
+    const marker = randomUUID();
+    const startedMs = Date.now();
+    this.tree = { child: startChild(opts, marker), marker, startedMs };
+  }
+
+  start(): void {
+    const { child } = this.tree;
+    const { provider, timeoutMs, signal } = this.opts;
+    this.timers.push(setTimeout(() => this.stop(timeoutError(provider, timeoutMs)), timeoutMs));
+    signal.addEventListener('abort', this.onAbort, { once: true });
+    child.stdout.on('data', (chunk: Buffer) => this.collect(this.out, chunk));
+    child.stderr.on('data', (chunk: Buffer) => this.collect(this.err, chunk));
+    child.stdin.on('error', () => undefined); // child may exit before reading stdin; exit status reports it
+    child.on('error', (cause: NodeJS.ErrnoException) => {
+      this.settle(cause.code === 'ENOENT' ? notFoundError(provider) : failedError(provider, `could not start: ${cause.message}`, cause));
+    });
+    child.on('exit', (code) => this.onExit(code));
+    child.on('close', () => {
+      this.closed = true;
+      if (this.reaped) this.settle(this.verdict);
+    });
+    child.stdin.end(this.opts.stdin);
+  }
+
+  private readonly onAbort = (): void => this.stop(cancelledError(this.opts.provider));
+
+  private settle(error: Error | null): void {
+    if (this.done) return;
+    this.done = true;
+    this.timers.forEach(clearTimeout);
+    this.opts.signal.removeEventListener('abort', this.onAbort);
+    this.tree.child.stdout.destroy();
+    this.tree.child.stderr.destroy();
+    if (error) return this.reject(error);
+    const text = (chunks: Buffer[]): string => Buffer.concat(chunks).toString('utf8');
+    this.resolve({ code: this.code, stdout: text(this.out), stderr: text(this.err) });
+  }
+
+  private collect(sink: Buffer[], chunk: Buffer): void {
+    if (this.verdict || this.done) return;
+    if (this.bytes + chunk.length > this.opts.maxBytes) {
+      return this.stop(failedError(this.opts.provider, `output exceeded ${this.opts.maxBytes} bytes`));
+    }
+    this.bytes += chunk.length;
+    sink.push(chunk);
+  }
+
+  private stop(reason: Error): void {
+    if (this.verdict || this.done) return;
+    this.verdict = reason;
+    if (this.tree.child.pid === undefined) return this.settle(reason);
+    const { provider } = this.opts;
+    void reapTree(this.tree, 'SIGTERM').then((e) => e && this.settle(failedError(provider, 'could not stop the CLI', e)));
+    const forceKill = (): void => {
+      void reapTree(this.tree, 'SIGKILL').then((e) => this.settle(e ? failedError(provider, 'could not kill the CLI', e) : reason));
+    };
+    this.timers.push(setTimeout(forceKill, this.opts.killGraceMs ?? DEFAULT_KILL_GRACE_MS));
+  }
+
+  // Reap descendants that outlived the CLI, then wait briefly for pipes they may still hold.
+  private onExit(code: number | null): void {
+    this.code = code;
+    void reapTree(this.tree, 'SIGKILL').then((error) => {
+      if (this.done) return;
+      if (error) return this.settle(failedError(this.opts.provider, 'could not stop leftover processes', error));
+      this.reaped = true;
+      if (this.closed) return this.settle(this.verdict);
+      this.timers.push(setTimeout(() => this.settle(this.verdict), DRAIN_MS));
+    });
+  }
 }
 
 /** Runs a child without a shell; rejects with ProviderError on timeout, cancel, overflow or spawn failure. */
 export function runCaptured(opts: CaptureOptions): Promise<CaptureResult> {
   if (opts.signal.aborted) return Promise.reject(cancelledError(opts.provider));
-  const grace = opts.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
-  return new Promise((resolve, reject) => {
-    const child = startChild(opts);
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
-    let bytes = 0;
-    let verdict: Error | null = null;
-    let done = false;
-    const timers: NodeJS.Timeout[] = [];
-
-    const settle = (error: Error | null, code: number | null = null): void => {
-      if (done) return;
-      done = true;
-      timers.forEach(clearTimeout);
-      opts.signal.removeEventListener('abort', onAbort);
-      child.stdout.destroy();
-      child.stderr.destroy();
-      if (error) return reject(error);
-      resolve({ code, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') });
-    };
-    const stop = (reason: Error): void => {
-      if (verdict) return;
-      verdict = reason;
-      void killTree(child, 'SIGTERM').then((e) => e && settle(failedError(opts.provider, 'could not stop the CLI', e)));
-      const forceKill = (): void => void killTree(child, 'SIGKILL').then((e) => e && settle(failedError(opts.provider, 'could not kill the CLI', e)));
-      timers.push(setTimeout(forceKill, grace));
-      timers.push(setTimeout(() => settle(reason), grace + DRAIN_MS));
-    };
-    const collect = (sink: Buffer[]) => (chunk: Buffer): void => {
-      if (verdict) return;
-      if (bytes + chunk.length > opts.maxBytes) return stop(failedError(opts.provider, `output exceeded ${opts.maxBytes} bytes`));
-      bytes += chunk.length;
-      sink.push(chunk);
-    };
-    const onAbort = (): void => stop(cancelledError(opts.provider));
-    timers.push(setTimeout(() => stop(timeoutError(opts.provider, opts.timeoutMs)), opts.timeoutMs));
-    opts.signal.addEventListener('abort', onAbort, { once: true });
-
-    child.stdout.on('data', collect(out));
-    child.stderr.on('data', collect(err));
-    child.stdin.on('error', () => undefined); // child may exit before reading stdin; exit status reports it
-    child.on('error', (cause: NodeJS.ErrnoException) => {
-      settle(cause.code === 'ENOENT' ? notFoundError(opts.provider) : failedError(opts.provider, `could not start: ${cause.message}`, cause));
-    });
-    child.on('exit', (code) => {
-      // Reap descendants that outlived the CLI, then stop waiting for pipes they may hold.
-      void killTree(child, 'SIGKILL').then((e) => e && settle(failedError(opts.provider, 'could not stop leftover processes', e)));
-      timers.push(setTimeout(() => settle(verdict, code), DRAIN_MS));
-    });
-    child.on('close', (code) => settle(verdict, code));
-    child.stdin.end(opts.stdin);
-  });
+  return new Promise((resolve, reject) => new CapturedRun(opts, resolve, reject).start());
 }

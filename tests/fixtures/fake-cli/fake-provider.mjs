@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Fake claude/codex CLI. Behaviour: FAKE_PROVIDER_MODE; recording: FAKE_PROVIDER_RECORD; counter: FAKE_PROVIDER_COUNTER.
+// Fake claude/codex CLI. Behaviour: FAKE_PROVIDER_MODE; recording: FAKE_PROVIDER_RECORD, FAKE_PROVIDER_SELF_PID;
+// counter: FAKE_PROVIDER_COUNTER.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 
@@ -49,9 +50,11 @@ function succeed() {
   console.log('done');
 }
 
-// A grandchild that inherits stdout/stderr, like a CLI helper process left behind.
-function spawnDescendant() {
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] });
+// A grandchild left behind by the CLI. A detached one starts its own session (setsid on POSIX)
+// and holds no pipes, like a daemonised helper; otherwise it inherits stdout/stderr.
+function spawnDescendant(detached) {
+  const stdio = detached ? 'ignore' : ['ignore', 'inherit', 'inherit'];
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio, detached });
   fs.writeFileSync(process.env.FAKE_PROVIDER_CHILD_PID, String(child.pid));
   child.unref();
 }
@@ -67,6 +70,7 @@ async function main() {
   if (argv[0] === '--version') return console.log(`fake-${invokedAs} 1.0.0`);
   if (argv[0] === 'auth' || argv[0] === 'login') return handleStatus();
 
+  if (process.env.FAKE_PROVIDER_SELF_PID) fs.writeFileSync(process.env.FAKE_PROVIDER_SELF_PID, String(process.pid));
   const stdin = await readStdin();
   if (process.env.FAKE_PROVIDER_RECORD) {
     const record = { argv, cwd: process.cwd(), cwdEntries: fs.readdirSync(process.cwd()), envKeys: Object.keys(process.env), stdin };
@@ -76,8 +80,8 @@ async function main() {
 
   if (mode === 'hang') return setInterval(() => undefined, 1000);
   if (mode === 'flood') return flood();
-  if (mode === 'orphan' || mode === 'orphan-hang') spawnDescendant();
-  if (mode === 'orphan-hang') return setInterval(() => undefined, 1000);
+  if (['orphan', 'orphan-hang', 'detached', 'detached-hang'].includes(mode)) spawnDescendant(mode.startsWith('detached'));
+  if (mode.endsWith('-hang')) return setInterval(() => undefined, 1000);
   const delay = Number(process.env.FAKE_PROVIDER_DELAY_MS ?? 0);
   if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
   if (mode === 'auth') {

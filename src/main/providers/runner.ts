@@ -9,6 +9,7 @@ import { apiKeyAuthError, authError, cancelledError, failedError, notFoundError,
 import { buildChildEnv } from './env';
 import { checkExit, extractClaudePayload, extractCodexPayload, isProviderError, validatePayload } from './output';
 import { runCaptured } from './process';
+import { resolveCommand, type Command } from './command';
 
 export interface RunnerDeps {
   /** Current status of a provider; the runner only proceeds for a subscription sign-in. */
@@ -45,7 +46,7 @@ const MAX_RETRIES = 3;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 interface Attempt {
-  bin: string;
+  command: Command;
   root: string;
   workDir: string;
   ioDir: string;
@@ -147,10 +148,12 @@ export class ProviderRunner {
     const retries = Math.min(Math.max(req.maxRetries ?? DEFAULT_RETRIES, 0), MAX_RETRIES);
     const model = req.model === undefined ? null : validateModel(req.model);
     const bin = requireSubscription(await this.deps.resolveProvider(req.provider));
+    const resolution = await resolveCommand(bin, this.deps.env ?? process.env);
+    if (!resolution.ok) throw failedError(req.provider, resolution.problem);
     for (let attempt = 1; ; attempt++) {
       if (signal.aborted) throw cancelledError(req.provider);
       try {
-        const value = await this.runOnce(req, bin, signal);
+        const value = await this.runOnce(req, resolution.command, signal);
         return { value, provider: req.provider, model, attempts: attempt };
       } catch (e) {
         if (!isProviderError(e) || !e.retryable || attempt > retries) throw e;
@@ -175,9 +178,9 @@ export class ProviderRunner {
     });
   }
 
-  private async runOnce<T>(req: RunRequest<T>, bin: string, signal: AbortSignal): Promise<T> {
+  private async runOnce<T>(req: RunRequest<T>, command: Command, signal: AbortSignal): Promise<T> {
     const root = await mkdtemp(path.join(this.deps.tempRoot ?? tmpdir(), 'delve-run-'));
-    const attempt: Attempt = { bin, root, workDir: path.join(root, 'work'), ioDir: path.join(root, 'io') };
+    const attempt: Attempt = { command, root, workDir: path.join(root, 'work'), ioDir: path.join(root, 'io') };
     let outcome: { ok: true; value: T } | { ok: false; error: unknown };
     try {
       outcome = { ok: true, value: await this.execute(req, attempt, signal) };
@@ -211,7 +214,7 @@ export class ProviderRunner {
       : buildClaudeArgv(req.jsonSchema, req.model);
 
     const res = await runCaptured({
-      provider: req.provider, bin: a.bin, args, cwd: a.workDir,
+      provider: req.provider, bin: a.command.file, args: [...a.command.prefixArgs, ...args], cwd: a.workDir,
       env: buildChildEnv(this.deps.env ?? process.env), stdin: req.prompt,
       timeoutMs: req.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxBytes: MAX_OUTPUT_BYTES,
       signal, killGraceMs: this.deps.killGraceMs,

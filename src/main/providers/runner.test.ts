@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { ProviderRunner } from './runner';
 import { answerJsonSchema, makeShimDir, makeTempDir, request, setupRunner } from './test-helpers';
 
-describe.skipIf(process.platform === 'win32')('ProviderRunner', () => {
+describe('ProviderRunner', () => {
   let binDir: string;
 
   beforeAll(async () => {

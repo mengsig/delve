@@ -4,7 +4,7 @@ import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { detectProviders } from './detect';
 import { runCaptured } from './process';
-import { FAKE_SCRIPT, makeShimDir, makeTempDir, request, setupRunner } from './test-helpers';
+import { FAKE_SCRIPT, makeShimDir, makeTempDir, request, setupRunner, shimEnv } from './test-helpers';
 
 function isAlive(pid: number): boolean {
   try {
@@ -17,65 +17,87 @@ function isAlive(pid: number): boolean {
 }
 
 async function waitUntilDead(pid: number): Promise<boolean> {
-  for (let i = 0; i < 40 && isAlive(pid); i++) await new Promise((r) => setTimeout(r, 50));
+  for (let i = 0; i < 60 && isAlive(pid); i++) await new Promise((r) => setTimeout(r, 50));
   return !isAlive(pid);
 }
 
-describe.skipIf(process.platform === 'win32')('ProviderRunner shared-run cancellation', () => {
+async function readPid(file: string): Promise<number> {
+  for (let i = 0; i < 60 && !existsSync(file); i++) await new Promise((r) => setTimeout(r, 50));
+  const pid = Number(readFileSync(file, 'utf8'));
+  expect(Number.isInteger(pid) && pid > 0).toBe(true);
+  return pid;
+}
+
+const temp = async (name: string): Promise<string> => path.join(await makeTempDir(name), name);
+
+describe('ProviderRunner shared-run cancellation', () => {
   let binDir: string;
   beforeAll(async () => {
     binDir = await makeShimDir();
   });
-  const temp = async (name: string): Promise<string> => path.join(await makeTempDir(name), name);
 
-  it('lets one de-duplicated caller cancel without affecting the other', async () => {
+  it.each(['first', 'second'] as const)('lets the %s of two de-duplicated callers cancel while the other completes', async (which) => {
     const counter = await temp('cnt');
-    const { runner } = await setupRunner(binDir, { FAKE_PROVIDER_DELAY_MS: '600', FAKE_PROVIDER_COUNTER: counter });
+    const { runner } = await setupRunner(binDir, { FAKE_PROVIDER_DELAY_MS: '800', FAKE_PROVIDER_COUNTER: counter });
     const quitter = new AbortController();
-    const kept = runner.run(request());
-    const cancelled = runner.run(request({ signal: quitter.signal }));
-    setTimeout(() => quitter.abort(), 100);
+    const first = runner.run(request(which === 'first' ? { signal: quitter.signal } : {}));
+    const second = runner.run(request(which === 'second' ? { signal: quitter.signal } : {}));
+    const [cancelled, kept] = which === 'first' ? [first, second] : [second, first];
+    setTimeout(() => quitter.abort(), 150);
     await expect(cancelled).rejects.toMatchObject({ code: 'PROVIDER_CANCELLED' });
-    await expect(kept).resolves.toMatchObject({ value: { answer: '42' } });
+    await expect(kept).resolves.toMatchObject({ value: { answer: '42' }, attempts: 1 });
     expect(await readFile(counter, 'utf8')).toBe('1');
-  });
+  }, 10_000);
 
-  it('rejects an already-aborted caller at once and stops the run when every caller cancels', async () => {
+  it('rejects an already-aborted caller at once without starting or disturbing a run', async () => {
     const counter = await temp('cnt');
-    const { runner } = await setupRunner(binDir, { FAKE_PROVIDER_MODE: 'hang', FAKE_PROVIDER_COUNTER: counter });
-    const first = new AbortController();
-    const running = runner.run(request({ signal: first.signal, timeoutMs: 30_000 }));
+    const { runner } = await setupRunner(binDir, { FAKE_PROVIDER_DELAY_MS: '300', FAKE_PROVIDER_COUNTER: counter });
+    const running = runner.run(request());
     await expect(runner.run(request({ signal: AbortSignal.abort() }))).rejects.toMatchObject({ code: 'PROVIDER_CANCELLED' });
-    setTimeout(() => first.abort(), 200);
-    await expect(running).rejects.toMatchObject({ code: 'PROVIDER_CANCELLED' });
+    await expect(running).resolves.toMatchObject({ value: { answer: '42' } });
+    expect(await readFile(counter, 'utf8')).toBe('1');
+  }, 10_000);
+
+  it('terminates the shared CLI when every live caller cancels', async () => {
+    const [counter, selfPid] = [await temp('cnt'), await temp('pid')];
+    const { runner } = await setupRunner(binDir, { FAKE_PROVIDER_MODE: 'hang', FAKE_PROVIDER_COUNTER: counter, FAKE_PROVIDER_SELF_PID: selfPid });
+    const [a, b] = [new AbortController(), new AbortController()];
+    const runA = runner.run(request({ signal: a.signal, timeoutMs: 30_000 }));
+    const runB = runner.run(request({ signal: b.signal, timeoutMs: 30_000 }));
+    const cliPid = await readPid(selfPid);
+    a.abort();
+    await expect(runA).rejects.toMatchObject({ code: 'PROVIDER_CANCELLED' });
+    expect(isAlive(cliPid)).toBe(true);
+    b.abort();
+    await expect(runB).rejects.toMatchObject({ code: 'PROVIDER_CANCELLED' });
+    expect(await waitUntilDead(cliPid)).toBe(true);
+    expect(await readFile(counter, 'utf8')).toBe('1');
     expect(runner.cancel('k1')).toBe(false);
   }, 10_000);
-
 });
 
-describe.skipIf(process.platform === 'win32')('ProviderRunner process tree and auth', () => {
+describe('ProviderRunner process tree and auth', () => {
   let binDir: string;
   beforeAll(async () => {
     binDir = await makeShimDir();
   });
-  const temp = async (name: string): Promise<string> => path.join(await makeTempDir(name), name);
 
-  it('settles and reaps a descendant that keeps the output pipes open after the CLI exits', async () => {
+  it.each(['orphan', 'detached'])('settles and reaps a %s descendant that outlives the CLI', async (mode) => {
     const pidFile = await temp('pid');
-    const { runner } = await setupRunner(binDir, { FAKE_PROVIDER_MODE: 'orphan', FAKE_PROVIDER_CHILD_PID: pidFile });
+    const { runner } = await setupRunner(binDir, { FAKE_PROVIDER_MODE: mode, FAKE_PROVIDER_CHILD_PID: pidFile });
     const started = Date.now();
     await expect(runner.run(request())).resolves.toMatchObject({ value: { answer: '42' } });
-    expect(Date.now() - started).toBeLessThan(5_000);
-    expect(await waitUntilDead(Number(readFileSync(pidFile, 'utf8')))).toBe(true);
-  }, 10_000);
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(await waitUntilDead(await readPid(pidFile))).toBe(true);
+  }, 15_000);
 
-  it('kills the whole process tree on timeout', async () => {
-    const pidFile = await temp('pid');
-    const { runner } = await setupRunner(binDir, { FAKE_PROVIDER_MODE: 'orphan-hang', FAKE_PROVIDER_CHILD_PID: pidFile });
-    await expect(runner.run(request({ timeoutMs: 300 }))).rejects.toMatchObject({ code: 'PROVIDER_TIMEOUT' });
-    expect(existsSync(pidFile)).toBe(true);
-    expect(await waitUntilDead(Number(readFileSync(pidFile, 'utf8')))).toBe(true);
-  }, 10_000);
+  it.each(['orphan-hang', 'detached-hang'])('kills the CLI and a %s descendant on timeout', async (mode) => {
+    const [pidFile, selfPid] = [await temp('pid'), await temp('self')];
+    const { runner } = await setupRunner(binDir, { FAKE_PROVIDER_MODE: mode, FAKE_PROVIDER_CHILD_PID: pidFile, FAKE_PROVIDER_SELF_PID: selfPid });
+    await expect(runner.run(request({ timeoutMs: 500 }))).rejects.toMatchObject({ code: 'PROVIDER_TIMEOUT' });
+    expect(await waitUntilDead(await readPid(selfPid))).toBe(true);
+    expect(await waitUntilDead(await readPid(pidFile))).toBe(true);
+  }, 15_000);
 
   it('stops a CLI that floods output and ignores SIGTERM, within the kill grace', async () => {
     const started = Date.now();
@@ -90,7 +112,7 @@ describe.skipIf(process.platform === 'win32')('ProviderRunner process tree and a
 
   it('refuses API-key logins before running anything', async () => {
     const counter = await temp('cnt');
-    const statuses = await detectProviders({ env: { PATH: binDir, FAKE_PROVIDER_MODE: 'api-key' } });
+    const statuses = await detectProviders({ env: shimEnv(binDir, { FAKE_PROVIDER_MODE: 'api-key' }) });
     expect(statuses.map((s) => s.state)).toEqual(['api-key', 'api-key']);
     const { runner } = await setupRunner(binDir, { FAKE_PROVIDER_MODE: 'api-key', FAKE_PROVIDER_COUNTER: counter });
     await expect(runner.run(request())).rejects.toMatchObject({ code: 'PROVIDER_AUTH', message: expect.stringMatching(/API key/) });
