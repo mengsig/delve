@@ -55,7 +55,9 @@ export function appendEntries(db: Db, context: LessonContext, lessonId: number |
   const conversationId = row.id;
   const insert = db.prepare('INSERT INTO messages (conversation_id, role, body, created_at) VALUES (?, ?, ?, ?)');
   return entries.map(({ role, ...body }) => {
-    const result = insert.run(conversationId, role, JSON.stringify(body), now);
+    const hasLab = role === 'tutor' && body.lesson?.blocks.some(block => block.type === 'environment');
+    const saved = hasLab ? { ...body, labSnapshotId: context.snapshotId } : body;
+    const result = insert.run(conversationId, role, JSON.stringify(saved), now);
     assert.equal(result.changes, 1);
     return { role, text: body.text, id: Number(result.lastInsertRowid), blocks: body.lesson && publicBlocks(body.lesson),
       recommendation: body.recommendation, observation: body.observation };

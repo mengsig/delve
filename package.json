@@ -27,10 +27,13 @@
     "package": "npm run build && electron-builder",
     "package:linux": "npm run build && electron-builder --linux",
     "package:mac": "npm run build && electron-builder --mac",
-    "package:win": "npm run build && electron-builder --win"
+    "package:win": "npm run build && electron-builder --win",
+    "predev": "vite build --config vite.instrument.config.ts",
+    "prebuild": "vite build --config vite.instrument.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@jitl/quickjs-singlefile-browser-release-sync": "0.32.0",
     "@playwright/test": "1.65",
     "@types/node": "^22.20.5",
     "@types/react": "^19.3.0",
@@ -42,6 +45,7 @@
     "eslint": "^10.15.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.14.0",
+    "quickjs-emscripten-core": "0.32.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "typescript": "^6.0.3",

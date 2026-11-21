@@ -14,7 +14,7 @@ export function LessonBlocks({ blocks, pending, onAnswer }: {
   }, [blocks.length, visible]);
   return <div className="lesson-blocks">{blocks.slice(0, visible).map((block, index) => block.type === 'check'
     ? <Check key={index} block={block} pending={pending} onAnswer={onAnswer} />
-    : <TeachingBlock key={index} block={block} />)}</div>;
+    : <TeachingBlock key={index} block={block} blockIndex={index} />)}</div>;
 }
 
 function Message({ message }: { message: ReaderMessage }) {
@@ -23,7 +23,7 @@ function Message({ message }: { message: ReaderMessage }) {
     <span className="eyebrow">{label}</span>
     {message.text && <p>{message.text}</p>}
     {message.blocks && <div className="lesson-blocks">{message.blocks.map((block, index) =>
-      block.type !== 'check' && <TeachingBlock key={index} block={block} />)}</div>}
+      block.type !== 'check' && <TeachingBlock key={index} block={block} blockIndex={index} messageId={message.id} />)}</div>}
     {message.observation && <p className="reader-observation"><strong>Observation</strong> · {message.observation}</p>}
     {message.recommendation && <div className="note reader-recommendation"><span className="plate">Suggested next step</span>
       <h4>{message.recommendation.action}</h4><p>{message.recommendation.reason}</p></div>}
@@ -34,13 +34,14 @@ export function Conversation({ messages, earlierMessages }: { messages: ReaderMe
   const log = useRef<HTMLDivElement>(null);
   const last = messages.at(-1)?.id;
   const previous = useRef(last);
+  const incoming = messages.at(-1)?.role;
   useEffect(() => {
     if (last !== previous.current) {
       const reply = log.current?.lastElementChild;
-      reply?.scrollIntoView({ block: 'start' });
+      if (incoming !== 'system') reply?.scrollIntoView({ block: 'start' });
       previous.current = last;
     }
-  }, [last]);
+  }, [last, incoming]);
   return <section className="reader-conversation">
     {earlierMessages && <p className="smallprint">Showing the latest saved messages.</p>}
     <div ref={log} role="log" aria-label="Lesson conversation" aria-live="polite" aria-relevant="additions">

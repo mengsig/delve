@@ -3,14 +3,14 @@ import { createHash } from 'node:crypto';
 import { upsertConcept } from '../db/concepts';
 import { openDatabase, transaction, type Db } from '../db/connection';
 import { listEvidence, recordEvidence } from '../db/evidence';
-import { saveLesson } from '../db/lessons';
+import { bindSnapshot, saveLesson } from '../db/lessons';
 import { addWorkspace, switchWorkspace } from '../db/workspaces';
 import { readLesson } from '../reader/ipc';
 import { appendEntries } from '../reader/conversation';
 import { lessonContext } from '../reader/stored-lesson';
 import { documentSchema } from '../reader/document';
 import { prepareTurn } from '../tutor/prompt';
-import { labHandlers } from './host';
+import { LabHost } from './host';
 import { labSchemas } from './ipc';
 
 let db: Db;
@@ -37,32 +37,75 @@ function openRequest() {
 
 describe('activity host', () => {
   it('requires a current lesson, active workspace, ordered inputs and a live session', () => {
-    const labs = labHandlers(db);
+    const labs = new LabHost(db);
     const request = openRequest();
-    const opened = labs['lab:open'](request);
-    expect(opened.config.pack).toBe('lease-handoff@1');
-    expect(() => labs['lab:input']({ session: opened.session, seq: 2, input: { type: 'reset' } })).toThrow(/order/);
-    expect(labs['lab:input']({ session: opened.session, seq: 1, input: { type: 'reset' } }).state).toBeTruthy();
-    expect(() => labs['lab:input']({ session: opened.session, seq: 1, input: { type: 'reset' } })).toThrow(/order/);
+    const opened = labs.open(request);
+    expect(opened.manifest).toMatchObject({ runtime: 'delve.env/1', config: { pack: 'lease-handoff@1' },
+      eventSchema: { type: 'object' }, rubric: 'compare-generation@1', fallback: block.fallback });
+    expect(() => labs.input({ session: opened.session, seq: 2, input: { type: 'reset' } })).toThrow(/order/);
+    expect(labs.input({ session: opened.session, seq: 1, input: { type: 'reset' } }).state).toBeTruthy();
+    expect(() => labs.input({ session: opened.session, seq: 1, input: { type: 'reset' } })).toThrow(/order/);
     const other = addWorkspace(db, { kind: 'topic', title: 'Other' });
-    expect(() => labs['lab:input']({ session: opened.session, seq: 2, input: { type: 'reset' } })).toThrow(/workspace/);
+    expect(() => labs.input({ session: opened.session, seq: 2, input: { type: 'reset' } })).toThrow(/workspace/);
     switchWorkspace(db, address.workspaceId);
     save([{ ...block, fallback: 'A changed activity.' }]);
-    expect(() => labs['lab:open'](request)).toThrow(/changed/);
-    expect(() => labs['lab:input']({ session: opened.session, seq: 2, input: { type: 'reset' } })).toThrow(/changed/);
-    expect(labs['lab:close']({ session: opened.session })).toBe(true);
-    expect(labs['lab:close']({ session: opened.session })).toBe(false);
+    expect(() => labs.open(request)).toThrow(/changed/);
+    expect(() => labs.input({ session: opened.session, seq: 2, input: { type: 'reset' } })).toThrow(/changed/);
+    expect(labs.close({ session: opened.session })).toBe(true);
+    expect(labs.close({ session: opened.session })).toBe(false);
     expect(other.id).not.toBe(address.workspaceId);
   });
 
   it('expires sessions and validates request shape', () => {
     vi.useFakeTimers();
-    const labs = labHandlers(db);
-    const opened = labs['lab:open'](openRequest());
+    const labs = new LabHost(db);
+    const opened = labs.open(openRequest());
     vi.advanceTimersByTime(30 * 60 * 1000);
-    expect(() => labs['lab:input']({ session: opened.session, seq: 1, input: { type: 'reset' } })).toThrow(/expired/);
+    expect(() => labs.input({ session: opened.session, seq: 1, input: { type: 'reset' } })).toThrow(/expired/);
     expect(labSchemas['lab:open'].safeParse({ ...openRequest(), blockIndex: -1 }).success).toBe(false);
     expect(labSchemas['lab:input'].safeParse({ session: opened.session, seq: 0, input: {} }).success).toBe(false);
+  });
+
+  it('retires replaced sessions and terminates a flood before it can change evidence', () => {
+    const labs = new LabHost(db);
+    const request = openRequest();
+    const old = labs.open(request);
+    const { session } = labs.open(request);
+    expect(() => labs.input({ session: old.session, seq: 1, input: { type: 'reset' } })).toThrow(/expired/);
+    for (let seq = 1; seq <= 120; seq++) labs.input({ session, seq, input: { type: 'reset' } });
+    expect(() => labs.input({ session, seq: 121, input: { type: 'advance' } })).toThrow(/budget/);
+    expect(() => labs.input({ session, seq: 121, input: { type: 'reset' } })).toThrow(/expired/);
+    expect(listEvidence(db, address.conceptId)).toEqual([]);
+  });
+
+});
+
+describe('saved activity provenance', () => {
+  it('keeps a saved tutor instrument bound to its original snapshot', () => {
+    const labs = new LabHost(db);
+    bindSnapshot(db, address.workspaceId, '1111aaaa');
+    const lesson = documentSchema.parse({ schema: 'delve.lesson/1', blocks: [block] });
+    const [message] = transaction(db, () => appendEntries(db, lessonContext(db, address), null, [{ role: 'tutor', text: '', lesson }]));
+    const request = { ...openRequest(), messageId: message!.id };
+    const { session } = labs.open(request);
+    bindSnapshot(db, address.workspaceId, '2222bbbb');
+    expect(() => labs.input({ session, seq: 1, input: { type: 'advance' } })).toThrow(/snapshot/);
+    expect(() => labs.open({ ...openRequest(), messageId: message!.id })).toThrow(/snapshot/);
+    expect(listEvidence(db, address.conceptId)).toEqual([]);
+  });
+
+  it('refuses a real tutor message from another workspace even for a shared concept', () => {
+    const other = addWorkspace(db, { kind: 'topic', title: 'Other queues' });
+    upsertConcept(db, { workspaceId: other.id, key: 'lease', title: 'Lease', portable: true });
+    const context = lessonContext(db, { ...address, workspaceId: other.id });
+    const lesson = documentSchema.parse({ schema: 'delve.lesson/1', blocks: [block] });
+    const [foreign] = transaction(db, () => appendEntries(db, context, null, [{ role: 'tutor', text: '', lesson }]));
+    switchWorkspace(db, address.workspaceId);
+    const labs = new LabHost(db);
+    expect(() => labs.open({ ...openRequest(), messageId: foreign!.id })).toThrow(/available/);
+    const { session } = labs.open(openRequest());
+    expect(() => labs.input({ session, seq: 1, input: { type: 'advance', demonstrated: true } })).toThrow(/invalid/);
+    expect(listEvidence(db, address.conceptId)).toEqual([]);
   });
 
   it('opens a scoped follow-up bundle only when its source hash matches', () => {
@@ -72,14 +115,14 @@ describe('activity host', () => {
     const lesson = documentSchema.parse({ schema: 'delve.lesson/1', blocks: [{ type: 'environment', config, fallback: 'Try it.' }] });
     const [message] = transaction(db, () => appendEntries(db, lessonContext(db, address), null,
       [{ role: 'tutor', text: 'Try this.', lesson }]));
-    const labs = labHandlers(db);
+    const labs = new LabHost(db);
     const request = { ...openRequest(), messageId: message!.id };
-    const opened = labs['lab:open'](request);
+    const opened = labs.open(request);
     expect(opened.state).toBeNull();
-    expect(() => labs['lab:input']({ session: opened.session, seq: 1, input: {} })).toThrow(/practice only/);
-    expect(() => labs['lab:open']({ ...request, messageId: message!.id + 1 })).toThrow(/available/);
+    expect(() => labs.input({ session: opened.session, seq: 1, input: {} })).toThrow(/practice only/);
+    expect(() => labs.open({ ...request, messageId: message!.id + 1 })).toThrow(/available/);
     save([{ type: 'environment', config: { ...config, bundle: { ...config.bundle, sha256: '0'.repeat(64) } } }]);
-    expect(() => labs['lab:open'](openRequest())).toThrow(/integrity/);
+    expect(() => labs.open(openRequest())).toThrow(/integrity/);
     expect(listEvidence(db, address.conceptId)).toEqual([]);
   });
 });
@@ -91,19 +134,19 @@ describe('activity assessment', () => {
     recordEvidence(db, { workspaceId: origin.id, conceptId: address.conceptId, depth: address.depth,
       status: 'demonstrated', source: 'check', note: 'Previously demonstrated.' });
     switchWorkspace(db, address.workspaceId);
-    const labs = labHandlers(db);
-    const opened = labs['lab:open'](openRequest());
-    for (let seq = 1; seq <= 3; seq++) labs['lab:input']({ session: opened.session, seq, input: { type: 'advance' } });
-    const result = labs['lab:input']({ session: opened.session, seq: 4, input: { type: 'reject' } });
+    const labs = new LabHost(db);
+    const opened = labs.open(openRequest());
+    for (let seq = 1; seq <= 3; seq++) labs.input({ session: opened.session, seq, input: { type: 'advance' } });
+    const result = labs.input({ session: opened.session, seq: 4, input: { type: 'reject' } });
     expect(result.lesson?.messages.at(-1)).toMatchObject({ role: 'system', observation: expect.any(String) });
     expect(listEvidence(db, address.conceptId)[0]).toMatchObject({ workspaceId: origin.id, source: 'check', revision: 1 });
   });
 
   it('records pack assessment and makes its summary available to the next tutor preview', () => {
-    const labs = labHandlers(db);
-    const opened = labs['lab:open'](openRequest());
-    for (let seq = 1; seq <= 3; seq++) labs['lab:input']({ session: opened.session, seq, input: { type: 'advance' } });
-    const result = labs['lab:input']({ session: opened.session, seq: 4, input: { type: 'reject' } });
+    const labs = new LabHost(db);
+    const opened = labs.open(openRequest());
+    for (let seq = 1; seq <= 3; seq++) labs.input({ session: opened.session, seq, input: { type: 'advance' } });
+    const result = labs.input({ session: opened.session, seq: 4, input: { type: 'reject' } });
     expect(listEvidence(db, address.conceptId)).toMatchObject([{ source: 'environment', status: 'demonstrated', workspaceId: address.workspaceId }]);
     const observation = result.lesson?.messages.at(-1)?.observation;
     expect(observation).toBeTruthy();
@@ -112,13 +155,13 @@ describe('activity assessment', () => {
   });
 
   it('rolls back evidence when the conversation cannot be saved', () => {
-    const labs = labHandlers(db);
-    const opened = labs['lab:open'](openRequest());
-    for (let seq = 1; seq <= 3; seq++) labs['lab:input']({ session: opened.session, seq, input: { type: 'advance' } });
+    const labs = new LabHost(db);
+    const opened = labs.open(openRequest());
+    for (let seq = 1; seq <= 3; seq++) labs.input({ session: opened.session, seq, input: { type: 'advance' } });
     db.exec("CREATE TRIGGER reject_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'message unavailable'); END");
-    expect(() => labs['lab:input']({ session: opened.session, seq: 4, input: { type: 'reject' } })).toThrow(/message unavailable/);
+    expect(() => labs.input({ session: opened.session, seq: 4, input: { type: 'reject' } })).toThrow(/message unavailable/);
     expect(listEvidence(db, address.conceptId)).toEqual([]);
     db.exec('DROP TRIGGER reject_message');
-    expect(labs['lab:input']({ session: opened.session, seq: 4, input: { type: 'reject' } }).lesson).toBeTruthy();
+    expect(labs.input({ session: opened.session, seq: 4, input: { type: 'reject' } }).lesson).toBeTruthy();
   });
 });

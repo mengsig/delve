@@ -18,7 +18,7 @@ describe('lease handoff', () => {
       state: { tick: 2, decision },
       assessment: {
         demonstrated: decision === 'reject',
-        observation: 'Generation 7 arrived while generation 8 was active.',
+        observation: `You ${decision === 'accept' ? 'accepted' : 'rejected'} generation 7 while generation 8 was active.`,
         targetKey: decision === 'reject' ? 'recovery' : 'fence',
       },
     });

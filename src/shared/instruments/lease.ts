@@ -35,7 +35,7 @@ export function initialLease(config: LeaseConfig): LeaseState {
 }
 
 function assessWrite(generation: number, decision: NonNullable<LeaseState['decision']>): Assessment {
-  const observation = `Generation ${generation} arrived while generation ${generation + 1} was active.`;
+  const observation = `You ${decision === 'accept' ? 'accepted' : 'rejected'} generation ${generation} while generation ${generation + 1} was active.`;
   if (decision === 'accept') return {
     demonstrated: false,
     observation,

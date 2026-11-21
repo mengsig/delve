@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { labConfigSchema, type LabConfig } from '../../shared/lab-config';
+import { bundleConfigSchema, labConfigSchema, type LabConfig } from '../../shared/lab-config';
 import { packSchema } from '../../shared/instruments';
 import { CHECK_ANSWER_LIMIT, type CodeSpan, type LessonBlock } from '../../shared/lesson-blocks';
 
@@ -54,7 +54,9 @@ const environment = z.object({
 }).refine(({ runtime, pack }) => Boolean(runtime) === Boolean(pack), 'An environment reference needs both runtime and pack.')
   .transform(({ config, ...block }): { type: 'environment'; fallback?: string; runtime?: 'delve.env/1'; pack?: string; config?: LabConfig } => {
     const parsed = labConfigSchema.safeParse(config);
-    if (parsed.success) return { ...block, config: parsed.data };
+    if (parsed.success && (!block.pack || block.pack === parsed.data.pack)) {
+      return { ...block, runtime: 'delve.env/1', pack: parsed.data.pack, config: parsed.data };
+    }
     if (config === undefined) return block;
     return { type: 'environment', ...(block.fallback ? { fallback: block.fallback } : {}) };
   });
@@ -119,9 +121,7 @@ const generationBlock = z.union([
   z.strictObject({ type: code.shape.type, source: code.shape.source, lines: code.shape.lines, spans: z.array(span.strict()).max(200) }),
   z.strictObject({ type: z.literal('environment'), fallback: richText, pack: pack.nullable(), config: z.union([
     packSchema,
-    z.strictObject({ pack: z.literal('bundle@1'), bundle: z.strictObject({ apiVersion: z.literal('delve.view/1'),
-      entry: z.literal('step'), source: z.string().min(1).max(32768) }),
-    parameters: z.strictObject({ title: z.string().trim().min(1).max(120), initial: z.string().max(2048) }) }),
+    bundleConfigSchema.extend({ bundle: bundleConfigSchema.shape.bundle.omit({ sha256: true }) }),
   ]).nullable().optional() }),
   z.strictObject({ ...choice.shape, kind: choiceKind }),
   z.strictObject({ type: checkType, kind: writtenKind, prompt: richText, expected: expectedText }),
@@ -186,6 +186,12 @@ delete documentJsonSchema.$schema;
 
 export function publicBlocks(doc: Document): LessonBlock[] {
   return doc.blocks.map(block => {
+    if (block.type === 'environment') {
+      const { config, ...metadata } = block;
+      if (!config) return metadata;
+      if (config.pack === 'bundle@1') return { ...metadata, title: config.parameters.title, bundleHash: config.bundle.sha256 };
+      return { ...metadata, config };
+    }
     if (block.type !== 'check') return block;
     const { type, prompt, kind, options } = block;
     assert.ok(kind !== undefined || options !== undefined, 'legacy checks always have options');

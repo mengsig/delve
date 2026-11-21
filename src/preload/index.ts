@@ -9,4 +9,4 @@ const api: DelveApi = {
   },
 };
 
-contextBridge.exposeInMainWorld('delve', api);
+if (process.isMainFrame) contextBridge.exposeInMainWorld('delve', api);

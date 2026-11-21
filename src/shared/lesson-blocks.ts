@@ -1,4 +1,4 @@
-import type { LabConfig } from './lab-config';
+import type { PackConfig } from './instruments';
 
 export interface CodeSpan {
   line: number;
@@ -38,7 +38,7 @@ export type LessonBlock =
   | { type: 'diagram'; nodes: string[]; edges?: DiagramEdge[] }
   | { type: 'trace'; steps: string[] }
   | { type: 'code'; source: string; lines: string[]; span?: CodeSpan; spans?: CodeSpan[] }
-  | { type: 'environment'; fallback?: string; runtime?: 'delve.env/1'; pack?: string; config?: LabConfig }
+  | { type: 'environment'; fallback?: string; runtime?: 'delve.env/1'; pack?: string; config?: PackConfig; title?: string; bundleHash?: string }
   | ChoiceCheck
   | WrittenCheck
   | { type: 'unknown'; name: string };

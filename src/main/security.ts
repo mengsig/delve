@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { STAGE_URL } from './instrument-origin';
 import { app, session, type WebContents } from 'electron';
 
 export const APP_SCHEME = 'app';
@@ -12,6 +13,7 @@ export const CONTENT_SECURITY_POLICY = [
   "img-src 'self' data:",
   "font-src 'self'",
   "connect-src 'self'",
+  "frame-src app://instrument/stage",
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'none'",
@@ -31,6 +33,9 @@ export function isAppUrl(url: string, devServerUrl: string | undefined): boolean
 }
 
 function lockDownContents(contents: WebContents, devServerUrl: string | undefined): void {
+  contents.on('will-frame-navigate', event => {
+    if (!event.isMainFrame && (event.url !== STAGE_URL || event.initiator !== contents.mainFrame)) event.preventDefault();
+  });
   contents.on('will-navigate', (event, url) => {
     if (!isAppUrl(url, devServerUrl)) event.preventDefault();
   });
@@ -45,6 +50,7 @@ function lockDownContents(contents: WebContents, devServerUrl: string | undefine
 export function applySecurityPolicy(devServerUrl: string | undefined): void {
   assert.ok(app.isReady(), 'security policy needs the default session, available after ready');
   app.on('web-contents-created', (_event, contents) => lockDownContents(contents, devServerUrl));
+  session.defaultSession.on('will-download', event => event.preventDefault());
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   assert.ok(!app.isPackaged || devServerUrl === undefined, 'a packaged app never loads a dev server');

@@ -119,8 +119,10 @@ describe('registerIpc', () => {
     registerIpc({ handle: (channel, listener) => listeners.set(channel, listener) }, handlers(), (url) => url.startsWith('app://delve/'));
     expect([...listeners.keys()].sort()).toEqual([...IPC_CHANNELS].sort());
     const list = listeners.get('workspaces:list')!;
-    expect(await list({ senderFrame: { url: 'app://delve/index.html' } }, null)).toMatchObject({ ok: true });
-    expect(await list({ senderFrame: { url: 'https://evil.example/' } }, null)).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    expect(await list({ senderFrame: { url: 'app://delve/index.html', parent: null } }, null)).toMatchObject({ ok: true });
+    expect(await list({ senderFrame: { url: 'https://evil.example/', parent: null } }, null)).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    expect(await list({ senderFrame: { url: 'app://delve/index.html', parent: {} } }, null)).toMatchObject({ ok: false });
+    expect(await list({ senderFrame: { url: 'app://instrument/stage', parent: {} } }, null)).toMatchObject({ ok: false });
     expect(await list({ senderFrame: null }, null)).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
   });
 });

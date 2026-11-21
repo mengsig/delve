@@ -4,7 +4,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['out/**', 'dist/**', 'release/**', 'node_modules/**', 'test-results/**', 'playwright-report/**', 'docs/**'] },
+  { ignores: ['.archon/**', 'out/**', 'dist/**', 'release/**', 'node_modules/**', 'test-results/**', 'playwright-report/**', 'docs/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

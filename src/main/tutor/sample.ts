@@ -43,7 +43,14 @@ export function demoTurn(turn: PreparedTurn): TutorReply {
   assert.equal(request.intent.kind, 'ask');
   const question = request.intent.kind === 'ask' ? request.intent.text : '';
   const blocks: Document['blocks'] = [{ type: 'prose', heading: 'About your question', text: demoReply(context, question) }];
-  if (/diagram|visual|trace|draw/i.test(question)) {
+  if (turn.lastPractice?.observation && turn.lastPractice.recommendation) {
+    const { observation, recommendation } = turn.lastPractice;
+    blocks.push({ type: 'callout', heading: 'From your last run', text: [observation, recommendation.reason, recommendation.action].join(' ') });
+  }
+  const lab = turn.selected.document?.blocks.find(block => block.type === 'environment');
+  if (lab && /\b(lab|simulate|simulation|instrument|practice)\b/i.test(question)) {
+    blocks.push(lab);
+  } else if (/diagram|visual|trace|draw/i.test(question)) {
     blocks.push({ type: 'trace', steps: [context.summary, item.mechanics, item.detail] });
   } else blocks.push(sampleExample(turn));
   return { ...base, lesson: { schema: 'delve.lesson/1', blocks } };

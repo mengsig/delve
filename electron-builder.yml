@@ -8,6 +8,9 @@ files:
   - out/**/*
   - package.json
   - '!**/*.map'
+extraResources:
+  - from: node_modules/@jitl/quickjs-singlefile-browser-release-sync/LICENSE
+    to: licenses/quickjs.txt
 asar: true
 electronFuses:
   runAsNode: false

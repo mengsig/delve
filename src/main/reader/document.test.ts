@@ -81,6 +81,9 @@ describe('provider lesson documents', () => {
     const wire = { ...lesson({ type: 'environment', fallback: 'Practice by hand.', pack: null, config }), source: null };
     const generated = documentGenerationSchema.parse(wire);
     expect(generated.blocks[0]).toMatchObject({ config: { bundle: { sha256: createHash('sha256').update(source).digest('hex') } } });
+    const published = publicBlocks(generated);
+    expect(published[0]).toMatchObject({ title: 'Practice', pack: 'bundle@1', runtime: 'delve.env/1' });
+    expect(JSON.stringify(published)).not.toContain(source);
     const malformed = documentSchema.parse(lesson({ type: 'environment', fallback: 'Practice by hand.', config: { pack: 'bogus' } }));
     expect(malformed.blocks[0]).toEqual({ type: 'environment', fallback: 'Practice by hand.' });
   });

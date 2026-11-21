@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { extname, isAbsolute, resolve, sep } from 'node:path';
+import { extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { protocol } from 'electron';
-import { APP_HOST, APP_SCHEME, CONTENT_SECURITY_POLICY } from './security';
+import { instrumentResponse } from './instrument-origin';
+import { APP_HOST, APP_ORIGIN, APP_SCHEME, CONTENT_SECURITY_POLICY } from './security';
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -30,8 +31,10 @@ export function resolveAppPath(root: string, url: string): string | null {
 }
 
 /** Serves the built renderer from `root` with a strict CSP header. */
-export function serveRenderer(root: string): void {
+export function serveRenderer(root: string, devServerUrl?: string): void {
+  const parent = devServerUrl ? new URL(devServerUrl).origin : APP_ORIGIN;
   protocol.handle(APP_SCHEME, async (request) => {
+    if (new URL(request.url).hostname === 'instrument') return instrumentResponse(join(root, '../instrument'), request.url, parent);
     const file = resolveAppPath(root, request.url);
     if (!file) return new Response('Forbidden', { status: 403 });
     const type = MIME_TYPES[extname(file)];

@@ -1,5 +1,6 @@
 import { Fragment, useId, useState } from 'react';
 import { CHECK_ANSWER_LIMIT, type CodeSpan, type DiagramEdge, type LessonBlock } from '../../../shared/lesson-blocks';
+import { Environment } from '../lab/Environment';
 import './blocks.css';
 
 function HighlightedLine({ line, spans }: { line: string; spans: CodeSpan[] }) {
@@ -50,15 +51,6 @@ export function Diagram({ nodes, edges }: { nodes: string[]; edges?: DiagramEdge
   </section>;
 }
 
-export function EnvironmentSlot({ fallback, pack }: { fallback?: string; pack?: string }) {
-  return <section className="chapter" id="instrument">
-    <span className="eyebrow">Environment</span>
-    {pack ? <div className="instrument-reading"><span className="plate">{pack} · text alternative</span>
-      <p className="lesson-text">{fallback ?? 'No description supplied for this instrument.'}</p></div>
-      : <><h3>No environment in this lesson</h3>{fallback && <p className="lesson-text">{fallback}</p>}</>}
-  </section>;
-}
-
 function Steps({ steps }: { steps: string[] }) {
   return <ol className="lesson-steps">{steps.map((step, i) => <li key={i}>{step}</li>)}</ol>;
 }
@@ -79,7 +71,7 @@ function Comparison({ block }: { block: Extract<LessonBlock, { type: 'comparison
   </section>;
 }
 
-export function TeachingBlock({ block }: { block: Exclude<LessonBlock, { type: 'check' }> }) {
+export function TeachingBlock({ block, blockIndex, messageId = null }: { block: Exclude<LessonBlock, { type: 'check' }>; blockIndex: number; messageId?: number | null }) {
   switch (block.type) {
     case 'prose':
       return <section className="chapter"><h3>{block.heading}</h3><p className="lesson-text">{block.text}</p></section>;
@@ -100,7 +92,7 @@ export function TeachingBlock({ block }: { block: Exclude<LessonBlock, { type: '
     case 'diagram': return <Diagram nodes={block.nodes} edges={block.edges} />;
     case 'code': return <CodeExcerpt block={block} />;
     case 'trace': return <section className="chapter"><h3>Trace</h3><Steps steps={block.steps} /></section>;
-    case 'environment': return <EnvironmentSlot fallback={block.fallback} pack={block.pack} />;
+    case 'environment': return <Environment block={block} blockIndex={blockIndex} messageId={messageId} />;
     case 'unknown': return <section className="chapter"><h3>Unsupported lesson block</h3><p>This version of Delve cannot display “{block.name}”.</p></section>;
   }
 }

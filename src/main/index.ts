@@ -9,7 +9,7 @@ import { createGenerator, createTutorRunner } from './tutor/provider';
 import { TutorSession } from './tutor/session';
 import { readerHandlers } from './reader/ipc';
 import { graphHandlers } from './graph-ipc';
-import { labHandlers } from './environment/host';
+import { LabHost } from './environment/host';
 import { registerIpc, type IpcHandlers } from './ipc';
 import { registerAppScheme, serveRenderer } from './protocol';
 import { detectProviders } from './providers/detect';
@@ -22,7 +22,7 @@ const devServerUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER
 const userDataOverride = process.env['DELVE_USER_DATA_DIR'];
 if (userDataOverride) app.setPath('userData', resolve(userDataOverride));
 
-function createWindow(): BrowserWindow {
+function createWindow(labs: LabHost): BrowserWindow {
   const window = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -39,6 +39,9 @@ function createWindow(): BrowserWindow {
       spellcheck: false,
     },
   });
+  window.webContents.on('did-start-navigation', event => { if (event.isMainFrame && !event.isSameDocument) labs.clear(); });
+  window.webContents.on('render-process-gone', () => labs.clear());
+  window.webContents.on('destroyed', () => labs.clear());
   window.once('ready-to-show', () => window.show());
   const url = devServerUrl ?? `${APP_ORIGIN}/index.html`;
   window.loadURL(url).catch((error: unknown) => {
@@ -48,14 +51,20 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-function buildHandlers(db: Db, tutor: TutorSession): IpcHandlers {
+function buildHandlers(db: Db, tutor: TutorSession, labs: LabHost): IpcHandlers {
   return {
     'workspaces:list': () => listWorkspaces(db),
     'workspaces:add': async (input) => {
       if (input.kind === 'git') await assertGitRepository(input.path);
-      return addWorkspace(db, input);
+      const workspace = addWorkspace(db, input);
+      labs.clear();
+      return workspace;
     },
-    'workspaces:switch': ({ id }) => switchWorkspace(db, id),
+    'workspaces:switch': ({ id }) => {
+      const result = switchWorkspace(db, id);
+      labs.clear();
+      return result;
+    },
     'workspaces:pick-folder': async () => {
       const owner = BrowserWindow.getFocusedWindow();
       const options = { title: 'Choose a Git repository', properties: ['openDirectory' as const] };
@@ -66,14 +75,16 @@ function buildHandlers(db: Db, tutor: TutorSession): IpcHandlers {
     ...readerHandlers(db),
     ...tutorHandlers(db, tutor),
     ...graphHandlers(db),
-    ...labHandlers(db),
+    'lab:open': request => labs.open(request),
+    'lab:input': request => labs.input(request),
+    'lab:close': request => labs.close(request),
   };
 }
 
 async function start(): Promise<void> {
   await app.whenReady();
   applySecurityPolicy(devServerUrl);
-  serveRenderer(join(__dirname, '../renderer'));
+  serveRenderer(join(__dirname, '../renderer'), devServerUrl);
   const db = openDatabase(join(app.getPath('userData'), 'delve.sqlite'));
   const runner = createTutorRunner();
   const tutor = new TutorSession(db, createGenerator(runner));
@@ -89,10 +100,11 @@ async function start(): Promise<void> {
   });
   app.on('will-quit', () => db.close());
   seedDemoWorkspaces(db);
-  registerIpc(ipcMain, buildHandlers(db, tutor), (url) => isAppUrl(url, devServerUrl));
-  createWindow();
+  const labs = new LabHost(db);
+  registerIpc(ipcMain, buildHandlers(db, tutor, labs), (url) => isAppUrl(url, devServerUrl));
+  createWindow(labs);
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(labs);
   });
 }
 

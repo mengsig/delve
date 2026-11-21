@@ -18,3 +18,11 @@ export const bundleConfigSchema = z.strictObject({
 export const labConfigSchema = z.union([packSchema, bundleConfigSchema]);
 export type BundleConfig = z.infer<typeof bundleConfigSchema>;
 export type LabConfig = z.infer<typeof labConfigSchema>;
+
+export interface LabManifest {
+  runtime: 'delve.env/1';
+  config: LabConfig;
+  eventSchema: Record<string, unknown>;
+  rubric: string;
+  fallback: string;
+}
