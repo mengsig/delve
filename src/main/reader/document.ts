@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { bundleConfigSchema, labConfigSchema, type LabConfig } from '../../shared/lab-config';
 import { packSchema } from '../../shared/instruments';
-import { CHECK_ANSWER_LIMIT, type CodeSpan, type LessonBlock } from '../../shared/lesson-blocks';
+import { CHECK_ANSWER_LIMIT, type CodeSpan, type DiagramEdge, type LessonBlock } from '../../shared/lesson-blocks';
 
 const label = z.string().min(1).max(1024);
 const text = z.string().min(1).max(16000);
@@ -38,12 +38,13 @@ const table = z.strictObject({
 const beforeAfter = z.strictObject({
   type: z.literal('comparison'), heading: richLabel, before: richText, after: richText,
 });
-const diagram = z.object({
-  type: z.literal('diagram'), nodes: z.array(label).min(1).max(40), edges: z.array(edge).max(120).optional(),
-}).refine(({ nodes, edges }) => !edges || (
-  edges.every(({ from, to }) => from < nodes.length && to < nodes.length)
-  && new Set(edges.map(({ from, to, label }) => JSON.stringify([from, to, label]))).size === edges.length
-), 'Diagram edges must be distinct and connect existing nodes.');
+const diagramFields = z.object({
+  type: z.literal('diagram'), nodes: z.array(richLabel).min(1).max(40), edges: z.array(edge).max(120).optional(),
+});
+const diagram = diagramFields
+  .refine(({ nodes, edges }) => !edges || edges.every(({ from, to }) => from < nodes.length && to < nodes.length),
+    'Diagram edges must connect existing nodes.')
+  .transform(normalizeDiagram);
 const code = z.object({
   type: z.literal('code'), source: label, lines: z.array(z.string().max(4000)).min(1).max(200),
   span: span.optional(), spans: z.array(span).max(200).optional(),
@@ -69,6 +70,33 @@ const written = z.object({
 }).refine(b => new Set(b.expected.map(answer => answer.trim().toLowerCase())).size === b.expected.length,
   'Expected responses must be distinct.');
 const unknown = z.object({ type: z.literal('unknown'), name: label });
+
+function normalizeDiagram({ type, nodes, edges }: z.infer<typeof diagramFields>) {
+  const nodeIndices = new Map<string, number>();
+  const remap = nodes.map(raw => {
+    const name = raw.trim();
+    const index = nodeIndices.get(name);
+    if (index !== undefined) return index;
+    const next = nodeIndices.size;
+    nodeIndices.set(name, next);
+    return next;
+  });
+  const names = [...nodeIndices.keys()];
+  assert.ok(names.length > 0 && names.length <= nodes.length, 'diagram normalization preserves at least one node');
+  if (edges === undefined && names.length === nodes.length) return { type, nodes: names };
+
+  // Materialize legacy transitions before remapping repeated stops.
+  const original: DiagramEdge[] = edges ?? nodes.slice(1).map((_, from) => ({ from, to: from + 1 }));
+  const unique = new Map<string, DiagramEdge>();
+  for (const edge of original) {
+    const from = remap[edge.from];
+    const to = remap[edge.to];
+    assert.ok(from !== undefined && to !== undefined, 'diagram endpoints must map to normalized nodes');
+    const label = edge.label?.trim();
+    unique.set(JSON.stringify([from, to, label]), label === undefined ? { from, to } : { from, to, label });
+  }
+  return { type, nodes: names, edges: [...unique.values()] };
+}
 
 function validSpans(block: { lines: string[]; span?: CodeSpan; spans?: CodeSpan[] }): boolean {
   const { span, spans } = block;
@@ -115,7 +143,7 @@ export type Document = z.infer<typeof documentSchema>;
 const generationBlock = z.union([
   prose.strict(), analogy, callout, example, table, trace.strict(),
   z.strictObject({
-    ...diagram.shape,
+    ...diagramFields.shape,
     edges: z.array(edge.extend({ label: richLabel.nullable() })).max(120).nullable(),
   }),
   z.strictObject({ type: code.shape.type, source: code.shape.source, lines: code.shape.lines, spans: z.array(span.strict()).max(200) }),

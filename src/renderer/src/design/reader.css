@@ -82,20 +82,6 @@
   margin: 16px 0;
   border-left: 3px solid var(--green);
 }
-.diagram {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 13px;
-}
-.diagram span {
-  background: var(--soft);
-  padding: 6px 11px;
-  border-radius: 6px;
-  font-weight: 550;
-  font-size: 13px;
-}
 pre {
   font:
     12px/1.6 ui-monospace,

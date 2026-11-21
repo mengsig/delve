@@ -1,7 +1,10 @@
 import { Fragment, useId, useState } from 'react';
-import { CHECK_ANSWER_LIMIT, type CodeSpan, type DiagramEdge, type LessonBlock } from '../../../shared/lesson-blocks';
+import { CHECK_ANSWER_LIMIT, type CodeSpan, type LessonBlock } from '../../../shared/lesson-blocks';
 import { Environment } from '../lab/Environment';
+import { Diagram } from './Diagram';
 import './blocks.css';
+
+export { Diagram };
 
 function HighlightedLine({ line, spans }: { line: string; spans: CodeSpan[] }) {
   return <>{spans.map(({ start, end }, index) => <Fragment key={start}>
@@ -24,30 +27,6 @@ export function CodeExcerpt({ block }: { block: Extract<LessonBlock, { type: 'co
       const ranges = highlights.get(index + 1);
       return <Fragment key={index}>{index > 0 && '\n'}{ranges ? <HighlightedLine line={line} spans={ranges} /> : line}</Fragment>;
     })}</code></pre>
-  </section>;
-}
-
-function DiagramLinks({ nodes, edges }: { nodes: string[]; edges: DiagramEdge[] }) {
-  const linked = new Set(edges.flatMap(({ from, to }) => [from, to]));
-  return <ul className="lesson-diagram-links">
-    {edges.map(({ from, to, label }, index) => <li className="diagram" key={index}>
-      <span>{nodes[from]}</span>
-      {label && <small>{label}</small>}
-      <b aria-hidden="true">→</b><i className="sr-only">to</i>
-      <span>{nodes[to]}</span>
-    </li>)}
-    {nodes.map((node, index) => !linked.has(index) && <li className="diagram" key={`node-${index}`}><span>{node}</span></li>)}
-  </ul>;
-}
-
-export function Diagram({ nodes, edges }: { nodes: string[]; edges?: DiagramEdge[] }) {
-  return <section className="chapter">
-    <span className="plate">System trace</span>
-    {edges === undefined
-      ? <div className="diagram">{nodes.map((node, index) => <Fragment key={index}>
-        {index > 0 && <><b aria-hidden="true">→</b><i className="sr-only">to</i></>}<span>{node}</span>
-      </Fragment>)}</div>
-      : <DiagramLinks nodes={nodes} edges={edges} />}
   </section>;
 }
 
@@ -109,9 +88,9 @@ export function Check({ block, onAnswer, onPreview, pending }: CheckProps) {
   const [draft, setDraft] = useState('');
   const answer = draft.trim();
   return <section className="chapter" id="checkpoint"><div className="check" aria-busy={pending}>
-    <span className="eyebrow">One check · optional</span>
+    <span className="eyebrow">Check your understanding</span>
     <h3 id={prompt}>{block.prompt}</h3>
-    <p>An answer records revisable evidence at this depth. You can also skip this check.</p>
+    <p>Answer to finish this lesson. You can skip, but this concept will not be marked understood.</p>
     {block.options
       ? <div className="actions">{block.options.map((option, index) =>
         <div className="check-choice" key={option}>
