@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { z } from 'zod';
+import { DEPTHS } from '../shared/domain';
 import { IPC_CHANNELS, type IpcChannel, type IpcError, type IpcRequest, type IpcResponse, type IpcResult } from '../shared/ipc';
 import { DomainError } from '../shared/errors';
 
 const text = z.string().max(4096);
+const workspaceId = z.uuid();
 
 /** Runtime validation of every request the renderer sends; the renderer is not trusted. */
 export const REQUEST_SCHEMAS: { [C in IpcChannel]: z.ZodType<IpcRequest<C>> } = {
@@ -13,9 +15,12 @@ export const REQUEST_SCHEMAS: { [C in IpcChannel]: z.ZodType<IpcRequest<C>> } = 
     z.strictObject({ kind: z.literal('github'), owner: text, repo: text }),
     z.strictObject({ kind: z.literal('topic'), title: text }),
   ]),
-  'workspaces:switch': z.strictObject({ id: z.string().uuid() }),
+  'workspaces:switch': z.strictObject({ id: workspaceId }),
   'workspaces:pick-folder': z.null(),
   'providers:detect': z.null(),
+  'graph:read': z.strictObject({ workspaceId }),
+  'progress:read': z.null(),
+  'evidence:reset': z.strictObject({ workspaceId, conceptId: z.int().positive(), depth: z.enum(DEPTHS) }),
 };
 
 export type IpcHandlers = { [C in IpcChannel]: (request: IpcRequest<C>) => Promise<IpcResponse<C>> | IpcResponse<C> };

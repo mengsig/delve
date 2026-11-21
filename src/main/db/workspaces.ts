@@ -8,7 +8,7 @@ import { nowIso, transaction, type Db } from './connection';
 const GITHUB_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const GITHUB_REPO = /^[A-Za-z0-9._-]{1,100}$/;
 const MAX_TOPIC_LENGTH = 120;
-const ACTIVE_KEY = 'active_workspace_id';
+export const ACTIVE_WORKSPACE_KEY = 'active_workspace_id';
 
 interface WorkspaceRow {
   id: string;
@@ -99,7 +99,7 @@ export function addWorkspace(db: Db, input: AddWorkspaceInput): Workspace {
 
 function setActive(db: Db, id: string): void {
   db.prepare('INSERT INTO app_state (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(
-    ACTIVE_KEY,
+    ACTIVE_WORKSPACE_KEY,
     id,
   );
 }
@@ -110,7 +110,7 @@ export function listWorkspaces(db: Db): WorkspaceList {
     .prepare('SELECT * FROM workspaces ORDER BY last_opened_at IS NULL, last_opened_at DESC, rowid DESC')
     .all() as unknown as WorkspaceRow[];
   const workspaces = rows.map(toWorkspace);
-  const active = db.prepare('SELECT value FROM app_state WHERE key = ?').get(ACTIVE_KEY) as { value: string } | undefined;
+  const active = db.prepare('SELECT value FROM app_state WHERE key = ?').get(ACTIVE_WORKSPACE_KEY) as { value: string } | undefined;
   const activeId = active && workspaces.some((w) => w.id === active.value) ? active.value : null;
   return { workspaces, activeId };
 }
