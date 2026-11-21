@@ -23,12 +23,6 @@
 .reader-thread {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 32px);
-}
-.reader-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
 }
 .reader-composer {
   flex: none;

@@ -7,6 +7,7 @@ import { _electron as electron, test as base, type ElectronApplication, type Pag
 
 interface Desktop {
   page: Page;
+  application: ElectronApplication;
   directory: string;
   restart: (link?: string) => Promise<Page>;
 }
@@ -44,7 +45,7 @@ export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun:
       const page = await start();
       if (!firstRun) await page.getByRole('button', { name: 'Explore demo atlas' }).click();
       await use({
-        directory, page,
+        directory, page, application: app!,
         restart: async link => { await app?.close(); app = undefined; return start(link); },
       });
     } finally {

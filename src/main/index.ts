@@ -28,8 +28,8 @@ function createWindow(labs: LabHost): BrowserWindow {
   const window = new BrowserWindow({
     width: 1200,
     height: 800,
-    minWidth: 720,
-    minHeight: 480,
+    minWidth: 960,
+    minHeight: 640,
     show: false,
     title: 'Delve',
     webPreferences: {
