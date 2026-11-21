@@ -59,8 +59,9 @@ function taskkillTree(pid: number): Promise<Error | null> {
 /**
  * One CLI execution: bounded output, timeout and cancellation. On timeout or cancel, POSIX sends the
  * CLI's own process group SIGTERM, then SIGKILL after the grace; Windows runs taskkill /T /F.
- * Signals go out only while Node has not reaped the CLI: libuv reaps and reports the exit in one
- * synchronous step, so `running` means the pid (and, on POSIX, its group id) cannot have been reused.
+ * Signals go out only while Node has not reaped the CLI, judged from a timer or setImmediate: libuv
+ * reaps a batch of children and reports their exits in one call that never contains those phases, so
+ * there `running` means the pid (and POSIX group id) is still held. Inside an exit callback it may not.
  * Limits: descendants that outlive the CLI's exit are not killed (their pipes are dropped after
  * DRAIN_MS), and a descendant that leaves the group or session is out of scope; claude and codex do
  * neither. On Windows the CLI may exit while taskkill starts, so taskkill may name a released pid.
@@ -133,12 +134,20 @@ class CapturedRun {
     sink.push(chunk);
   }
 
+  // Deferred: abort may fire inside another child's exit callback, where `running` can be stale.
   private stop(reason: Error): void {
     if (this.verdict || this.done) return;
     this.verdict = reason;
-    if (!this.running) return this.settle(reason);
+    setImmediate(() => this.terminate());
+  }
+
+  private terminate(): void {
+    if (this.done) return;
+    assert(this.verdict !== null, 'only a stopped run is terminated');
+    if (this.child.pid === undefined) return this.settle(this.verdict);
+    if (!this.running) return; // the exit is already reported, and onExit settles with the verdict
     const { provider } = this.opts;
-    const pid = this.child.pid as number;
+    const pid = this.child.pid;
     if (IS_WINDOWS) {
       void taskkillTree(pid).then((error) => {
         if (error && this.running) this.settle(failedError(provider, 'could not stop the CLI', error));
