@@ -42,21 +42,22 @@ interface Props {
   workspace: Workspace;
   model: AtlasModel;
   target: AtlasConcept;
+  reason?: string;
   demo?: DemoPlate;
   onLesson: (id: number) => void;
   onChanges: () => void;
 }
 
-export function FieldGuide({ workspace, model, target, demo, onLesson, onChanges }: Props) {
+export function FieldGuide({ workspace, model, target, reason, demo, onLesson, onChanges }: Props) {
   const missing = Array.from(model.byId.values()).filter(concept => !isLearned(concept) && concept.id !== target.id);
   const feature = demo?.feature && missing.includes(demo.feature) ? demo.feature : missing.find(concept => concept.prerequisites.length);
   const follow = demo && !demo.changed && missing.find(concept => concept !== feature && concept.prerequisites.includes(target));
   const revisit = isLearned(target);
-  const label = revisit ? 'Optional revisit' : target.evidence ? 'Adaptive follow-up' : 'Learn the base';
+  const label = revisit ? 'Optional revisit' : reason || target.evidence ? 'Adaptive follow-up' : 'Learn the base';
   return <aside className="recs" aria-label="Field guide">
     <header><span className="eyebrow">Field guide / Suggested for you</span><h3>Your next move</h3></header>
     <Suggestion primary icon="route" label={label} title={target.title}
-      reason={reasonFor(target, workspace.id)} onClick={() => onLesson(target.id)} />
+      reason={reason ?? reasonFor(target, workspace.id)} onClick={() => onLesson(target.id)} />
     {demo?.changed ? <Suggestion icon="pr" label="Change brief · PR #184" title="Why late writes are rejected"
       reason="One changed boundary. Skip the queue recap." onClick={onChanges} />
       : workspace.kind !== 'topic' && !demo && <Suggestion icon="pr" label="Change brief" title="Explore repository changes"

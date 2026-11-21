@@ -1,49 +1,176 @@
+import assert from 'node:assert/strict';
 import { z } from 'zod';
-import type { CodeSpan, LessonBlock } from '../../shared/reader';
+import { CHECK_ANSWER_LIMIT, type CodeSpan, type LessonBlock } from '../../shared/lesson-blocks';
 
 const label = z.string().min(1).max(1024);
 const text = z.string().min(1).max(16000);
-const lines = z.array(z.string().max(4000)).min(1).max(200);
+const nonblank = (value: string) => value.trim().length > 0;
+const richLabel = label.refine(nonblank);
+const richText = text.refine(nonblank);
+const steps = z.array(text).min(1).max(80);
 const span = z.object({ line: z.int().positive(), start: z.int().nonnegative(), end: z.int().positive() });
+const edge = z.strictObject({ from: z.int().nonnegative(), to: z.int().nonnegative(), label: richLabel.optional() });
+const pack = label.regex(/^[a-z][a-z0-9-]*@[1-9][0-9]*$/);
+const lessonVersion = z.literal('delve.lesson/1');
+const checkType = z.literal('check');
+const writtenKind = z.enum(['short-answer', 'prediction']);
+const choiceKind = z.enum(['choice', 'prediction']);
+const expectedChoice = z.int().nonnegative();
+const expectedText = z.array(z.string().min(1).max(CHECK_ANSWER_LIMIT).refine(nonblank)).min(1).max(12);
+const options = z.array(label).min(2).max(12);
+const prose = z.object({ type: z.literal('prose'), heading: label, text });
+const analogy = z.strictObject({ type: z.literal('analogy'), heading: richLabel, text: richText });
+const callout = z.strictObject({ type: z.literal('callout'), heading: richLabel, text: richText });
+const example = z.strictObject({
+  type: z.literal('example'), heading: richLabel, setup: richText,
+  steps: z.array(richText).min(1).max(80), takeaway: richText,
+});
+const trace = z.object({ type: z.literal('trace'), steps });
+const table = z.strictObject({
+  type: z.literal('comparison'), heading: richLabel,
+  columns: z.array(richLabel).min(2).max(12),
+  rows: z.array(z.array(richText).min(2).max(12)).min(1).max(80),
+}).refine(({ columns, rows }) => new Set(columns).size === columns.length
+  && rows.every(row => row.length === columns.length), 'Every row needs one cell per distinct column.');
+const beforeAfter = z.strictObject({
+  type: z.literal('comparison'), heading: richLabel, before: richText, after: richText,
+});
+const diagram = z.object({
+  type: z.literal('diagram'), nodes: z.array(label).min(1).max(40), edges: z.array(edge).max(120).optional(),
+}).refine(({ nodes, edges }) => !edges || (
+  edges.every(({ from, to }) => from < nodes.length && to < nodes.length)
+  && new Set(edges.map(({ from, to, label }) => JSON.stringify([from, to, label]))).size === edges.length
+), 'Diagram edges must be distinct and connect existing nodes.');
+const code = z.object({
+  type: z.literal('code'), source: label, lines: z.array(z.string().max(4000)).min(1).max(200),
+  span: span.optional(), spans: z.array(span).max(200).optional(),
+}).refine(validSpans, 'Code spans must be within a line, non-overlapping, and supplied as span or spans.');
+const environment = z.object({
+  type: z.literal('environment'), fallback: text.optional(), runtime: z.literal('delve.env/1').optional(), pack: pack.optional(),
+}).refine(({ runtime, pack }) => Boolean(runtime) === Boolean(pack), 'An environment reference needs both runtime and pack.');
+const choice = z.object({
+  type: checkType, kind: choiceKind.optional(), prompt: text, options, expected: expectedChoice,
+}).refine(b => b.expected < b.options.length && new Set(b.options).size === b.options.length,
+  'The expected choice must index one of the distinct options.');
+const written = z.object({
+  type: checkType, kind: writtenKind, prompt: richText, options: z.never().optional(), expected: expectedText,
+}).refine(b => new Set(b.expected.map(answer => answer.trim().toLowerCase())).size === b.expected.length,
+  'Expected responses must be distinct.');
+const unknown = z.object({ type: z.literal('unknown'), name: label });
 
-function validSpan(block: { lines: string[]; span?: CodeSpan }): boolean {
-  if (!block.span) return true;
-  const { line, start, end } = block.span;
-  const source = block.lines[line - 1];
-  return source !== undefined && start < end && end <= source.length;
+function validSpans(block: { lines: string[]; span?: CodeSpan; spans?: CodeSpan[] }): boolean {
+  const { span, spans } = block;
+  if (span && spans) return false;
+  const sorted = spans?.toSorted((a, b) => a.line - b.line || a.start - b.start) ?? (span ? [span] : []);
+  for (const [index, current] of sorted.entries()) {
+    const line = block.lines[current.line - 1];
+    if (line === undefined || current.end > line.length || current.start >= current.end) return false;
+    const prev = sorted[index - 1];
+    if (prev?.line === current.line && prev.end > current.start) return false;
+    assert.ok(!prev || prev.line <= current.line, 'code spans must be processed in line order');
+  }
+  return true;
 }
 
-const blockSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('prose'), heading: label, text }),
-  z.object({ type: z.literal('diagram'), nodes: z.array(label).min(1).max(40) }),
-  z.object({ type: z.literal('trace'), steps: z.array(text).min(1).max(80) }),
-  z.object({ type: z.literal('code'), source: label, lines, span: span.optional() }).refine(validSpan),
-  z.object({ type: z.literal('environment'), fallback: text.optional() }),
-  z.object({
-    type: z.literal('check'), prompt: text, options: z.array(label).min(2).max(12), expected: z.int().nonnegative(),
-  }).refine(b => b.expected < b.options.length && new Set(b.options).size === b.options.length),
-  z.object({ type: z.literal('unknown'), name: label }),
-]);
+const schemas = {
+  prose, analogy, callout, example, comparison: table.or(beforeAfter),
+  diagram, trace, code, environment, check: choice.or(written), unknown,
+};
 
-const supported = new Set(blockSchema.options.map(option => option.shape.type.value));
-const block = z.preprocess(raw => {
-  const tag = z.object({ type: label }).safeParse(raw);
-  if (tag.success && !supported.has(tag.data.type as LessonBlock['type'])) {
-    return { type: 'unknown', name: tag.data.type };
+const blockTag = z.object({ type: label });
+const blockSchema = z.unknown().transform((raw, ctx) => {
+  const tag = blockTag.safeParse(raw);
+  if (!tag.success) {
+    ctx.addIssue({ code: 'custom', path: ['type'], message: 'A lesson block needs a type.' });
+    return z.NEVER;
   }
-  return raw;
-}, blockSchema);
+  const { type } = tag.data;
+  if (!Object.hasOwn(schemas, type)) return { type: 'unknown' as const, name: type };
+  const result = schemas[type as keyof typeof schemas].safeParse(raw);
+  if (result.success) return result.data;
+  for (const { path, message } of result.error.issues) ctx.addIssue({ code: 'custom', path, message });
+  return z.NEVER;
+});
 
 export const documentSchema = z.object({
-  schema: z.literal('delve.lesson/1'),
+  schema: lessonVersion,
   source: label.optional(),
-  blocks: z.array(block).min(1).max(80),
-}).refine(doc => doc.blocks.filter(block => block.type === 'check').length <= 1);
+  blocks: z.array(blockSchema).min(1).max(80),
+}).refine(doc => doc.blocks.filter(block => block.type === 'check').length <= 1, 'A lesson can include at most one check.');
 
 export type Document = z.infer<typeof documentSchema>;
 
+const generationBlock = z.union([
+  prose.strict(), analogy, callout, example, table, trace.strict(),
+  z.strictObject({
+    ...diagram.shape,
+    edges: z.array(edge.extend({ label: richLabel.nullable() })).max(120).nullable(),
+  }),
+  z.strictObject({ type: code.shape.type, source: code.shape.source, lines: code.shape.lines, spans: z.array(span.strict()).max(200) }),
+  z.strictObject({ type: environment.shape.type, fallback: richText, pack: pack.nullable() }),
+  z.strictObject({ ...choice.shape, kind: choiceKind }),
+  z.strictObject({ type: checkType, kind: writtenKind, prompt: richText, expected: expectedText }),
+]);
+
+const generationWire = z.strictObject({
+  schema: lessonVersion,
+  source: label.nullable(),
+  blocks: z.array(generationBlock).min(1).max(80),
+});
+
+type GeneratedBlock = z.infer<typeof generationBlock>;
+
+function adaptGeneratedBlock(block: GeneratedBlock) {
+  if (block.type === 'environment') {
+    return block.pack === null
+      ? { type: block.type, fallback: block.fallback }
+      : { ...block, runtime: 'delve.env/1' as const };
+  }
+  if (block.type !== 'diagram') return block;
+  const { edges, ...diagram } = block;
+  if (edges === null) return diagram;
+  return { ...diagram, edges: edges.map(({ label, ...edge }) => label === null ? edge : { ...edge, label }) };
+}
+
+const futureBlock = blockTag.refine(tag => !Object.hasOwn(schemas, tag.type))
+  .transform(tag => ({ type: 'unknown' as const, name: tag.type }));
+
+export const documentGenerationSchema = generationWire.extend({
+  blocks: z.array(generationBlock.or(futureBlock)).min(1).max(80),
+}).transform(({ source, ...document }): z.input<typeof documentSchema> => ({
+  ...document,
+  ...(source === null ? {} : { source }),
+  blocks: document.blocks.map(block => block.type === 'unknown' ? block : adaptGeneratedBlock(block)),
+})).pipe(documentSchema);
+
+// Keep provider constraints structural; the parser also validates bounds and cross-field invariants.
+export const documentJsonSchema = z.toJSONSchema(generationWire, {
+  target: 'draft-7',
+  io: 'input',
+  override: ({ jsonSchema }) => {
+    delete jsonSchema.minLength;
+    delete jsonSchema.maxLength;
+    delete jsonSchema.minItems;
+    delete jsonSchema.maxItems;
+    delete jsonSchema.minimum;
+    delete jsonSchema.maximum;
+    delete jsonSchema.pattern;
+    if (typeof jsonSchema.const === 'string') {
+      jsonSchema.enum = [jsonSchema.const];
+      delete jsonSchema.const;
+    }
+  },
+});
+
+delete documentJsonSchema.$schema;
+
 export function publicBlocks(doc: Document): LessonBlock[] {
-  return doc.blocks.map(block => block.type === 'check'
-    ? { type: 'check', prompt: block.prompt, options: block.options }
-    : block);
+  return doc.blocks.map(block => {
+    if (block.type !== 'check') return block;
+    const { type, prompt, kind, options } = block;
+    assert.ok(kind !== undefined || options !== undefined, 'legacy checks always have options');
+    if (options !== undefined) return kind ? { type, kind, prompt, options } : { type, prompt, options };
+    assert.ok(kind === 'short-answer' || kind === 'prediction', 'written checks have a written kind');
+    return { type, kind, prompt };
+  });
 }

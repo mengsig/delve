@@ -40,12 +40,17 @@ export function Study({ workspace, workspaces, screen, go, onSwitch, onSelect }:
     setConceptId(id);
     go('lesson');
   }
+  async function startTopic() {
+    const id = await call('reader:start-topic', { workspaceId: workspace.id });
+    refresh();
+    openLesson(id);
+  }
   const common = { workspace, graph: result.value, depth, view, onDepth: changeDepth, onBack: () => go('atlas'), onLesson: openLesson };
   return <div className={view}>
     {screen === 'lesson' && conceptId !== undefined ? <Lesson {...common} conceptId={conceptId} onEvidence={refresh} /> :
       screen === 'changes' ? <Changes {...common} /> :
       screen === 'progress' ? <Progress {...common} workspaces={workspaces} onSelect={onSelect} onEvidence={refresh} /> :
       <Atlas {...common} initialConceptId={conceptId} onView={changeView} onChanges={() => go('changes')}
-        onProgress={() => go('progress')} onSwitch={onSwitch} onAdd={() => go('setup')} />}
+        onStartTopic={startTopic} onProgress={() => go('progress')} onSwitch={onSwitch} onAdd={() => go('setup')} />}
   </div>;
 }

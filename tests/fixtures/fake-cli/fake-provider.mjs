@@ -42,7 +42,8 @@ function handleStatus() {
 }
 
 function succeed() {
-  const text = mode === 'invalid' ? '{"wrong":true}' : payload;
+  const responseFile = process.env.FAKE_PROVIDER_RESPONSE_FILE;
+  const text = mode === 'invalid' ? '{"wrong":true}' : responseFile ? fs.readFileSync(responseFile, 'utf8') : payload;
   if (invokedAs === 'claude') {
     console.log(JSON.stringify({ type: 'result', is_error: false, subtype: 'success', result: '', structured_output: JSON.parse(text) }));
     return;
@@ -90,6 +91,12 @@ async function main() {
     spawnDescendant(true);
     process.on('SIGTERM', () => undefined);
     return setInterval(() => process.stdout.write('still here\n'), 20);
+  }
+  const gate = process.env.FAKE_PROVIDER_GATE;
+  const deadline = Date.now() + 5000;
+  while (gate && fs.existsSync(gate)) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for the smoke test to release the response');
+    await new Promise(resolve => setTimeout(resolve, 20));
   }
   const delay = Number(process.env.FAKE_PROVIDER_DELAY_MS ?? 0);
   if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));

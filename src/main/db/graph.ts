@@ -28,7 +28,25 @@ export function readWorkspaceGraph(db: Db, workspaceId: string): WorkspaceGraph 
   const snapshot = db.prepare(
     'SELECT commit_sha FROM snapshots WHERE workspace_id = ? ORDER BY created_at DESC, id DESC LIMIT 1',
   ).get(workspaceId) as { commit_sha: string } | undefined;
-  return { workspaceId, concepts, edges, evidence, snapshot: snapshot?.commit_sha ?? null, demo: isDemoWorkspace(db, workspaceId) };
+  const suggestions = tutorSuggestions(db, workspaceId, ids);
+  const graph = { workspaceId, concepts, edges, evidence, snapshot: snapshot?.commit_sha ?? null, demo: isDemoWorkspace(db, workspaceId) };
+  return Object.keys(suggestions).length ? { ...graph, suggestions } : graph;
+}
+
+function tutorSuggestions(db: Db, workspaceId: string, ids: Set<number>): NonNullable<WorkspaceGraph['suggestions']> {
+  const latest = db.prepare(`SELECT json_extract(m.body, '$.recommendation.targetId') AS target,
+    json_extract(m.body, '$.recommendation.reason') AS reason
+    FROM conversations c JOIN messages m ON m.conversation_id = c.id
+    WHERE c.workspace_id = ? AND c.depth = ? AND m.role = 'tutor' AND json_type(m.body, '$.recommendation') = 'object'
+    ORDER BY m.id DESC LIMIT 1`);
+  const suggestions: NonNullable<WorkspaceGraph['suggestions']> = {};
+  for (const depth of DEPTHS) {
+    const row = latest.get(workspaceId, depth);
+    if (typeof row?.target === 'number' && ids.has(row.target) && typeof row.reason === 'string' && row.reason.trim()) {
+      suggestions[depth] = { conceptId: row.target, reason: row.reason };
+    }
+  }
+  return suggestions;
 }
 
 interface CoverageRow {
