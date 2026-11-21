@@ -102,18 +102,25 @@ export function listEvidence(db: Db, conceptId: number): Evidence[] {
   return rows.map(toEvidence);
 }
 
-/** Forgets evidence for a concept, at one depth or all. Returns how many records were removed. */
-export function resetEvidence(db: Db, conceptId: number, depth?: Depth): number {
+/**
+ * Forgets evidence for a concept, at one depth or all, as seen from `workspaceId` when given: a local
+ * concept of another workspace is refused before anything is deleted. Returns how many were removed.
+ */
+export function resetEvidence(db: Db, conceptId: number, options: { depth?: Depth; workspaceId?: string } = {}): number {
+  const { depth, workspaceId } = options;
   if (depth !== undefined && !(DEPTHS as readonly string[]).includes(depth)) {
     throw new DomainError('INVALID_EVIDENCE', `Unknown depth "${depth}".`);
   }
-  const result =
-    depth === undefined
-      ? db.prepare('DELETE FROM evidence WHERE concept_id = ?').run(conceptId)
-      : db.prepare('DELETE FROM evidence WHERE concept_id = ? AND depth = ?').run(conceptId, depth);
-  const removed = Number(result.changes);
-  assert.ok(Number.isInteger(removed) && removed >= 0 && removed <= DEPTHS.length, 'at most one record per depth');
-  return removed;
+  return transaction(db, () => {
+    resolveScope(db, conceptId, workspaceId);
+    const result =
+      depth === undefined
+        ? db.prepare('DELETE FROM evidence WHERE concept_id = ?').run(conceptId)
+        : db.prepare('DELETE FROM evidence WHERE concept_id = ? AND depth = ?').run(conceptId, depth);
+    const removed = Number(result.changes);
+    assert.ok(Number.isInteger(removed) && removed >= 0 && removed <= DEPTHS.length, 'at most one record per depth');
+    return removed;
+  });
 }
 
 export interface KnownResult {

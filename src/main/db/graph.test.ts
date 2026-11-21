@@ -96,7 +96,7 @@ describe('evidence and reuse', () => {
     expect(revised).toMatchObject({ revision: 2, status: 'demonstrated', note: 'second try' });
     recordEvidence(db, { conceptId: c.id, depth: 'high', status: 'demonstrated', source: 'self-report' });
     expect(listEvidence(db, c.id).map((e) => e.depth)).toEqual(['high', 'medium']);
-    expect(resetEvidence(db, c.id, 'medium')).toBe(1);
+    expect(resetEvidence(db, c.id, { depth: 'medium' })).toBe(1);
     expect(isConceptKnown(db, { conceptKey: 'dns', depth: 'medium', workspaceId: wsA }).known).toBe(false);
     expect(resetEvidence(db, c.id)).toBe(1);
     expect(listEvidence(db, c.id)).toEqual([]);
@@ -115,6 +115,22 @@ describe('evidence and reuse', () => {
     const portable = upsertConcept(db, { key: 'tls', title: 'TLS', portable: true });
     expect(() => recordEvidence(db, { ...base, conceptId: portable.id, workspaceId: wsA, snapshotId: snapB })).toThrow(/different workspace/);
     expect(() => recordEvidence(db, { ...base, conceptId: portable.id, snapshotId: snapA })).toThrow(/different workspace/);
+  });
+
+  it('leaves existing evidence untouched when a cross-workspace record or reset is refused', () => {
+    const local = upsertConcept(db, { key: 'lease', title: 'Lease', portable: false, workspaceId: wsA });
+    const snapA = bindSnapshot(db, wsA, 'aaaaaaa2');
+    const snapB = bindSnapshot(db, wsB, 'bbbbbbb2');
+    const base = { conceptId: local.id, depth: 'medium', status: 'partial', source: 'check' } as const;
+    const saved = recordEvidence(db, { ...base, workspaceId: wsA, snapshotId: snapA, note: 'first' });
+    const upgrade = { ...base, status: 'demonstrated', note: 'hijack' } as const;
+    expect(() => recordEvidence(db, { ...upgrade, workspaceId: wsB })).toThrow(/another workspace/);
+    expect(() => recordEvidence(db, { ...upgrade, workspaceId: wsB, snapshotId: snapB })).toThrow(/another workspace/);
+    expect(() => recordEvidence(db, { ...upgrade, workspaceId: wsA, snapshotId: snapB })).toThrow(/different workspace/);
+    expect(() => resetEvidence(db, local.id, { workspaceId: wsB })).toThrow(/another workspace/);
+    expect(() => resetEvidence(db, 404)).toThrow(/does not exist/);
+    expect(listEvidence(db, local.id)).toEqual([saved]);
+    expect(resetEvidence(db, local.id, { workspaceId: wsA })).toBe(1);
   });
 
   it('rejects evidence for unknown concepts or values', () => {
