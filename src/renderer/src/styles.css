@@ -1,0 +1,54 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  line-height: 1.4;
+}
+body {
+  margin: 0;
+  padding: 24px 32px;
+}
+main {
+  max-width: 760px;
+}
+section {
+  margin-block: 24px;
+}
+ul {
+  padding-left: 0;
+  list-style: none;
+}
+li {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 0;
+}
+form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.active {
+  font-weight: 600;
+}
+.muted {
+  opacity: 0.7;
+}
+.error {
+  color: #c0392b;
+}
+dialog {
+  min-width: 360px;
+}
+dialog input {
+  width: 100%;
+  box-sizing: border-box;
+}
+[role='option'] {
+  cursor: pointer;
+  padding-inline: 6px;
+}
+.highlighted {
+  outline: 2px solid currentColor;
+}
