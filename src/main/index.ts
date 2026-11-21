@@ -118,7 +118,7 @@ async function start(links: LearnInbox, shutdown: Shutdown): Promise<void> {
   const probes = new Set<ReturnType<typeof detectProviders>>();
   const detect = () => {
     shutdown.signal.throwIfAborted();
-    const pending = detectProviders({ signal: AbortSignal.any([shutdown.signal]) }).finally(() => { probes.delete(pending); });
+    const pending = detectProviders({ signal: shutdown.signal }).finally(() => { probes.delete(pending); });
     probes.add(pending);
     return pending;
   };

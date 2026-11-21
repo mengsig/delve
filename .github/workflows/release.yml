@@ -67,6 +67,25 @@ jobs:
       - run: npm run ${{ matrix.script }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Smoke test packaged Linux app
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          version="$(node -p "require('./package.json').version")"
+          xvfb-run --auto-servernum -- npm run test:linux-package -- "release/$version/linux-unpacked/delve"
+      - name: Verify macOS framework signature and launch
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          apps=(release/*/mac*/Delve.app)
+          test "${#apps[@]}" -eq 1 && test -d "${apps[0]}"
+          codesign --verify --strict "${apps[0]}/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework"
+          "${apps[0]}/Contents/MacOS/Delve" > mac-launch.log 2>&1 &
+          pid=$!
+          sleep 10
+          if ! kill -0 "$pid" 2>/dev/null; then cat mac-launch.log; wait "$pid" || true; exit 1; fi
+          kill -TERM "$pid"
+          wait "$pid" || true
       - uses: actions/upload-artifact@v4
         with:
           name: delve-${{ matrix.os }}
@@ -94,10 +113,7 @@ jobs:
           merge-multiple: true
       - name: Checksums and release notes
         run: |
-          cd dist
-          sha256sum -- * > SHA256SUMS
-          cat SHA256SUMS
-          cd ..
+          ./scripts/collect-release-assets.sh dist release-assets
           ./scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > release-notes.md
       - name: Create release
         env:
@@ -105,7 +121,7 @@ jobs:
         run: |
           prerelease=""
           case "${GITHUB_REF_NAME}" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "${GITHUB_REF_NAME}" dist/* \
+          gh release create "${GITHUB_REF_NAME}" release-assets/* \
             --title "Delve ${GITHUB_REF_NAME}" \
             --notes-file release-notes.md \
             --verify-tag $prerelease

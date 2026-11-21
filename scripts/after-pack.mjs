@@ -7,6 +7,7 @@ export default async function afterPack(context) {
   const { packager, appOutDir, electronPlatformName } = context;
   await packager.addElectronFuses(context, {
     version: FuseVersion.V1,
+    resetAdHocDarwinSignature: electronPlatformName === 'darwin',
     [FuseV1Options.RunAsNode]: false,
     [FuseV1Options.EnableCookieEncryption]: true,
     [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,

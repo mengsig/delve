@@ -77,7 +77,7 @@ async function addAndMap(page: Page, directory: string, repo: string, info: Test
   await expect(review).toContainText('dispatch.ts');
   const prompt = await review.locator('pre').textContent();
   expect(prompt).toContain('export const attempts = 3;');
-  await page.locator('form').screenshot({ path: info.outputPath('attach-preview.png') });
+  await page.getByRole('form', { name: 'Add workspace' }).screenshot({ path: info.outputPath('attach-preview.png') });
   expect(existsSync(join(directory, 'request.json'))).toBe(false);
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({ ...graph, schema: 'delve.map/1' }));
   writeFileSync(gate, '');

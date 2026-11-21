@@ -14,4 +14,5 @@
 - Subscription-backed Claude Code and Codex CLI providers (R14).
 - End-to-end learning for non-code topics (R15).
 - Reviewed `delve://learn` integration links (R16).
+- MIT licensing, contribution and security guidance, and automated checks (R17).
 - Changes explorer with branch timeline, filters and linked concepts (R18).

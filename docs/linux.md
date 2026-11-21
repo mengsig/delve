@@ -3,6 +3,7 @@
 The AppImage needs FUSE 2 (`libfuse2` on Debian/Ubuntu, or the equivalent for your distribution). If FUSE is unavailable, run `./Delve-*.AppImage --appimage-extract` and start `./squashfs-root/AppRun`. Keep the extracted directory together.
 
 Delve chooses Wayland when a Wayland session is available and otherwise uses X11. Run it inside a graphical session with a working `WAYLAND_DISPLAY` or `DISPLAY`. If a desktop launcher does not inherit the session environment, launch it from a terminal in that session.
+If X11 is reachable only through an abstract socket without `/tmp/.X11-unix`, launch with `--ozone-platform=x11` to override display detection.
 
 The Debian package installs `delve.desktop` with the `delve://` MIME handler. To select it as the default handler, run:
 
