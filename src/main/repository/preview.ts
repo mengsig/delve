@@ -8,7 +8,7 @@ import { getWorkspace } from '../db/workspaces';
 import { readWorkspaceGraph } from '../db/graph';
 import { depthGuide } from '../tutor/prompt';
 import { cacheModel, selectModel } from '../providers/model';
-import { readChange, readFiles } from './source';
+import { readChangeWithPatches, readFiles } from './source';
 import { digest, type ApprovedSource } from './store';
 
 interface SourceMaterial {
@@ -17,6 +17,7 @@ interface SourceMaterial {
   partial: boolean;
   files: string[];
   data: unknown;
+  patches?: ApprovedSource['patches'];
   base?: string;
   repository?: string;
   description?: string;
@@ -26,7 +27,7 @@ interface SourceMaterial {
 async function material(path: string | null, workspace: Workspace, request: RepoRequest, inventory?: RepositoryInventory): Promise<SourceMaterial> {
   const selection = request.selection;
   if (selection.kind !== 'baseline') {
-    const change = await readChange(path, workspace, selection.kind, selection.ref);
+    const change = await readChangeWithPatches(path, workspace, selection.kind, selection.ref);
     return { ...change, partial: change.partial || !change.diff.trim(), data: change.diff };
   }
   assert.ok(path, 'a baseline needs a local Git object database');
@@ -64,10 +65,10 @@ function learningContext(db: Db, request: RepoRequest) {
 }
 
 const mapTask = 'Map the approved files into concepts and prerequisite edges. Recommend one first step whose prerequisites the learner knows. Give a specific reason.';
-const changeTask = 'Teach what changed, why it matters, and the before and after. At Medium and Low explain how the parts interact in mechanics. At Low explain the protocol edge or boundary condition in boundary. Use null for fields outside the chosen depth or unavailable in the material. At Medium and Low include a short ordered trace of affected components or operations when supported. At Low return a short contiguous excerpt copied verbatim from the diff including patch prefixes. Return empty arrays where unavailable or outside the chosen depth. Distinguish observed behavior from inferred motivation. Include affected concepts and their required foundations in concepts. List only directly affected keys in touched. Recommend studying a feature, a prerequisite, or this change brief itself (key null), and explain why. When the diff is unavailable or partial, describe the limit without guessing details.';
+const changeTask = 'Teach what changed, why it matters, and the before and after. At Medium and Low explain how the parts interact in mechanics. At Low explain the protocol edge or boundary condition in boundary. Use null for fields outside the chosen depth or unavailable in the material. At Medium and Low include a short ordered trace of affected components or operations when supported. At Low return a short contiguous excerpt copied verbatim from the diff including patch prefixes. Return empty arrays where unavailable or outside the chosen depth. Distinguish observed behavior from inferred motivation. Include affected concepts and their required foundations in concepts. List only directly affected keys in touched. Link those keys to concrete diff spans: use the exact file path, side old for removed lines or new for added lines, and inclusive source line numbers from the hunk. Each span must consist entirely of consecutive changed lines on that side. Return empty spans when no lines support a link. Recommend studying a feature, a prerequisite, or this change brief itself (key null), and explain why. When the diff is unavailable or partial, describe the limit without guessing details.';
 
 export async function prepareSource(db: Db, path: string | null, workspace: Workspace, request: RepoRequest, inventory?: RepositoryInventory): Promise<ApprovedSource> {
-  const { commit, base, repository, description, coverageNote, title, partial, files, data } = await material(path, workspace, request, inventory);
+  const { commit, base, repository, description, coverageNote, title, partial, files, data, patches } = await material(path, workspace, request, inventory);
   const baseline = request.selection.kind === 'baseline';
   const schema = baseline ? 'delve.map/1' : 'delve.change/1';
   const instructions = [baseline ? mapTask : changeTask, depthGuide[request.depth],
@@ -79,8 +80,8 @@ export async function prepareSource(db: Db, path: string | null, workspace: Work
   const { model, modelSource } = selectModel(request.provider);
   const ref = request.selection.kind === 'pr' ? request.selection.ref : commit;
   const revision = digest([request.selection.kind, ref, repository, base, commit, title, description, partial, coverageNote, files, data]);
-  const cacheKey = digest([workspace.id, revision, schema, 'delve.lesson/1', request.depth, request.provider, cacheModel(model)]);
+  const cacheKey = digest([workspace.id, revision, schema, 'delve.lesson/1', request.depth, request.provider, cacheModel(model), ...(baseline ? [] : ['concept-spans/1'])]);
   const preview = { token: randomUUID(), model, modelSource, prompt, bytes: Buffer.byteLength(prompt), files, commit, base, title, partial, coverageNote };
   assert.ok(preview.bytes >= prompt.length && preview.bytes > 0);
-  return { preview, request, revision, cacheKey, diff: !baseline && typeof data === 'string' ? data : undefined };
+  return { preview, request, revision, cacheKey, patches, diff: !baseline && typeof data === 'string' ? data : undefined };
 }

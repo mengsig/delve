@@ -80,11 +80,23 @@ async function refreshRepository(cacheRoot: string, destination: string, slug: s
   return destination;
 }
 
-export async function githubRepository(cacheRoot: string, source: string): Promise<string> {
+function cachePath(cacheRoot: string, slug: string): string {
   if (!isAbsolute(cacheRoot)) throw new DomainError('GITHUB_CACHE_FAILED', 'The repository cache needs an absolute path.');
-  const slug = githubSlug(source);
+  assert.equal(githubSlug(slug), slug);
   const key = createHash('sha256').update(slug).digest('hex');
   const destination = join(cacheRoot, `${key}.git`);
+  assert.ok(isAbsolute(destination));
+  return destination;
+}
+
+export async function cachedGithubRepository(cacheRoot: string, source: string): Promise<string | null> {
+  const destination = cachePath(cacheRoot, githubSlug(source));
+  return await cachedDirectory(destination) ? destination : null;
+}
+
+export async function githubRepository(cacheRoot: string, source: string): Promise<string> {
+  const slug = githubSlug(source);
+  const destination = cachePath(cacheRoot, slug);
   const running = refreshes.get(destination);
   if (running) return running;
   const refresh = refreshRepository(cacheRoot, destination, slug);

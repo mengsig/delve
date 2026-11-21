@@ -15,6 +15,11 @@ export interface GitChange {
   title: string;
 }
 
+export interface ChangePatch {
+  path: string;
+  patch: string;
+}
+
 export interface ChangeSnapshot {
   commit: string;
   title: string;
@@ -25,6 +30,13 @@ export interface ChangeSnapshot {
   repository?: string;
   partial: boolean;
   files: string[];
+}
+
+export function withoutChangePatches(change: ChangeSnapshot & { patches: ChangePatch[] }): ChangeSnapshot {
+  const { patches, ...snapshot } = change;
+  assert.equal(snapshot.files.length, patches.length);
+  assert.equal(snapshot.diff.length === 0, patches.length === 0);
+  return snapshot;
 }
 
 interface SourceFile {
@@ -64,11 +76,16 @@ export function nulRecords(output: Buffer): string[] {
   return records;
 }
 
+export class MissingSnapshotCommit extends DomainError {}
+
 export async function resolveCommit(reader: GitReader, ref: string): Promise<string> {
   if (ref !== 'HEAD' && !/^[a-fA-F0-9]{7,64}$/.test(ref)) {
     throw new DomainError('INVALID_COMMIT', 'Choose a hexadecimal Git commit ID.');
   }
-  const result = await reader.run(['rev-parse', '--verify', '--end-of-options', ref === 'HEAD' ? 'HEAD^{commit}' : `${ref.toLowerCase()}^{commit}`], 1024);
+  const result = await reader.run(['rev-parse', '--quiet', '--verify', '--end-of-options', ref === 'HEAD' ? 'HEAD^{commit}' : `${ref.toLowerCase()}^{commit}`], 1024);
+  if (ref !== 'HEAD' && result.status === 1 && !result.truncated) {
+    throw new MissingSnapshotCommit('SOURCE_READ_FAILED', 'That Git commit is unavailable in the local snapshot.');
+  }
   const commit = completedOutput(result, 'That Git commit is unavailable.').toString('utf8').trim();
   assert.ok(OBJECT_ID.test(commit), 'rev-parse must return one full commit ID');
   if (ref !== 'HEAD' && !commit.startsWith(ref.toLowerCase())) {
@@ -85,7 +102,7 @@ export async function requireReachable(reader: GitReader, commit: string): Promi
   if (OBJECT_ID.test(ref)) return;
   assert.equal(ref, '', 'for-each-ref must return an object ID or no matches');
   const ancestor = await reader.run(['merge-base', '--is-ancestor', commit, 'HEAD'], 1024);
-  if (ancestor.status === 1) throw new DomainError('INVALID_COMMIT', 'That commit is outside the available repository history.');
+  if (ancestor.status === 1) throw new MissingSnapshotCommit('INVALID_COMMIT', 'That commit is outside the available repository history.');
   completedOutput(ancestor, 'Could not check whether that commit is reachable from HEAD.');
 }
 

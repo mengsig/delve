@@ -33,3 +33,12 @@ export function sourceText(bytes: Buffer): string | null {
   }
   return BINARY_CONTROL.test(text) || PRIVATE_TEXT.test(text) ? null : text;
 }
+
+export function safeAuthor(value: string): string {
+  const text = value.replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim();
+  return sourceText(Buffer.from(text)) === null ? '' : Array.from(text).slice(0, 240).join('');
+}
+
+export function safeBranch(value: string): boolean {
+  return value.length > 0 && value.length <= 1024 && !UNSAFE_PATH_TEXT.test(value) && sourceText(Buffer.from(value)) !== null;
+}

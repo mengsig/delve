@@ -86,6 +86,8 @@ function buildHandlers(db: Db, tutor: TutorSession, labs: LabHost, learning: Rep
     'repo:files': ({ workspaceId }) => learning.files(workspaceId),
     'repo:changes': ({ workspaceId }) => learning.changes(workspaceId),
     'repo:preview': request => learning.preview(request),
+    'repo:history': request => learning.history(request),
+    'repo:detail': request => learning.detail(request),
     'repo:saved': request => learning.saved(request),
     'repo:generate': ({ token, requestId }) => learning.generate(token, requestId),
     'repo:cancel': ({ requestId }) => learning.cancel(requestId),

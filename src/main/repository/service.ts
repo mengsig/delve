@@ -3,15 +3,17 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Workspace } from '../../shared/domain';
 import type { RepositoryInput, RepositoryInventory, RepoRequest, SavedRequest } from '../../shared/repository';
+import type { DetailRequest, HistoryPage, HistoryRequest } from '../../shared/explorer';
+import { openRepositoryHistory } from './history';
 import { DomainError } from '../../shared/errors';
 import type { Db } from '../db/connection';
 import { isDemoWorkspace } from '../db/demo';
 import { addWorkspace, getWorkspace, listWorkspaces, resolveWorkspaceSource } from '../db/workspaces';
 import type { ProviderRunner } from '../providers/runner';
-import { listChanges, listFiles, repositoryPath } from './source';
+import { listChanges, listFiles, readChangeDetail, repositoryPath, withCommitSnapshot } from './source';
 import { prepareSource } from './preview';
 import { baselineReply, changeReply } from './schemas';
-import { digest, useCachedGeneration, latestBrief, persistGeneration, savedChanges, type ApprovedSource } from './store';
+import { digest, useCachedGeneration, latestBrief, persistGeneration, savedChanges, savedHistory, type ApprovedSource } from './store';
 
 function outputSchema(schema: typeof baselineReply | typeof changeReply) {
   return z.toJSONSchema(schema, { target: 'draft-7', unrepresentable: 'any', override: ({ jsonSchema }) => {
@@ -26,6 +28,8 @@ export class RepositoryLearning {
   private readonly inventories = new Map<string, { path: string; inventory: RepositoryInventory }>();
   private readonly staged = new Map<string, { source: RepositoryInput; workspace: Workspace }>();
   private readonly runs = new Map<string, AbortController>();
+  private readonly historyCursors = new Map<number, { key: string; load: () => Promise<HistoryPage>; result?: Promise<HistoryPage> }>();
+  private nextHistoryCursor = 1;
   private readonly reads = new Set<Promise<unknown>>();
   private closed = false;
   constructor(private db: Db, private cacheRoot: string, private runner: ProviderRunner) {}
@@ -96,6 +100,49 @@ export class RepositoryLearning {
     }
   }
 
+  history(request: HistoryRequest) {
+    return this.whileOpen(async () => {
+      const workspace = this.workspace(request.workspaceId);
+      const key = JSON.stringify([workspace.id, request.branch, request.kind, request.author, request.search]);
+      if (request.cursor !== 0) {
+        const cursor = this.historyCursors.get(request.cursor);
+        if (!cursor || cursor.key !== key) throw new DomainError('STALE_HISTORY', 'Refresh repository history to continue.');
+        cursor.result ??= cursor.load();
+        return cursor.result;
+      }
+      const history = await openRepositoryHistory(workspace, this.cacheRoot, request, savedHistory(this.db, workspace.id));
+      const advance = (): Promise<HistoryPage> => history.advance(() => {
+        const cursor = this.nextHistoryCursor++;
+        assert.ok(Number.isSafeInteger(cursor) && cursor > 0);
+        if (this.historyCursors.size >= 32) this.historyCursors.delete(this.historyCursors.keys().next().value!);
+        this.historyCursors.set(cursor, { key, load: advance });
+        assert.ok(this.historyCursors.size <= 32);
+        return cursor;
+      });
+      return advance();
+    });
+  }
+
+  detail(request: DetailRequest) {
+    return this.whileOpen(async () => {
+      const workspace = this.workspace(request.workspaceId);
+      const { kind, ref } = request;
+      try {
+        if (kind === 'commit') return await withCommitSnapshot(workspace, this.cacheRoot, path => readChangeDetail(path, workspace, kind, ref));
+        return await readChangeDetail(workspace.kind === 'git' ? workspace.source : null, workspace, kind, ref);
+      } catch (cause) {
+        if (!(cause instanceof DomainError) || cause.code === 'GITHUB_PULL_REQUEST_MOVED') throw cause;
+        const matches = savedHistory(this.db, workspace.id).filter(node =>
+          node.kind === kind && (kind === 'pr' ? node.ref === ref : node.ref.startsWith(ref.toLowerCase())));
+        if (matches.length !== 1) throw cause;
+        const node = matches[0]!;
+        assert.equal(node.kind, kind);
+        return { node, files: [], fileCount: 0, additions: 0, deletions: 0, partial: true, savedOnly: true, statsCoverage: 'unavailable' as const,
+          coverageNote: cause.message + ' Showing the saved change. File and line totals are unavailable.' };
+      }
+    });
+  }
+
   saved(request: SavedRequest) { return latestBrief(this.db, request); }
 
   preview(request: RepoRequest) { return this.whileOpen(() => this.prepare(request)); }
@@ -105,9 +152,10 @@ export class RepositoryLearning {
     if (pending && request.selection.kind !== 'baseline') throw new DomainError('INVALID_REPO', 'Add this repository before reading changes.');
     const workspace = pending?.workspace ?? this.workspace(request.workspaceId);
     const listed = request.selection.kind === 'baseline' ? this.inventories.get(workspace.id + '/' + request.selection.commit) : undefined;
-    const path = listed?.path ?? (workspace.kind === 'github' && request.selection.kind === 'pr'
-      ? null : await repositoryPath(workspace, this.cacheRoot));
-    const source = await prepareSource(this.db, path, workspace, request, listed?.inventory);
+    const prepare = (path: string | null) => prepareSource(this.db, path, workspace, request, listed?.inventory);
+    const source = request.selection.kind === 'commit' ? await withCommitSnapshot(workspace, this.cacheRoot, prepare)
+      : await prepare(workspace.kind === 'github' && request.selection.kind === 'pr' ? null
+        : listed?.path ?? await repositoryPath(workspace, this.cacheRoot));
     if (this.closed) throw new DomainError('REPO_CLOSED', 'Delve is closing.');
     if (this.previews.size >= 12) this.previews.delete(this.previews.keys().next().value!);
     this.previews.set(source.preview.token, source);
@@ -149,6 +197,7 @@ export class RepositoryLearning {
     await Promise.allSettled(this.reads);
     this.inventories.clear();
     this.staged.clear();
+    this.historyCursors.clear();
     assert.equal(this.reads.size, 0);
   }
 }

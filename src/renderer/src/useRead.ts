@@ -7,7 +7,7 @@ export function errorMessage(error: unknown): string {
 }
 
 /** A new query never renders a previous query's result, even before its effect starts. */
-export function useRead<T>(query: () => Promise<T>) {
+export function useRead<T>(query: () => Promise<T>, refreshVersion = 0) {
   const [version, setVersion] = useState(0);
   const [settled, setSettled] = useState<{ query: typeof query; result: Result<T> }>();
   useEffect(() => {
@@ -17,7 +17,7 @@ export function useRead<T>(query: () => Promise<T>) {
       error => { if (current) setSettled({ query, result: { status: 'error', message: errorMessage(error) } }); },
     );
     return () => { current = false; };
-  }, [query, version]);
+  }, [query, version, refreshVersion]);
   const refresh = useCallback(() => setVersion(value => value + 1), []);
   const result: Result<T> = settled?.query === query ? settled.result : { status: 'loading' };
   return { result, refresh };

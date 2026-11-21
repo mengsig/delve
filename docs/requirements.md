@@ -52,3 +52,10 @@ maintainer's approval. Design reference: `docs/design/proposal-v1.html`.
   Archon or Aether.
 - **R17 Open source.** MIT licence, README with install and development instructions, tests and CI
   (lint, typecheck, unit tests, a smoke test that launches the app).
+- **R18 Changes explorer.** Open a commit or pull request in one click from a searchable,
+  paged branch timeline. Show parent and merge relationships, branch, PR and author filters,
+  virtualized rows and a keyboard-accessible Folio list. Show the change's state, author,
+  branches, dates and size alongside Explanation, Files changed and Concepts tabs. Link reviewed
+  diff spans to concepts and open them on the Atlas. View change-only concepts there temporarily. Open the change lesson in one click,
+  retaining R14 source approval for new generation. Accepted learn links select the referenced
+  change. Make missing patches, unavailable GitHub access and empty histories explicit.

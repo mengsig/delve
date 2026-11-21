@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { z } from 'zod';
+import type { ChangeDetail, HistoryNode } from '../../shared/explorer';
 import { DomainError } from '../../shared/errors';
 import { githubSlug } from './github-cache';
-import { changeTitle, type ChangeSnapshot, type GitChange } from './git-reader';
-import { isSourcePath, MAX_DIFF_BYTES, MAX_DIFF_FILES, MAX_PATCH_BYTES, OBJECT_ID, sourceText } from './source-policy';
+import { changeTitle, withoutChangePatches, type ChangePatch, type ChangeSnapshot, type GitChange } from './git-reader';
+import { isSourcePath, MAX_DIFF_BYTES, MAX_DIFF_FILES, MAX_PATCH_BYTES, OBJECT_ID, safeAuthor, safeBranch, sourceText } from './source-policy';
 import { sourceCommand } from './source-process';
 
 const prNumber = z.number().int().positive().max(9_999_999_999);
@@ -11,6 +12,14 @@ const prSummary = z.object({ number: prNumber, title: z.string() });
 const gitId = z.object({ sha: z.string().regex(OBJECT_ID) });
 const prMetadata = prSummary.extend({
   body: z.string().nullish(), base: gitId, head: gitId, changed_files: z.number().int().nonnegative(),
+});
+const prBranch = gitId.extend({ ref: z.string() });
+const historyPull = prSummary.extend({
+  created_at: z.iso.datetime(), state: z.enum(['open', 'closed']), merged_at: z.iso.datetime().nullable(),
+  user: z.object({ login: z.string() }).nullable(), base: prBranch, head: prBranch,
+});
+const detailPull = prMetadata.extend(historyPull.shape).extend({
+  closed_at: z.iso.datetime().nullable(), additions: z.number().int().nonnegative(), deletions: z.number().int().nonnegative(),
 });
 const prFile = z.object({
   filename: z.string(), previous_filename: z.string().nullish(), status: z.string(),
@@ -53,6 +62,27 @@ export async function listPullRequests(source: string): Promise<GitChange[]> {
   const slug = githubSlug(source);
   const pulls = await githubApi(`repos/${slug}/pulls?state=all&sort=updated&direction=desc&per_page=25`, z.array(prSummary).max(25));
   return pulls.map(({ number, title }) => ({ kind: 'pr', ref: String(number), title: changeTitle(title) }));
+}
+
+function pullNode(pull: z.infer<typeof historyPull>): HistoryNode {
+  const { head, base, user, created_at: date, number, title, state, merged_at: mergedAt } = pull;
+  assert.ok(OBJECT_ID.test(head.sha) && OBJECT_ID.test(base.sha));
+  assert.ok(Number.isFinite(Date.parse(date)));
+  const baseBranch = safeBranch(base.ref) ? base.ref : undefined;
+  const headBranch = safeBranch(head.ref) ? head.ref : undefined;
+  const branches = [...new Set([baseBranch, headBranch].filter(branch => branch !== undefined))];
+  return { kind: 'pr', ref: String(number), title: changeTitle(title), author: safeAuthor(user?.login ?? ''),
+    date, head: head.sha, parents: [head.sha], branches, baseBranch, headBranch, state: mergedAt ? 'merged' : state };
+}
+
+export async function readPullHistoryPage(source: string, page: number) {
+  const slug = githubSlug(source);
+  assert.ok(Number.isSafeInteger(page) && page > 0);
+  const perPage = 25;
+  const endpoint = `repos/${slug}/pulls?state=all&sort=created&direction=desc&per_page=${perPage}&page=${page}`;
+  const pulls = await githubApi(endpoint, z.array(historyPull).max(perPage));
+  assert.ok(pulls.length <= perPage);
+  return { nodes: pulls.map(pullNode), next: pulls.length === perPage ? page + 1 : null };
 }
 
 function completeHunks(patch: string, expectedAdded: number, expectedRemoved: number): boolean {
@@ -100,46 +130,73 @@ function pullPatch(file: z.infer<typeof prFile>): string | null {
   return completeHunks(patch, file.additions, file.deletions) ? text : null;
 }
 
-export async function readPullRequest(source: string, ref: string): Promise<ChangeSnapshot> {
+async function readPullFiles<T extends z.infer<typeof prMetadata>>(source: string, ref: string, schema: z.ZodType<T>) {
   const slug = githubSlug(source);
   if (!/^[1-9][0-9]{0,9}$/.test(ref)) throw new DomainError('INVALID_PULL_REQUEST', 'Choose a positive GitHub pull request number.');
   const endpoint = `repos/${slug}/pulls/${ref}`;
-  const before = await githubApi(endpoint, prMetadata);
-  assert.equal(before.number, Number(ref));
+  const before = await githubApi(endpoint, schema);
+  if (before.number !== Number(ref)) throw new DomainError('GITHUB_READ_FAILED', 'GitHub returned the wrong pull request.');
   const description = before.body && sourceText(Buffer.from(before.body))?.trim().slice(0, 4000);
-  const result: ChangeSnapshot = { commit: before.head.sha, base: before.base.sha, description: description || undefined, title: changeTitle(before.title), diff: '', partial: false, files: [] };
   let files: z.infer<typeof prFile>[];
   try {
     files = await githubApi(`${endpoint}/files?per_page=${MAX_DIFF_FILES}`, z.array(prFile).max(MAX_DIFF_FILES));
   } catch (cause) {
-    if (cause instanceof DomainError) return { ...result, partial: true, coverageNote: 'Pull request metadata only. ' + cause.message };
-    throw cause;
+    if (!(cause instanceof DomainError)) throw cause;
+    return { metadata: before, description: description || undefined, files: [], partial: true,
+      coverageNote: 'Pull request metadata only. ' + cause.message };
   }
-  const after = await githubApi(endpoint, prMetadata);
+  const after = await githubApi(endpoint, schema);
   if (before.number !== after.number || before.head.sha !== after.head.sha || before.base.sha !== after.base.sha
     || before.changed_files !== after.changed_files) {
     throw new DomainError('GITHUB_PULL_REQUEST_MOVED', 'The pull request changed during the read. Refresh and try again.');
   }
-  result.partial = files.length !== before.changed_files;
-  const names = new Set<string>();
+  assert.equal(before.number, Number(ref));
+  assert.ok(OBJECT_ID.test(before.head.sha) && OBJECT_ID.test(before.base.sha));
+  return { metadata: before, description: description || undefined, ...collectPullPatches(files, before.changed_files) };
+}
+
+function collectPullPatches(files: z.infer<typeof prFile>[], total: number) {
+  let partial = files.length !== total;
+  const patches = new Map<string, string | null>();
   let bytes = 0;
   for (const file of files) {
-    if (names.has(file.filename)) {
-      result.partial = true;
+    if (patches.has(file.filename) || !isSourcePath(file.filename)) {
+      partial = true;
       continue;
     }
-    names.add(file.filename);
     const patch = pullPatch(file);
     const patchBytes = patch ? Buffer.byteLength(patch) : 0;
-    if (!patch || bytes + patchBytes > MAX_DIFF_BYTES) {
-      result.partial = true;
-      continue;
-    }
-    result.files.push(file.filename);
-    result.diff += patch;
-    bytes += patchBytes;
+    const readable = patch !== null && bytes + patchBytes <= MAX_DIFF_BYTES;
+    if (readable) bytes += patchBytes;
+    else partial = true;
+    patches.set(file.filename, readable ? patch : null);
   }
   assert.ok(bytes <= MAX_DIFF_BYTES);
-  assert.ok(result.files.length <= MAX_DIFF_FILES);
-  return result;
+  assert.ok(patches.size <= MAX_DIFF_FILES);
+  return { partial, files: [...patches].map(([path, patch]) => ({ path, patch })), coverageNote: undefined };
+}
+
+export async function readPullRequest(source: string, ref: string): Promise<ChangeSnapshot> {
+  return withoutChangePatches(await readPullRequestWithPatches(source, ref));
+}
+
+export async function readPullRequestWithPatches(source: string, ref: string): Promise<ChangeSnapshot & { patches: ChangePatch[] }> {
+  const { metadata, description, files, partial, coverageNote } = await readPullFiles(source, ref, prMetadata);
+  const patches = files.flatMap(file => file.patch === null ? [] : [{ path: file.path, patch: file.patch }]);
+  assert.ok(patches.length <= files.length);
+  assert.equal(String(metadata.number), ref);
+  return { commit: metadata.head.sha, base: metadata.base.sha, title: changeTitle(metadata.title), description,
+    files: patches.map(file => file.path), diff: patches.map(file => file.patch).join(''), patches, partial,
+    ...(coverageNote ? { coverageNote } : {}) };
+}
+
+export async function readPullDetail(source: string, ref: string): Promise<ChangeDetail> {
+  const { metadata, description, files, partial, coverageNote } = await readPullFiles(source, ref, detailPull);
+  const node = pullNode(metadata);
+  assert.equal(node.ref, ref);
+  assert.ok(files.length <= MAX_DIFF_FILES);
+  return { node, base: metadata.base.sha, description, files, partial,
+    fileCount: metadata.changed_files, additions: metadata.additions, deletions: metadata.deletions,
+    coverageNote: coverageNote ?? (partial ? 'Some file patches are unavailable. Totals are from GitHub.' : undefined),
+    mergedAt: metadata.merged_at ?? undefined, closedAt: metadata.closed_at ?? undefined };
 }

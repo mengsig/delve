@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import type { Depth, Workspace } from '../../shared/domain';
 import type { ChangeRef, LearnIntent } from '../../shared/repository';
 import { call } from './api';
-import { Atlas } from './atlas/Atlas';
+import { ChangeAtlas, type AtlasFocus } from './explorer/ChangeAtlas';
 import type { Screen } from './Header';
 import { atlasView, storeDepth, workspaceDepth, type AtlasView } from './preferences';
 import { Progress } from './progress/Progress';
@@ -37,6 +37,7 @@ function useStudyGraph(workspaceId: string, includeChangeLessons: boolean) {
 
 export function Study({ workspace, workspaces, screen, go, onSwitch, onSelect, intent, openedJob }: Props) {
   const [depth, setDepth] = useState(() => openedJob?.depth ?? workspaceDepth(workspace.id));
+  const [atlasFocus, setAtlasFocus] = useState<AtlasFocus>();
   const [view, setView] = useState(atlasView);
   const [lesson, setLesson] = useState<{ id: number; question?: string; fromChange?: boolean }>();
   const [changeSelection, setChangeSelection] = useState<{ change: ChangeRef; intentId?: string } | undefined>(() =>
@@ -53,6 +54,7 @@ export function Study({ workspace, workspaces, screen, go, onSwitch, onSelect, i
     setView(next);
   }
   function openLesson(id: number, question?: string, fromChange = false) {
+    setAtlasFocus(undefined);
     setLesson({ id, question, fromChange });
     go('lesson');
   }
@@ -84,9 +86,9 @@ export function Study({ workspace, workspaces, screen, go, onSwitch, onSelect, i
       screen === 'changes' ? <Changes {...common} selected={selected}
         openedJob={openedJob?.kind === 'change' ? openedJob : undefined}
         onSelect={selectChange} onLesson={id => openLesson(id, undefined, true)}
-        onFollowUp={id => openLesson(id, undefined, true)} /> :
+        onAtlas={id => { if (selected) setAtlasFocus({ id, change: selected }); go('atlas'); }} /> :
       screen === 'progress' ? <Progress {...common} workspaces={workspaces} onSelect={onSelect} onEvidence={refresh} /> :
-      <Atlas {...common} initialConceptId={lesson?.id} onView={changeView} onChanges={openChanges}
+      <ChangeAtlas {...common} focus={atlasFocus} onClearFocus={() => setAtlasFocus(undefined)} initialConceptId={lesson?.id} onView={changeView} onChanges={openChanges}
         onStartTopic={startTopic} onProgress={() => go('progress')} onSwitch={onSwitch} onAdd={() => go('setup')}
         onFirstRun={() => go('first-run')} onMap={() => go('baseline')} />}
   </div>;

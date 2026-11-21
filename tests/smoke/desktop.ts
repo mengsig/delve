@@ -1,5 +1,6 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { findExecutable } from '../../src/main/providers/which';
 import { makeShimDir, shimEnv } from '../../src/main/providers/test-helpers';
@@ -26,11 +27,12 @@ async function launch(userData: string, firstRun: boolean, fakeBin?: string, lin
   return electron.launch({ args: [resolve(__dirname, '../../out/main/index.js'), ...(link ? [link] : [])], env, timeout: 30_000 });
 }
 
-export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun: boolean; providerMode: string | undefined }>({
+export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun: boolean; fixtureGitHub: boolean; providerMode: string | undefined }>({
   tutorCli: [false, { option: true }],
   firstRun: [false, { option: true }],
+  fixtureGitHub: [false, { option: true }],
   providerMode: [undefined, { option: true }],
-  desktop: async ({ tutorCli, firstRun, providerMode }, use) => {
+  desktop: async ({ tutorCli, firstRun, fixtureGitHub, providerMode }, use) => {
     const directory = mkdtempSync(join(tmpdir(), 'delve-smoke-'));
     let fakeBin: string | undefined;
     let app: ElectronApplication | undefined;
@@ -42,6 +44,13 @@ export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun:
     }
     try {
       fakeBin = tutorCli ? await makeShimDir() : undefined;
+      if (fixtureGitHub) {
+        if (!fakeBin || process.platform === 'win32') throw new Error('The GitHub smoke fixture requires a POSIX shim directory.');
+        const script = pathToFileURL(resolve(__dirname, '../fixtures/fake-cli/github.mjs')).href;
+        const fixture = join(directory, 'github.json');
+        writeFileSync(join(fakeBin, 'gh'), '#!' + process.execPath + '\nprocess.argv.splice(2, 0, ' + JSON.stringify(fixture)
+          + ');import(' + JSON.stringify(script) + ');\n', { mode: 0o755 });
+      }
       const page = await start();
       if (!firstRun) await page.getByRole('button', { name: 'Explore demo atlas' }).click();
       await use({
