@@ -49,6 +49,7 @@ export function DemoChanges(props: ReaderProps & { onAdd: () => void }) {
         <span className="eyebrow">Change footprint</span><h3>{fence.title}</h3>
         <p>Review the repository-specific write rule that now rejects an expired claim.</p>
         <div className="impact"><span className="plate">Illustrative base → head</span><div className="mono mini">{demoBrief.base} → {graph.snapshot}</div></div>
+        <div className="impact"><button className="primary-btn" onClick={() => onLesson(fence.id)}>Explore this concept →</button></div>
       </aside>
     </div>
   </>;

@@ -43,6 +43,24 @@ async function capture(page: Page, locator: Locator, name: string) {
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
 }
 
+async function completeNextLesson(page: Page, directory: string) {
+  await page.getByRole('button', { name: 'Start lesson', exact: true }).click();
+  await expect(page.getByRole('heading', { name: openingCheck.prompt })).toBeVisible();
+  reply(directory, [explanation, secondCheck], true, 'That is right.');
+  await page.getByRole('button', { name: 'The run', exact: true }).click();
+  await expect(page.getByRole('heading', { name: secondCheck.prompt })).toBeVisible();
+  reply(directory, [{ type: 'prose', heading: 'Exactly', text: 'The task states the goal; the agents work toward it.' }], true, 'That is right.');
+  await page.getByRole('textbox', { name: secondCheck.prompt }).fill('The task is the objective; agents do the work.');
+  await page.getByRole('button', { name: 'Submit answer' }).click();
+  const complete = page.getByRole('region', { name: 'Lesson complete' });
+  await expect(complete).toContainText('You understand this concept');
+  await capture(page, complete, 'completion-after');
+  await withinBudget(page, 'Go back to the prerequisite lesson', 1, async () => {
+    await complete.getByRole('button', { name: 'Go back to Agents, tasks, and runs' }).click();
+    await expect(page.getByRole('heading', { name: 'Agents, tasks, and runs', level: 1 })).toBeVisible();
+  });
+}
+
 test('guides a learner from a misconception to completion and a one-click next lesson', async ({ desktop }) => {
   const { page, directory } = desktop;
   mkdirSync('.archon/evidence', { recursive: true });
@@ -89,10 +107,12 @@ test('guides a learner from a misconception to completion and a one-click next l
   const complete = page.getByRole('region', { name: 'Lesson complete' });
   await expect(complete).toContainText('You understand this concept');
   await expect(complete).toContainText('Permissions and isolation');
+  await expect(complete.getByRole('button', { name: /^Go back to / })).toHaveCount(0);
   await capture(page, complete, 'mastery-complete');
   reply(directory, [explanation, openingCheck]);
   await withinBudget(page, 'Move to the next lesson', 1, async () => {
     await complete.getByRole('button', { name: 'Next lesson: Permissions and isolation' }).click();
     await expect(page.getByRole('heading', { name: 'Permissions and isolation', level: 1 })).toBeVisible();
   });
+  await completeNextLesson(page, directory);
 });

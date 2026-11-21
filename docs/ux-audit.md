@@ -38,6 +38,8 @@ A click, Enter to submit or a keyboard shortcut counts as one action. Typing the
 | Accept an incoming learn link | 1 decision → 1 | Workspace and source remain visible before import. Acceptance alone never sends source to a tutor. |
 | Recover from a failure | Retry or inspect process text → retry, edit, sign in or change provider | Unknown provider exits show a learner-facing recovery action. A moved change must be reviewed again. Already-saved lessons remain readable offline. |
 
+The mockup's separate Atlas destination remains available through the persistent Atlas action. The change page's Teach action opens the lesson directly in one click; the footprint also opens its concept lesson directly. In repository change briefs, mapped lines and concepts still open the corresponding Atlas focus.
+
 ## Verification
 
 The map retains a small, muted React Flow attribution in both themes. Delve and React Flow are MIT-licensed; [React Flow's attribution policy](https://reactflow.dev/remove-attribution) asks projects that remove the badge to subscribe. Keeping it acknowledges the library while fitting the Contour map, unlike the unbadged mockup.
