@@ -131,3 +131,29 @@
 .reader-recommendation h4, .impact h4 { margin: 6px 0; }
 
 .reader-comparison .note + .note { margin-top: 0; }
+
+.reader-start, .reader-turn-status {
+  margin-block: 10px;
+}
+.reader-turn-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.reader-preview .actions {
+  flex-wrap: wrap;
+}
+.exact-tutor-request summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.exact-tutor-request pre {
+  max-height: 32vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.demo-change-action { margin-block: 0 16px; }
+.reader-thread :is(.chapter > p, .reader-message > p) { max-inline-size: 72ch; font-size: 1.025rem; line-height: 1.65; }

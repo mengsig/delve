@@ -68,7 +68,8 @@ export function parseClaudeAuth(res: ExecResult): AuthState {
   try {
     parsed = JSON.parse(res.stdout);
   } catch (cause) {
-    return { state: 'unknown', detail: `could not parse sign-in output: ${(cause as Error).message}` };
+    if (!(cause instanceof SyntaxError)) throw cause;
+    return { state: 'unknown', detail: 'The sign-in response was unreadable. Check your login in a terminal and try again.' };
   }
   if (typeof parsed !== 'object' || parsed === null) return { state: 'unknown', detail: 'sign-in output is not a JSON object' };
   const info = parsed as ClaudeAuthInfo;

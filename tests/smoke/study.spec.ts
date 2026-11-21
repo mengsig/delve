@@ -8,8 +8,7 @@ for (const [workspace, marker, label] of [
 ] as const) {
   test(`selects ${workspace} Terrain concepts by clicking the marker and label`, async ({ desktop: { page } }) => {
     if (workspace !== 'Archon') {
-      await page.getByRole('button', { name: /^Switch workspace,/ }).click();
-      await page.getByRole('option', { name: new RegExp(workspace) }).click();
+      await page.getByRole('group', { name: 'Your workspaces' }).getByRole('button', { name: new RegExp(workspace) }).click();
     }
     const terrain = page.getByRole('region', { name: `${workspace} terrain` });
     const inspector = page.getByRole('region', { name: 'Selected concept' }).locator('[aria-live]');
@@ -90,7 +89,7 @@ test('lesson depth, local conversations and linked change concepts work offline'
   await expect(page.getByRole('log')).toContainText('How does the result writer check ownership?');
   await page.getByRole('navigation', { name: 'Application' }).getByRole('button', { name: 'Changes' }).click();
   await expect(page.getByRole('heading', { name: 'Reject late worker results.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Explore this concept →' }).click();
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
   await expect(page.getByRole('heading', { name: 'Write fencing', level: 1 })).toBeVisible();
 });
 

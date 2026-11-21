@@ -10,7 +10,7 @@ import './timeline.css';
 interface TimelineProps {
   workspaceId: string;
   selected?: ChangeRef;
-  onSelect: (node: ChangeRef) => void;
+  onSelect: (node: ChangeRef, title?: string) => void;
   onOpen?: () => void;
   onRefresh?: () => void;
 }
@@ -84,7 +84,8 @@ function TimelineFeedback({ history, filters, onRefresh }: { history: ReturnType
   const isFiltered = Boolean(filters.author || filters.branch || filters.search || filters.kind);
   return <>
     {empty && !pullStatusExplained && <p className="timeline-message" role="status">
-      {isFiltered ? 'No changes match these filters.' : 'No commits or pull requests are available.'}
+      {isFiltered ? 'No changes match these filters. Clear the filters to see more history.'
+        : 'No commits or pull requests are available. After a change is committed, refresh history.'}
     </p>}
     {page && page.nodes.length === 0 && page.next !== null && !loading && !error &&
       <p className="timeline-message" role="status">No matches in the loaded history.</p>}
@@ -145,10 +146,10 @@ function WorkspaceTimeline(props: TimelineProps) {
     branch: draft.branch || undefined,
     kind: draft.kind === 'pr' || draft.kind === 'commit' ? draft.kind : undefined,
   };
-  const initialNode = useCallback(({ kind, ref }: HistoryNode) => {
+  const initialNode = useCallback(({ kind, ref, title }: HistoryNode) => {
     if (seeded.current) return;
     seeded.current = true;
-    if (!selected) onSelect({ kind, ref });
+    if (!selected) onSelect({ kind, ref }, title);
   }, [onSelect, selected]);
 
   return <section className="timeline" aria-labelledby="change-timeline-label">

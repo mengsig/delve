@@ -3,16 +3,19 @@
 Learn the codebase your agents are building. A local-first, open-source desktop app (Electron) that keeps developers in touch with a repository: learn it from scratch, then follow what changed and why, at three depths.
 
 Open the Atlas to explore prerequisites on a terrain map or switch to the Folio relationship list.
-On first launch, choose a local repository, GitHub repository or topic, your starting depth and a
-signed-in CLI. **Explore demo atlas** opens the offline Archon, Relay and Photography workspaces.
-Use **+ Add** for more workspaces.
-Progress shows the evidence behind each reading depth and where to reset a shared record.
+On first launch, type a topic or paste a repository into the focused field. Medium is the starting
+depth. Use **Advanced options** to change it or choose a different tutor. **Explore demo atlas**
+opens the offline Archon, Relay and Photography workspaces. Use **+ Add** for more workspaces.
+From the Atlas, use the workspace buttons to switch directly or **Continue** to reopen your last
+lesson, environment or change, including work from another workspace.
 
 Open a concept at High, Medium or Low depth to read its lesson and ask the tutor a question.
-In an empty topic atlas, choose **Start a topic lesson**. Before the first live request, review
-the prompt, model and byte count. The tutor receives concept summaries, selected-depth evidence
-and recent conversation from the local graph. No repository files are attached. You can preview
-individual questions, cancel a turn and retry. The optional check updates local evidence, and the
+For a new topic, the source form shows the tutor, model and request size. **Allow once and start
+lesson** opens the reader as the tutor prepares the first block. **Always allow for this workspace**
+also permits future tutor requests with that provider. Expand **Exact request** to see the prompt.
+The tutor receives concept summaries, selected-depth evidence and recent conversation from the local
+graph. No repository files are attached to topic requests. You can inspect individual questions,
+cancel a turn, or keep exploring and reopen a completed response from its notification. The optional check updates local evidence, and the
 tutor explains its next suggestion. Reset a check in **Progress** at its recorded workspace.
 
 ## Learn a repository
@@ -26,17 +29,18 @@ pull requests. Delve uses read-only operations with that login.
 
 Select the files to include and review their names, sizes, revision and exact provider request.
 **Add and build map** attaches the repository and starts generation with one confirmation.
-The progress panel stays visible as you explore another workspace. Use **Open map** when the
-concepts, prerequisites and suggested first step are ready. Demonstrated portable concepts carry their evidence across repositories. You can add another
-slice from the Atlas. Each slice contains at most 128 text files, 128 KiB per file and 1 MiB total.
+The progress panel stays visible as you explore another workspace. The Atlas fills in when the map is ready. If you have left the Atlas, **Open map** takes you back.
+Demonstrated portable concepts carry their evidence across repositories. Choose **Map more files** to
+expand a map. Each slice contains at most 128 text files, 128 KiB per file and 1 MiB total.
 
 In **Changes**, select a commit or pull request from the branch timeline. Search by title or
 reference, narrow the list by branch, author or change type, or switch to **Folio** for its list
 equivalent. Use the arrow keys to move, Enter to open and Esc to return to history.
 
 **Files changed** shows the first-parent diff for a commit or the GitHub diff for a pull request.
-Partial coverage identifies unavailable patches. **Teach me this change** opens the saved lesson
-or prepares a source review for a new one. **Explanation** includes the recommendation and its
+Partial coverage identifies unavailable patches. The change page prepares a source preview and shows the files, size and tutor.
+**Teach me this change** approves the displayed diff and opens the new lesson, or reopens the saved
+lesson immediately. You can remember or revoke source approvals separately for maps and changes. **Explanation** includes the recommendation and its
 reason. Follow a linked line or a **Concepts** entry to the Atlas. A concept introduced by an
 unmerged PR can be viewed there temporarily while the reviewed map stays separate.
 Saved briefs remain available offline. **Refresh history** checks the source again.
@@ -49,6 +53,7 @@ or preparing a request requires a separate decision from sending material to the
 
 The demo tutor runs entirely offline. The Archon demo includes an illustrative brief for PR #184.
 
+- [Learning journeys and measured action counts](docs/ux-audit.md)
 - Product direction: [`docs/product.md`](docs/product.md)
 - Binding requirements (R1–R18): [`docs/requirements.md`](docs/requirements.md)
 - Approved design: [`docs/design/proposal-v1.html`](docs/design/proposal-v1.html) (open in a browser)
@@ -83,8 +88,9 @@ before launching Delve to request a specific model; this takes precedence over C
 Delve reads only the Codex model as data and runs both CLIs with isolation flags, so they do not
 load user or project settings, tools, or plugins.
 
-Ctrl+K (⌘K on macOS) or the "Switch workspace" button opens the workspace switcher: type to filter,
-use the arrow keys, press Enter to switch and Escape to close.
+Ctrl+K (⌘K on macOS) or the **Delve** button opens the command palette. Search views, workspaces
+and recent lessons. Use the arrow keys and Enter to open a result, or Escape to return.
+Alt+Left returns to the previous page.
 
 ## Develop
 

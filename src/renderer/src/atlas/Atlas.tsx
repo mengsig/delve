@@ -1,7 +1,8 @@
 import type { ChangeRef } from '../../../shared/repository';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { Depth, Workspace } from '../../../shared/domain';
 import type { WorkspaceGraph } from '../../../shared/graph';
+import { jobInProgress, mapJobKey, useMapJobs } from '../repository/MapJobs';
 import { ContourMap } from './ContourMap';
 import { demoPlate } from './demoAtlas';
 import { FieldGuide } from './FieldGuide';
@@ -20,14 +21,14 @@ export interface AtlasProps {
   onLesson: (id: number) => void;
   onChanges: (change?: ChangeRef) => void;
   onProgress: () => void;
-  onAdd: () => void;
-  onFirstRun: () => void;
+  workspaceBar: ReactNode;
+  continueActivity: ReactNode;
   onMap: () => void;
   onStartTopic: () => Promise<void>;
   onSwitch: () => void;
 }
 
-function Topline({ workspace, name, blurb, onSwitch }: Pick<AtlasProps, 'workspace' | 'onSwitch'> & {
+function Topline({ workspace, name, blurb, continueActivity }: Pick<AtlasProps, 'workspace' | 'continueActivity'> & {
   name: string; blurb: string;
 }) {
   const kind = workspace.kind === 'topic' ? 'Topic' : 'Repository';
@@ -35,12 +36,7 @@ function Topline({ workspace, name, blurb, onSwitch }: Pick<AtlasProps, 'workspa
     <div><span className="eyebrow">Personal atlas &nbsp; / &nbsp; {name}</span>
       <h1>{kind} atlas<span className="atlas-period">.</span></h1><p>{blurb}</p>
     </div>
-    <div className="scope atlas-scope">
-      <label htmlFor="atlas-workspace">Workspace</label>
-      <button id="atlas-workspace" aria-label={'Switch workspace, ' + workspace.name} aria-haspopup="dialog" onClick={onSwitch}>
-        {workspace.name} · {kind}<span aria-hidden="true">⌄</span>
-      </button>
-    </div>
+    {continueActivity}
   </header>;
 }
 
@@ -69,12 +65,25 @@ function StartTopic({ start }: { start: () => Promise<void> }) {
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   }
-  return <><button className="primary-btn" disabled={busy} onClick={() => void open()}>Start a topic lesson →</button>
+  return <><button className="primary-btn" disabled={busy} onClick={() => void open()}>{busy ? 'Opening lesson…' : 'Start a topic lesson →'}</button>
     {error && <p role="alert">{error}</p>}</>;
 }
 
+function EmptyAtlas({ workspace, onStartTopic, onMap }: Pick<AtlasProps, 'workspace' | 'onStartTopic' | 'onMap'>) {
+  const job = useMapJobs().jobs.get(mapJobKey(workspace.id));
+  if (jobInProgress(job)) return <section className="sheet atlas-empty atlas-building">
+    <h3>Your map is on its way</h3><p>The concepts will appear here when they’re ready. You can explore another workspace while you wait.</p>
+  </section>;
+  const topic = workspace.kind === 'topic';
+  return <section className="sheet atlas-empty">
+    <h3>No concepts mapped yet</h3>
+    <p>{topic ? 'Start a lesson to add the first concept.' : 'Choose repository files to build your first map.'}</p>
+    {topic ? <StartTopic start={onStartTopic} /> : <button className="primary-btn" onClick={onMap}>Map this repository →</button>}
+  </section>;
+}
+
 function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel }) {
-  const { workspace, graph, depth, view, onLesson, onSwitch, onChanges } = props;
+  const { workspace, graph, depth, view, onLesson, onChanges } = props;
   const demo = useMemo(() => demoPlate(graph, model), [graph, model]);
   const suggestion = graph.suggestions?.[depth];
   const suggested = suggestion && model.byId.get(suggestion.conceptId);
@@ -89,10 +98,10 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
     ? 'Explore the ideas in ' + name + ' and the connections between them.'
     : 'Follow the concepts and dependencies in ' + name + '.');
   return <div className={'atlas ' + view}>
-    <Topline workspace={workspace} name={name} blurb={blurb} onSwitch={onSwitch} />
-    {graph.demo && <button className="repository-setup-link" onClick={props.onFirstRun}>Set up your workspace →</button>}
+    <Topline workspace={workspace} name={name} blurb={blurb} continueActivity={props.continueActivity} />
+    {props.workspaceBar}
     {!graph.demo && workspace.kind !== 'topic' && selected &&
-      <button className="repository-setup-link" onClick={props.onMap}>{graph.baselineCommit ? 'Map another repository slice →' : 'Map this repository →'}</button>}
+      <button className="repository-setup-link" onClick={props.onMap}>{graph.baselineCommit ? 'Map more files →' : 'Map this repository →'}</button>}
     {selected && target ? <div className="split"><div>
       {view === 'contour'
         ? <ContourMap model={model} selected={selected} recommendedId={recommendedId} workspaceId={workspace.id} depth={depth}
@@ -101,15 +110,8 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
       <Inspector selected={selected} status={statusText(selected, workspace.id, selected.id === demo?.changed?.id)}
         onSelect={setSelection} onLesson={onLesson} />
     </div><FieldGuide suggestedChange={graph.changeSuggestions?.[depth]} model={model} target={target} reason={adaptive && suggestion?.reason} workspace={workspace} demo={demo} onLesson={onLesson} onChanges={onChanges} /></div>
-      : <section className="sheet atlas-empty"><h3>No concepts mapped yet</h3>
-        <p>This workspace has no saved concepts to explore.</p>
-        <div className="actions">{workspace.kind === 'topic'
-          ? <StartTopic start={props.onStartTopic} />
-          : <button className="primary-btn" onClick={props.onMap}>Map this repository →</button>}
-          <button onClick={onSwitch}>Switch workspace</button>
-          <button onClick={props.onAdd}>Add workspace</button></div>
-      </section>}
-    <AtlasFooter model={model} depth={depth} onProgress={props.onProgress} view={view} onView={props.onView} />
+      : <EmptyAtlas {...props} />}
+    {selected && <AtlasFooter model={model} depth={depth} onProgress={props.onProgress} view={view} onView={props.onView} />}
   </div>;
 }
 

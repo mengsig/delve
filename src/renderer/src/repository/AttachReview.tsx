@@ -1,49 +1,11 @@
 import { modelLabel } from '../modelLabel';
-import { useState } from 'react';
 import type { Depth, ProviderId } from '../../../shared/domain';
-import type { RepositoryFile, RepoPreview } from '../../../shared/repository';
+import type { RepoPreview } from '../../../shared/repository';
 import { PROVIDER_LABELS } from '../preferences';
-import { fitsFileSlice, MAX_BYTES, MAX_FILE_BYTES, MAX_FILES } from './fileSelection';
+import { RepositoryFiles } from './RepositoryFiles';
 import type { useAttachInventory, useAttachPreview } from './AttachReads';
+import { AlwaysAllowSource } from './SourceApproval';
 import './repository.css';
-
-function AttachFiles({ files, paths, onChange }: {
-  files: RepositoryFile[]; paths: Set<string>; onChange: (paths: Set<string>) => void;
-}) {
-  const [filter, setFilter] = useState('');
-  const query = filter.trim().toLowerCase();
-  const shown = files.filter(file => file.path.toLowerCase().includes(query));
-  const bytes = files.reduce((total, file) => paths.has(file.path) ? total + file.bytes : total, 0);
-
-  function toggle(file: RepositoryFile) {
-    const next = new Set(paths);
-    if (!next.delete(file.path)) {
-      if (!fitsFileSlice(file, paths.size, bytes)) return;
-      next.add(file.path);
-    }
-    onChange(next);
-  }
-
-  return <details className="attach-files">
-    <summary>Edit files ({paths.size} selected)</summary>
-    <div className="formrow">
-      <label htmlFor="attach-file-filter">Filter repository files</label>
-      <input id="attach-file-filter" value={filter} onChange={event => setFilter(event.target.value)}
-        onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }} />
-    </div>
-    <p className="smallprint" role="status">
-      {paths.size} of {MAX_FILES} files · {bytes.toLocaleString()} of {MAX_BYTES.toLocaleString()} bytes.
-      Each file can be up to {MAX_FILE_BYTES.toLocaleString()} bytes.
-    </p>
-    {shown.length ? <ul className="repository-files" aria-label="Repository files">
-      {shown.map(file => <li key={file.path}><label>
-        <input type="checkbox" aria-label={file.path} checked={paths.has(file.path)}
-          disabled={!paths.has(file.path) && !fitsFileSlice(file, paths.size, bytes)} onChange={() => toggle(file)} />
-        <code>{file.path}</code><small>{file.bytes.toLocaleString()} bytes</small>
-      </label></li>)}
-    </ul> : <p role="status">No files match this filter.</p>}
-  </details>;
-}
 
 function ExactRequest({ preview, provider, depth }: { preview: RepoPreview; provider: ProviderId; depth: Depth }) {
   return <section className="repository-review attach-preview" aria-labelledby="attach-preview-title">
@@ -69,9 +31,11 @@ interface Props {
   onFiles: (paths: Set<string>) => void;
   depth: Depth;
   provider: ProviderId;
+  allowed?: boolean;
+  onAlwaysAllow?: (allowed: boolean) => void;
 }
 
-export function AttachReview({ inventory, request, selected, onFiles, depth, provider }: Props) {
+export function AttachReview({ inventory, request, selected, onFiles, depth, provider, allowed, onAlwaysAllow }: Props) {
   const snapshot = inventory.snapshot?.inventory;
   if (inventory.pending) return <p role="status">Reading the repository file list…</p>;
   if (inventory.error) return <div className="attach-feedback">
@@ -83,7 +47,7 @@ export function AttachReview({ inventory, request, selected, onFiles, depth, pro
   if (!snapshot.files.length) return <p role="status">No eligible files in this snapshot. Commit source files to build a map, or add the repository as it is.</p>;
 
   return <>
-    <AttachFiles key={inventory.snapshot?.workspace.id} files={snapshot.files} paths={selected} onChange={onFiles} />
+    <RepositoryFiles key={inventory.snapshot?.workspace.id} files={snapshot.files} paths={selected} onChange={onFiles} />
     {!selected.size && <p role="status">Select at least one file to prepare a map request.</p>}
     {request.pending && <p role="status">Preparing the exact provider request…</p>}
     {request.error && <div className="attach-feedback">
@@ -94,6 +58,9 @@ export function AttachReview({ inventory, request, selected, onFiles, depth, pro
         <button type="button" disabled={!inventory.canRetry} onClick={inventory.retry}>Refresh repository files</button>
       </div>
     </div>}
-    {request.preview && <ExactRequest preview={request.preview} provider={provider} depth={depth} />}
+    {request.preview && <>
+      <ExactRequest preview={request.preview} provider={provider} depth={depth} />
+      {onAlwaysAllow && <AlwaysAllowSource provider={provider} category="map" checked={allowed ?? false} onChange={onAlwaysAllow} />}
+    </>}
   </>;
 }

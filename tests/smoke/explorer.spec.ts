@@ -1,20 +1,28 @@
 import { expect, type Page, type TestInfo } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DelveApi } from '../../src/shared/ipc';
 import { test } from './desktop';
+import { withinBudget } from './action-budget';
 import { baseline, concept, createExplorerFixture, newConcept, prTitle, writeExplanation } from './explorer-fixture';
 
 test.use({ tutorCli: true, firstRun: true, fixtureGitHub: true });
 test.skip(process.platform === 'win32', 'The GitHub CLI fixture uses a POSIX executable shim.');
 
-async function mapFixture(page: Page, path: string, directory: string) {
+async function mapFixture(page: Page, path: string, directory: string, fromAtlas = false) {
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({ ...baseline, schema: 'delve.map/1' }));
-  await page.locator('#source-input').fill(path);
-  await page.getByRole('button', { name: 'Add and build map' }).click();
-  await page.getByRole('button', { name: 'Open map', exact: true }).click();
-  await expect(page.getByLabel('Field guide')).toContainText(concept.title);
+  if (fromAtlas) await page.getByRole('button', { name: 'Explore demo atlas' }).click();
+  await withinBudget(page, 'Paste a repository and open its map', fromAtlas ? 2 : 1, async () => {
+    if (fromAtlas) await page.getByRole('button', { name: '+ Add', exact: true }).click();
+    await expect(page.locator('#source-input')).toBeFocused();
+    await page.keyboard.insertText(path);
+    const build = page.getByRole('button', { name: 'Add and build map' });
+    await expect(build).toBeInViewport({ ratio: 1 });
+    await build.click();
+    await expect(page.getByLabel('Field guide')).toContainText(concept.title);
+  });
+  await page.getByRole('region', { name: 'Repository generation' }).getByRole('button', { name: 'Dismiss', exact: true }).click();
   await page.getByRole('button', { name: 'Changes', exact: true }).click();
 }
 
@@ -43,12 +51,14 @@ async function workspaceId(page: Page) {
 }
 
 async function verifyCommit(page: Page) {
-  await page.getByRole('option', { name: /Retry a failed dispatch/ }).click();
   const selected = page.getByRole('region', { name: 'Selected change' });
-  await expect(selected.getByRole('heading', { name: 'Retry a failed dispatch' })).toBeVisible();
+  await withinBudget(page, 'Open a commit from history in one click', 1, async () => {
+    await page.getByRole('option', { name: /Retry a failed dispatch/ }).click();
+    await expect(selected.getByRole('heading', { name: 'Retry a failed dispatch' })).toBeVisible();
+  });
   await expect(await openTab(page, 'Explanation')).toContainText('What changed and why');
   await expect(await openTab(page, 'Files changed')).toContainText('+  const attempts = 3;');
-  await expect(await openTab(page, 'Concepts')).toContainText('Generate the explanation');
+  await expect(await openTab(page, 'Concepts')).toContainText('Teach me this change');
   await page.keyboard.press('Escape');
   await expect(page.locator('#change-timeline')).toBeFocused();
   await page.keyboard.press('ArrowDown');
@@ -57,24 +67,47 @@ async function verifyCommit(page: Page) {
   await expect(selected.getByRole('heading', { name: 'Retry a failed dispatch' })).toHaveCount(0);
 }
 
+async function teachPullRequest(page: Page, directory: string) {
+  const selected = page.getByRole('region', { name: 'Selected change' });
+  unlinkSync(join(directory, 'request.json'));
+  writeExplanation(directory);
+  const review = selected.getByRole('region', { name: 'Review provider request' });
+  await withinBudget(page, 'Inspect the exact pull request source in one click', 1, async () => {
+    await review.getByText('Exact request', { exact: true }).click();
+    await expect(review.getByLabel('Exact provider request')).toContainText('+  const attempts = 3;');
+  });
+  await review.getByRole('checkbox', { name: /Always allow change lesson requests/ }).check();
+  expect(existsSync(join(directory, 'request.json'))).toBe(false);
+  await withinBudget(page, 'Approve and open a new pull request lesson in one click', 1, async () => {
+    await selected.getByRole('button', { name: 'Teach me this change' }).click();
+    await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+  });
+}
+
 test('opens both change types and all tabs, teaches a PR and follows a mapped line to the Atlas', async ({ desktop }, info) => {
   const { directory, page } = desktop;
-  const { path } = createExplorerFixture(directory);
-  await page.setViewportSize({ width: 1360, height: 1000 });
-  await mapFixture(page, path, directory);
-  await page.getByRole('option', { name: new RegExp(prTitle) }).click();
+  createExplorerFixture(directory);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mapFixture(page, 'https://github.com/contour/dispatch', directory, true);
   const selected = page.getByRole('region', { name: 'Selected change' });
-  await expect(selected.getByRole('heading', { name: prTitle })).toBeVisible();
+  await page.getByRole('option', { name: /Merge delivery retries/ }).click();
+  await expect(selected.getByRole('heading', { name: 'Merge delivery retries' })).toBeVisible();
+  await withinBudget(page, 'Open a GitHub pull request from history in one click', 1, async () => {
+    await page.getByRole('option', { name: new RegExp(prTitle) }).click();
+    await expect(selected.getByRole('heading', { name: prTitle })).toBeVisible();
+  });
   await expect(selected).toContainText('mayachen');
   await expect(selected).toContainText('Merged', { ignoreCase: true });
   await expect(await openTab(page, 'Explanation')).toContainText('Delivery workers');
   await expect(await openTab(page, 'Files changed')).toContainText('Partial coverage');
-  await expect(await openTab(page, 'Concepts')).toContainText('Generate the explanation');
-  writeExplanation(directory);
-  await selected.getByRole('button', { name: 'Teach me this change' }).click();
-  await expect(page.getByRole('heading', { name: 'Learn this change' })).toBeVisible();
-  await page.getByRole('button', { name: 'Approve and explain' }).click();
-  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+  await expect(await openTab(page, 'Concepts')).toContainText('Teach me this change');
+  await page.getByRole('button', { name: 'Atlas', exact: true }).click();
+  await withinBudget(page, 'Continue the selected pull request from Atlas', 1, async () => {
+    await page.getByRole('button', { name: new RegExp('Continue change ' + prTitle) }).click();
+    await expect(selected.getByRole('heading', { name: prTitle })).toBeVisible();
+  });
+  await expect(selected.getByRole('button', { name: 'Teach me this change' })).toBeInViewport({ ratio: 1 });
+  await teachPullRequest(page, directory);
   await page.getByRole('button', { name: '← Back to change brief' }).click();
   await expect(await openTab(page, 'Explanation')).toContainText('A short network interruption');
   const job = page.getByRole('region', { name: 'Repository generation' });
@@ -101,9 +134,28 @@ test('opens both change types and all tabs, teaches a PR and follows a mapped li
   const again = await desktop.restart('delve://learn?workspace=' + await workspaceId(page) + '&pr=42');
   await again.getByRole('button', { name: 'Accept and open' }).click();
   await expect(again.getByRole('heading', { name: prTitle, exact: true })).toBeVisible();
-  await again.getByRole('button', { name: 'Teach me this change' }).click();
-  await expect(again.getByRole('article', { name: 'Lesson and conversation' })).toBeVisible();
+  await verifyRememberedApproval(again, directory);
+  await withinBudget(again, 'Open the saved pull request lesson in one click', 1, async () => {
+    await again.getByRole('button', { name: 'Teach me this change' }).click();
+    await expect(again.getByRole('article', { name: 'Lesson and conversation' })).toBeVisible();
+  });
 });
+
+async function verifyRememberedApproval(page: Page, directory: string) {
+  const request = join(directory, 'request.json');
+  const sent = readFileSync(request, 'utf8');
+  const depth = page.getByLabel('Reading depth');
+  await depth.selectOption('high');
+  const selected = page.getByRole('region', { name: 'Selected change' });
+  const preview = selected.getByText('Preview diff request', { exact: true });
+  await expect(preview).toBeVisible();
+  await preview.click();
+  await expect(selected.getByLabel('Exact provider request')).toContainText('"depth":"high"');
+  await selected.getByRole('button', { name: 'Revoke always allow' }).click();
+  await expect(selected.getByRole('checkbox', { name: /Always allow change lesson requests/ })).not.toBeChecked();
+  expect(readFileSync(request, 'utf8')).toBe(sent);
+  await depth.selectOption('medium');
+}
 
 test('keeps commit history usable when GitHub has no PRs or needs sign-in', async ({ desktop }) => {
   const { directory, page } = desktop;
@@ -138,8 +190,9 @@ test('reloads a moved PR and keeps the saved lesson readable offline', async ({ 
   await mapFixture(page, path, directory);
   await page.getByRole('option', { name: new RegExp(prTitle) }).click();
   writeExplanation(directory);
-  await page.getByRole('button', { name: 'Preview diff request' }).click();
-  await page.getByRole('button', { name: 'Approve and explain' }).click();
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '← Back to change brief' }).click();
   await expect(page.getByText('Saved brief · available offline')).toBeVisible();
   const fixture = join(directory, 'github.json');
   const response = JSON.parse(readFileSync(fixture, 'utf8'));

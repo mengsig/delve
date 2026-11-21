@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { extractCodexPayload } from './output';
+import { checkExit, extractClaudePayload, extractCodexPayload } from './output';
 import { makeTempDir } from './test-helpers';
 
 describe('extractCodexPayload', () => {
@@ -21,4 +21,14 @@ describe('extractCodexPayload', () => {
     const file = path.join(await makeTempDir('last'), 'missing.json');
     await expect(extractCodexPayload(file, 1024)).rejects.toMatchObject({ code: 'PROVIDER_INVALID_OUTPUT' });
   });
+});
+
+it('keeps unknown CLI diagnostics out of learner-facing failures', () => {
+  const stderr = 'private process output';
+  const failed = () => checkExit('codex', { code: 1, stdout: '', stderr });
+  expect(failed).toThrow(/Try again/);
+  expect(failed).not.toThrow(stderr);
+  const envelope = JSON.stringify({ is_error: true, result: stderr });
+  expect(() => extractClaudePayload({ code: 0, stdout: envelope, stderr })).toThrow(/choose another provider/);
+  expect(() => extractClaudePayload({ code: 0, stdout: envelope, stderr })).not.toThrow(stderr);
 });

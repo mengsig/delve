@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { PROVIDER_IDS } from '../../shared/domain';
+import { DEPTHS, PROVIDER_IDS } from '../../shared/domain';
 import { CHECK_ANSWER_LIMIT } from '../../shared/lesson-blocks';
 import type { Db } from '../db/connection';
 import { address } from '../reader/ipc';
-import { prepareTurn } from './prompt';
+import { prepareTurn, previewNewTopic } from './prompt';
 import type { TutorSession } from './session';
 import type { IpcHandlers } from '../ipc';
 
@@ -15,6 +15,7 @@ const request = address.extend({ provider: z.enum([...PROVIDER_IDS, 'demo']), in
   z.strictObject({ kind: z.literal('answer'), revision: digest, answer }),
 ]) });
 export const tutorSchemas = {
+  'tutor:preview-topic': z.strictObject({ title: z.string().trim().min(1).max(120), depth: z.enum(DEPTHS), provider: z.enum(PROVIDER_IDS) }),
   'tutor:preview': request,
   'tutor:run': request.extend({ token: digest, requestId: z.uuid() }),
   'tutor:cancel': z.strictObject({ requestId: z.uuid() }),
@@ -22,6 +23,7 @@ export const tutorSchemas = {
 
 export function tutorHandlers(db: Db, session: TutorSession): Pick<IpcHandlers, keyof typeof tutorSchemas> {
   return {
+    'tutor:preview-topic': previewNewTopic,
     'tutor:preview': request => prepareTurn(db, request).preview,
     'tutor:run': request => session.run(request),
     'tutor:cancel': ({ requestId }) => session.cancel(requestId),

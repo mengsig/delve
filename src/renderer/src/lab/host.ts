@@ -8,6 +8,8 @@ import type { StageContent } from './frame';
 
 type Opened = IpcResponse<'lab:open'>;
 interface StageEvents {
+  onUse: () => void;
+  onReady: () => void;
   onLesson: (lesson: ReaderLesson) => void;
   onFailure: (reason: string) => void;
 }
@@ -59,11 +61,12 @@ export class InstrumentHost {
     const message = this.channel.read(raw, performance.now());
     if (!message) return;
     if (message.kind === 'failed') { this.fail(new Error(message.reason)); return; }
-    if (message.kind === 'ready') { this.start(); return; }
+    if (message.kind === 'ready') { this.start(); this.events.onReady(); return; }
     if (message.kind === 'layout') { this.frame.height = String(message.height); return; }
     const { manifest: { config }, session } = this.opening;
     if (config.pack === 'bundle@1') {
       if (typeof message.input === 'string' && /^[a-z][a-z0-9_-]{0,31}$/.test(message.input)) {
+        this.events.onUse();
         this.display({ action: message.input });
       }
       return;
@@ -75,6 +78,7 @@ export class InstrumentHost {
       const result = await call('lab:input', { session, seq: ++this.accepted, input: valid.data });
       if (this.closed) return;
       if (result.state?.pack !== config.pack) throw new Error('The instrument received an incompatible state.');
+      this.events.onUse();
       this.display({ config, state: result.state });
       if (result.lesson) this.events.onLesson(result.lesson);
     } finally {

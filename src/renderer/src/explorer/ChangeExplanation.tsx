@@ -1,7 +1,6 @@
 import { DEPTHS, type Depth } from '../../../shared/domain';
 import type { ChangeBrief } from '../../../shared/repository';
 import { BriefChapters } from '../reader/ChangeBrief';
-import { ProviderReview } from '../repository/ProviderReview';
 import { SetupProvider } from '../SetupProvider';
 import type { LessonState } from './useChangeLesson';
 
@@ -23,51 +22,32 @@ function Recommendation({ brief, onLesson }: { brief: ChangeBrief; onLesson: (id
   </aside>;
 }
 
-interface Props {
-  brief?: ChangeBrief;
-  stale: boolean;
-  description?: string;
-  lesson: LessonState;
-  depth: Depth;
-  onLesson: (id: number) => void;
-  teaching: boolean;
-  onBack: () => void;
-}
-
-export function ChangeExplanation({ brief, stale, description, lesson, depth, onLesson, teaching, onBack }: Props) {
-  const { saved, generation, running, locked, inspect, provider, chooseProvider } = lesson;
-  const hasReview = Boolean(generation.preview || generation.pending);
+export function ChangeExplanation({ description, lesson, onLesson }: {
+  description?: string; lesson: LessonState; onLesson: (id: number) => void;
+}) {
+  const { brief, stale, running, provider, chooseProvider } = lesson;
   return <>
-    {teaching && <div className="lesson-start"><button className="back" onClick={onBack}>← Back to explanation</button>
-      <h3>Learn this change</h3><p>Review the source below to start your {depth}-depth lesson.</p></div>}
     {stale && <p className="repository-notice" role="status">This pull request has changed since its last explanation. Generate a brief for the current revision.</p>}
-    {saved.result.status === 'loading' && <p role="status">Looking for a saved brief…</p>}
-    {saved.result.status === 'error' && <div className="repository-notice"><p role="alert">{saved.result.message}</p>
-      <button onClick={saved.refresh}>Retry saved brief</button></div>}
     {brief ? <><p className="brief-summary">{brief.summary}</p><p className="smallprint">Saved brief · available offline</p>
       <BriefChapters brief={brief} /><Recommendation brief={brief} onLesson={onLesson} /></>
-      : !teaching && saved.result.status === 'ready' && <div className="explanation-start">
+      : <div className="explanation-start">
         <h3>{description ? 'From the author' : 'What changed and why'}</h3>
-        <p>{description || 'Generate an explanation of the changes, the reasoning behind them, and the concepts they touch.'}</p>
+        <p>{description || 'Generate a lesson to see what changed, why it matters, and the concepts it touches.'}</p>
       </div>}
     <div className="brief-tools">
-      {!hasReview && <button disabled={locked} onClick={() => void inspect()}>
-        {running ? 'Generating explanation…' : brief ? 'Refresh explanation' : generation.error ? 'Retry diff preview' : 'Preview diff request'}
-      </button>}
-      <details className="brief-provider" open={generation.error?.action === 'provider' || undefined}>
+      <details className="brief-provider" open={(lesson.job?.phase === 'failed' && lesson.job.failure.action === 'provider') || undefined}>
         <summary>Provider · {provider === 'codex' ? 'Codex' : 'Claude Code'}</summary>
-        <SetupProvider label="Brief provider" disabled={locked} provider={provider} onChange={chooseProvider} />
+        <SetupProvider label="Brief provider" disabled={running} provider={provider} onChange={chooseProvider} />
       </details>
     </div>
-    <ProviderReview generation={generation} provider={provider} depth={depth} workflow="explain" disabled={running} />
   </>;
 }
 
-export function ChangeConcepts({ brief, atlasIds, onAtlas, onExplain }: {
-  brief?: ChangeBrief; atlasIds: Set<number>; onAtlas: (id: number) => void; onExplain: () => void;
+export function ChangeConcepts({ brief, atlasIds, onAtlas }: {
+  brief?: ChangeBrief; atlasIds: Set<number>; onAtlas: (id: number) => void;
 }) {
   if (!brief) return <div className="panel-message"><h3>Concepts touched</h3>
-    <p>Generate the explanation to identify the concepts in this change.</p><button onClick={onExplain}>Explain this change</button></div>;
+    <p>Use “Teach me this change” to see which concepts the diff affects.</p></div>;
   if (!brief.touched.length) return <p className="panel-message">The explanation identified no directly affected concepts.</p>;
   return <ul className="concept-footprint">{brief.touched.map(concept => {
     const onMap = atlasIds.has(concept.id);

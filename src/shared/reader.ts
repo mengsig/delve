@@ -57,7 +57,16 @@ export interface TutorPreview {
   token: string;
 }
 
+export interface TopicPreviewRequest {
+  title: string;
+  depth: Depth;
+  provider: ProviderId;
+}
+
+export type TopicPreview = Omit<TutorPreview, 'token'>;
+
 export interface TutorContract {
+  'tutor:preview-topic': { request: TopicPreviewRequest; response: TopicPreview };
   'tutor:preview': { request: TutorRequest; response: TutorPreview };
   'tutor:run': { request: TutorRequest & { token: string; requestId: string }; response: ReaderLesson };
   'tutor:cancel': { request: { requestId: string }; response: boolean };

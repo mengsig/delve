@@ -1,27 +1,24 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { Workspace } from '../../shared/domain';
-import { filterWorkspaces, moveIndex } from './switcher';
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import type { Command } from './commands';
+import { filterCommands, moveIndex } from './switcher';
 import './setup.css';
 
 interface Props {
-  workspaces: Workspace[];
-  activeId: string | null;
-  onSelect: (id: string) => Promise<void>;
+  commands: Command[];
   onClose: () => void;
   onAdd: () => void;
 }
 
-const KIND_LABELS = { git: 'Local Git repository', github: 'GitHub repository', topic: 'Topic' };
 const OPTIONS_ID = 'workspace-switcher-options';
-const optionId = (id: string) => `workspace-option-${id}`;
+const optionId = (id: string) => `workspace-option-${encodeURIComponent(id)}`;
 
-function SwitcherSearch({ workspaces, activeId, onChoose, pending }: Pick<Props, 'workspaces' | 'activeId'> & {
-  onChoose: (id: string) => void;
+function SwitcherSearch({ commands, onChoose, pending }: Pick<Props, 'commands'> & {
+  onChoose: (command: Command) => void;
   pending: boolean;
 }) {
   const [query, setQuery] = useState('');
-  const [highlight, setHighlight] = useState(() => Math.max(0, workspaces.findIndex((item) => item.id === activeId)));
-  const matches = filterWorkspaces(workspaces, query);
+  const [highlight, setHighlight] = useState(() => Math.max(0, commands.findIndex(item => item.current)));
+  const matches = filterCommands(commands, query);
   const current = Math.min(highlight, matches.length - 1);
   const highlighted = matches[current];
   const selected = useRef<HTMLLIElement>(null);
@@ -35,59 +32,67 @@ function SwitcherSearch({ workspaces, activeId, onChoose, pending }: Pick<Props,
       if (matches.length) setHighlight(moveIndex(current, event.key === 'ArrowDown' ? 1 : -1, matches.length));
     } else if (event.key === 'Enter' && highlighted) {
       event.preventDefault();
-      onChoose(highlighted.id);
+      onChoose(highlighted);
     }
   }
 
   return (
     <>
-      <input type="text" role="combobox" aria-label="Find a workspace" aria-expanded="true" aria-controls={OPTIONS_ID}
+      <input type="text" role="combobox" aria-label="Search workspaces, views and lessons" aria-expanded="true" aria-controls={OPTIONS_ID}
         aria-autocomplete="list" aria-activedescendant={highlighted ? optionId(highlighted.id) : undefined}
-        autoComplete="off" placeholder="Find a workspace…" value={query} readOnly={pending}
+        autoComplete="off" placeholder="Search workspaces, views and lessons…" value={query} readOnly={pending}
         onKeyDown={navigate} onChange={(event) => { setQuery(event.target.value); setHighlight(0); }} />
-      <ul id={OPTIONS_ID} className="palette-list" role="listbox" aria-label="Workspaces to switch to" aria-busy={pending}>
-        {matches.map((workspace, index) => (
-          <li key={workspace.id} id={optionId(workspace.id)} role="option" aria-selected={index === current}
-            ref={index === current ? selected : undefined} onClick={() => onChoose(workspace.id)}>
+      <ul id={OPTIONS_ID} className="palette-list" role="listbox" aria-label="Destinations" aria-busy={pending}>
+        {matches.map((command, index) => (
+          <li key={command.id} id={optionId(command.id)} role="option" aria-selected={index === current}
+            ref={index === current ? selected : undefined} onClick={() => onChoose(command)}>
             <div>
-              <strong>{workspace.name}</strong>
-              <small>{KIND_LABELS[workspace.kind]}{workspace.kind === 'git' && ` · ${workspace.source}`}</small>
+              <strong>{command.label}</strong>
+              <small>{command.detail}</small>
             </div>
-            {workspace.id === activeId && <span className="tag">Current</span>}
+            {command.current && <span className="tag">Current</span>}
           </li>
         ))}
       </ul>
-      {matches.length === 0 && <p className="palette-empty" role="status">{query ? `No workspace matches “${query}”.` : 'No workspaces yet.'}</p>}
+      {matches.length === 0 && <p className="palette-empty" role="status">No matches. Try another name or add a workspace.</p>}
     </>
   );
 }
 
-export function WorkspaceSwitcher({ workspaces, activeId, onSelect, onClose, onAdd }: Props) {
+export function WorkspaceSwitcher({ commands, onClose, onAdd }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
 
+  const dismiss = useEffectEvent(onClose);
   useLayoutEffect(() => {
     const element = dialog.current;
     const opener = document.activeElement;
     if (!element) throw new Error('The workspace switcher needs a mounted dialog.');
     const finder = element.querySelector('input');
     if (!finder) throw new Error('The workspace switcher needs a search field.');
+    function yieldToDialog(event: Event) {
+      if (event.target !== element && event.target instanceof HTMLDialogElement && (event as ToggleEvent).newState === 'open') {
+        element?.close();
+        dismiss();
+      }
+    }
+    document.addEventListener('beforetoggle', yieldToDialog, true);
     element.showModal();
     finder.focus();
     return () => {
+      document.removeEventListener('beforetoggle', yieldToDialog, true);
       element.close();
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+      if (opener instanceof HTMLElement && opener.isConnected && !document.querySelector('dialog[open]') && !document.activeElement?.matches('#source-input')) opener.focus({ preventScroll: true });
     };
   }, []);
 
-  async function choose(id: string) {
+  async function choose(command: Command) {
     if (pending) return;
-    if (id === activeId) return onClose();
     setError('');
     setPending(true);
     try {
-      await onSelect(id);
+      await command.open();
       onClose();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
@@ -100,11 +105,12 @@ export function WorkspaceSwitcher({ workspaces, activeId, onSelect, onClose, onA
     <dialog className="workspace-palette" ref={dialog} aria-labelledby="switcher-title"
       onCancel={(event) => { event.preventDefault(); if (!pending) onClose(); }}>
       <div className="palette-header">
-        <h2 id="switcher-title">Switch workspace</h2>
+        <h2 id="switcher-title">Go to…</h2>
         <button type="button" className="palette-close" disabled={pending} aria-label="Close switcher" onClick={onClose}>Esc</button>
       </div>
-      <SwitcherSearch workspaces={workspaces} activeId={activeId} onChoose={choose} pending={pending} />
+      <SwitcherSearch commands={commands} onChoose={choose} pending={pending} />
       {error && <p className="setup-error" role="alert">{error}</p>}
+      {pending && <p role="status">Opening…</p>}
       <div className="palette-footer">
         <span><kbd>↑</kbd> <kbd>↓</kbd> to navigate · <kbd>Enter</kbd> to open</span>
         <button type="button" disabled={pending} onClick={() => { onClose(); onAdd(); }}>+ Add workspace</button>

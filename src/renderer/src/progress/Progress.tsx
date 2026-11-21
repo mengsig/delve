@@ -39,7 +39,7 @@ export function Progress({ workspace, graph, workspaces, onSelect, onBack, onEvi
       : <ReadState label="Workspace coverage" retry={coverage.refresh}
         message={coverage.result.status === 'error' ? coverage.result.message : undefined} />}
     <div className="grid2 progress-notes">
-      <EvidenceLedger graph={graph} workspaceName={workspace.name} onSelect={onSelect} onReset={evidenceChanged} />
+      <EvidenceLedger graph={graph} workspaceName={workspace.name} onSelect={onSelect} onReset={evidenceChanged} onExplore={onBack} />
       <section className="note">
         <span className="eyebrow">Privacy / Local record</span>
         <h3>Your evidence stays here.</h3>

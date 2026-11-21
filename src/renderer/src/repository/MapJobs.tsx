@@ -17,7 +17,8 @@ type JobInput = Omit<StartMap, 'preview'> & { token: string; files: readonly str
 type JobRequest = JobInput & ({ kind: 'map' } | { kind: 'change'; change: ChangeRef; title: string });
 type JobState =
   | { phase: 'generating'; cancelError?: string }
-  | { phase: 'cancelling' | 'cancelled' | 'ready' }
+  | { phase: 'cancelling' | 'cancelled' }
+  | { phase: 'ready'; conceptId?: number }
   | { phase: 'failed'; failure: RepositoryFailure };
 
 export type RepositoryJob = JobRequest & JobState & { key: string; requestId: string };
@@ -69,11 +70,20 @@ function useJobStore() {
       return updated;
     });
   }
-  function complete(job: RepositoryJob) {
+  function complete(job: RepositoryJob, conceptId?: number) {
     setCompletions(previous => new Map(previous).set(job.workspace.id, job.requestId));
-    replace(job, { ...job, phase: 'ready' });
+    replace(job, { ...job, phase: 'ready', conceptId });
   }
   return { jobs, completions, replace, complete, add: (job: RepositoryJob) => setJobs(previous => new Map(previous).set(job.key, job)) };
+}
+
+async function generateRepository(job: RepositoryJob) {
+  const result = await call('repo:generate', { token: job.token, requestId: job.requestId });
+  const expected = job.kind === 'map' ? 'baseline' : 'change';
+  if (result.kind !== expected) throw new Error('The provider returned a different type of result.');
+  if (result.kind === 'baseline') return;
+  if (result.brief.conceptId < 1) throw new Error('The change lesson was not saved. Review the request and retry.');
+  return result.brief.conceptId;
 }
 
 function useMapQueue(): MapJobs {
@@ -82,16 +92,12 @@ function useMapQueue(): MapJobs {
 
   async function generate(job: RepositoryJob) {
     try {
-      const result = await call('repo:generate', { token: job.token, requestId: job.requestId });
-      const expected = job.kind === 'map' ? 'baseline' : 'change';
-      if (result.kind !== expected) throw new Error('The provider returned a different type of result.');
-      complete(job);
+      complete(job, await generateRepository(job));
     } catch (cause) {
       const failure = repositoryFailure(cause);
       replace(job, failure.code === 'PROVIDER_CANCELLED' ? { ...job, phase: 'cancelled' } : { ...job, phase: 'failed', failure });
     } finally { running.current.delete(job.key); }
   }
-
   function enqueue(request: JobRequest) {
     const key = requestKey(request);
     if (running.current.has(key)) return false;

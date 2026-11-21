@@ -33,6 +33,7 @@ const CHANNEL_FLAGS: Record<IpcChannel, true> = {
   'reader:lesson': true,
   'reader:start-topic': true,
   'tutor:preview': true,
+  'tutor:preview-topic': true,
   'tutor:run': true,
   'tutor:cancel': true,
   'reader:message': true,

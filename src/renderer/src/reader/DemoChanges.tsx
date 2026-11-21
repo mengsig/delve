@@ -14,7 +14,7 @@ function Comparison() {
   </section>;
 }
 
-function EmptyChanges(props: ReaderProps) {
+function EmptyChanges(props: ReaderProps & { onAdd: () => void }) {
   const { workspace, graph } = props;
   const topic = workspace.kind === 'topic';
   const summary = topic ? 'This topic has no Git history.'
@@ -22,19 +22,21 @@ function EmptyChanges(props: ReaderProps) {
     : 'There is no saved pull request or commit diff for this repository.';
   return <>
     <ReaderHeader {...props} label={'Change notes / ' + workspace.name} title="No change brief here." summary={summary} showDepth={false} />
+    <button className="primary-btn" onClick={props.onAdd}>Add a repository</button>
     {!topic && graph.snapshot && <section className="sheet">
       <span className="eyebrow">Partial coverage</span><h3>Snapshot only</h3><p className="mono">{graph.snapshot}</p>
     </section>}
   </>;
 }
 
-export function DemoChanges(props: ReaderProps) {
+export function DemoChanges(props: ReaderProps & { onAdd: () => void }) {
   const { workspace, graph, depth, onLesson } = props;
   const fence = graph.concepts.find(concept => concept.key.endsWith(':fence'));
   if (graph.workspaceId !== workspace.id || !graph.demo || graph.snapshot !== demoBrief.head || !fence) return <EmptyChanges {...props} />;
   return <>
     <ReaderHeader {...props} label={`Change brief / ${workspace.name} / PR #184 · fixture`}
       title="Reject late worker results." summary="One task, two owners, one late result. What should the daemon keep?" />
+    <div className="actions demo-change-action"><button className="primary-btn" onClick={() => onLesson(fence.id)}>Teach me this change</button></div>
     <div className="reader reader-layout">
       <article className="sheet">
         {demoBrief.sections.slice(0, 2 + DEPTHS.indexOf(depth)).map(([heading, text]) =>
@@ -47,7 +49,6 @@ export function DemoChanges(props: ReaderProps) {
         <span className="eyebrow">Change footprint</span><h3>{fence.title}</h3>
         <p>Review the repository-specific write rule that now rejects an expired claim.</p>
         <div className="impact"><span className="plate">Illustrative base → head</span><div className="mono mini">{demoBrief.base} → {graph.snapshot}</div></div>
-        <div className="impact"><button className="primary-btn" onClick={() => onLesson(fence.id)}>Explore this concept →</button></div>
       </aside>
     </div>
   </>;

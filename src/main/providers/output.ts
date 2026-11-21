@@ -13,16 +13,12 @@ function parseJson(provider: ProviderId, text: string, what: string): unknown {
   }
 }
 
-function tail(text: string): string {
-  return text.trim().slice(-300) || 'no output';
-}
-
 /** Classifies the diagnostic from a failed CLI exit. */
 export function checkExit(provider: ProviderId, res: CaptureResult, model?: string): void {
   assert(res.code === null || Number.isInteger(res.code), 'exit code must be an integer or null');
   if (res.code === 0) return;
   const classified = classifyText(provider, `${res.stderr}\n${res.stdout}`, model);
-  throw classified ?? failedError(provider, `exited with code ${res.code}: ${tail(res.stderr || res.stdout)}`);
+  throw classified ?? failedError(provider, 'the request stopped before a response was ready. Try again or choose another provider.');
 }
 
 /** Extracts the structured payload from claude's single JSON result object. */
@@ -33,7 +29,7 @@ export function extractClaudePayload(res: CaptureResult, model?: string): unknow
   if (obj.is_error === true) {
     const errors: unknown[] = Array.isArray(obj.errors) ? obj.errors : [];
     const text = [obj.result, ...errors].filter(item => typeof item === 'string').join('\n');
-    throw classifyText('claude', `${res.stderr}\n${text}`, model) ?? failedError('claude', tail(text || res.stderr));
+    throw classifyText('claude', `${res.stderr}\n${text}`, model) ?? failedError('claude', 'the request could not be completed. Try again or choose another provider.');
   }
   if (obj.structured_output !== undefined && obj.structured_output !== null) return obj.structured_output;
   if (typeof obj.result !== 'string') throw invalidOutputError('claude', 'result has no structured_output or text');
@@ -77,8 +73,7 @@ export async function extractCodexPayload(lastMessageFile: string, maxBytes: num
 export function validatePayload<T>(provider: ProviderId, schema: z.ZodType<T>, payload: unknown): T {
   const parsed = schema.safeParse(payload);
   if (parsed.success) return parsed.data;
-  const issues = parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
-  throw invalidOutputError(provider, issues, parsed.error);
+  throw invalidOutputError(provider, 'the response had an unexpected format. Try generating it again.', parsed.error);
 }
 
 export function isProviderError(e: unknown): e is ProviderError {
