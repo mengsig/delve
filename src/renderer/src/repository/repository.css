@@ -82,3 +82,19 @@
   accent-color: var(--green);
 }
 .map-job .actions { margin: 0; }
+
+.repository-permission {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 13px;
+}
+.repository-permission-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  color: var(--dim);
+  font-size: 13px;
+}

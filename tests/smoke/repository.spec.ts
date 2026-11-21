@@ -40,14 +40,21 @@ async function generateBrief(page: Page, directory: string, depth: 'medium' | 'l
     mechanics: 'The dispatcher can repeat the delivery when the first attempt fails.',
     boundary: depth === 'low' ? 'The third attempt is the final opportunity to deliver.' : null,
     trace: ['Dispatch request', 'Delivery attempt', 'Retry decision'], excerpt: depth === 'low' ? ['+export const attempts = 3;'] : [] }));
-  await page.getByRole('button', { name: 'Preview diff request' }).click();
-  const review = page.getByRole('region', { name: 'Review provider request' });
-  const prompt = await review.locator('pre').innerText();
+  const requestFile = join(directory, 'request.json');
+  const lastRequest = readFileSync(requestFile, 'utf8');
+  const selected = page.getByRole('region', { name: 'Selected change' });
+  const review = selected.getByRole('region', { name: 'Review provider request' });
+  await review.getByText('Exact request', { exact: true }).click();
+  const prompt = await review.getByLabel('Exact provider request').innerText();
+  expect(readFileSync(requestFile, 'utf8')).toBe(lastRequest);
   expect(prompt).toContain('"depth":"' + depth + '"');
   expect(prompt).toContain('+export const attempts = 3;');
   const gate = join(directory, 'gate');
   if (depth === 'medium') writeFileSync(gate, '');
-  await review.getByRole('button', { name: 'Approve and explain' }).click();
+  await test.step('Approve and request a commit lesson in one click', async () => {
+    await review.getByRole('button', { name: 'Teach me this change' }).click();
+    if (depth === 'low') await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+  });
   if (depth === 'medium') {
     await page.getByRole('button', { name: 'Progress', exact: true }).click();
     await expect(page.getByRole('progressbar')).toBeVisible();
@@ -58,12 +65,13 @@ async function generateBrief(page: Page, directory: string, depth: 'medium' | 'l
     await open.click();
   }
   await expect(page.getByText(what, { exact: true })).toBeVisible();
-  expect(JSON.parse(readFileSync(join(directory, 'request.json'), 'utf8')).stdin).toBe(prompt);
+  expect(JSON.parse(readFileSync(requestFile, 'utf8')).stdin).toBe(prompt);
 }
 
 async function addAndMap(page: Page, directory: string, repo: string, info: TestInfo) {
   const gate = join(directory, 'gate');
-  await page.locator('#source-input').fill(repo);
+  await page.locator('#source-input').focus();
+  await page.keyboard.insertText(repo);
   const review = page.getByRole('region', { name: 'Review provider request' });
   await expect(review).toContainText('dispatch.ts');
   const prompt = await review.locator('pre').textContent();
@@ -72,16 +80,17 @@ async function addAndMap(page: Page, directory: string, repo: string, info: Test
   expect(existsSync(join(directory, 'request.json'))).toBe(false);
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({ ...graph, schema: 'delve.map/1' }));
   writeFileSync(gate, '');
-  await page.getByRole('button', { name: 'Add and build map' }).click();
   const jobs = page.getByRole('region', { name: 'Repository generation' });
-  await expect(jobs.getByRole('progressbar')).toBeVisible();
+  await test.step('Map a pasted local repository in place with one confirmation', async () => {
+    await page.getByRole('button', { name: 'Add and build map' }).click();
+    await expect(jobs.getByRole('progressbar')).toBeVisible();
+    await capture(page, info, 'background-map');
+    unlinkSync(gate);
+    await expect(page.getByLabel('Field guide')).toContainText(graph.recommendation.reason);
+    await expect(jobs.getByText(/Map ready/)).toBeVisible();
+  });
   await page.getByRole('button', { name: 'Progress', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Your field record.' })).toBeVisible();
-  await capture(page, info, 'background-map');
-  unlinkSync(gate);
-  await expect(jobs.getByRole('button', { name: 'Open map' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Your field record.' })).toBeVisible();
-  await jobs.getByRole('button', { name: 'Open map' }).click();
+  await jobs.getByRole('button', { name: 'Open map', exact: true }).click();
   await expect(page.getByLabel('Field guide')).toContainText(graph.recommendation.reason);
   expect(JSON.parse(readFileSync(join(directory, 'request.json'), 'utf8')).stdin).toBe(prompt);
 }
@@ -93,8 +102,9 @@ async function askTutor(page: Page, directory: string) {
   await page.getByRole('textbox', { name: 'Ask your tutor' }).fill('When does another attempt help?');
   await page.getByRole('button', { name: 'Ask question' }).click();
   const preview = page.getByRole('dialog', { name: 'Review what will be sent' });
+  await preview.getByText('Exact request', { exact: true }).click();
   await expect(preview).toContainText('The attempts constant increases from 1 to 3.');
-  await preview.getByRole('button', { name: 'Allow and continue' }).click();
+  await preview.getByRole('button', { name: 'Allow once and continue' }).click();
   await expect(page.getByRole('log')).toContainText(answer);
 }
 
@@ -112,6 +122,7 @@ test('maps approved files, teaches one commit at two depths and previews an inco
   await capture(page, info, 'medium-change');
   await page.getByLabel('Reading depth').selectOption('low');
   await generateBrief(page, directory, 'low');
+  await page.getByRole('button', { name: '← Back to change brief' }).click();
   await expect(page.locator('.lesson-code')).toContainText('+export const attempts = 3;');
   const id = await page.evaluate(async () => {
     const list = await (globalThis as unknown as { delve: DelveApi }).delve.invoke('workspaces:list', null);
@@ -143,9 +154,12 @@ test('accepts a folder dropped into the initial repository field and offers a re
   await expect(page.locator('#source-input')).toHaveValue(repo);
   await expect(page.getByRole('button', { name: 'Add and build map' })).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Add without mapping' }).click();
-  await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
   expect(existsSync(join(directory, 'request.json'))).toBe(false);
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify({ ...graph, schema: 'delve.map/1' }));
+  await test.step('Map a dropped folder in place with one confirmation', async () => {
+    await page.getByRole('button', { name: 'Add and build map' }).click();
+    await expect(page.getByLabel('Field guide')).toContainText(concept.title);
+  });
 });
 
 test.describe('model rejection', () => {

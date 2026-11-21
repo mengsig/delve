@@ -131,3 +131,5 @@
 .reader-recommendation h4, .impact h4 { margin: 6px 0; }
 
 .reader-comparison .note + .note { margin-top: 0; }
+
+.demo-change-action { margin-block: 0 16px; }

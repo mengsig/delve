@@ -10,6 +10,8 @@ import { useRead } from '../useRead';
 import { defaultFiles, fitsFileSlice, MAX_BYTES, MAX_FILE_BYTES, MAX_FILES, retainFiles } from './fileSelection';
 import { jobInProgress, mapJobKey, useMapJobs, type MapJob } from './MapJobs';
 import { ProviderReview } from './ProviderReview';
+import { hasRepositoryApproval, useRepositoryApproval } from './repositoryApproval';
+import { RevokeSourceApproval } from './SourceApproval';
 import { useRepositoryGeneration } from './useRepositoryGeneration';
 
 function FilePicker({ files, selected, onChange, disabled }: {
@@ -69,20 +71,34 @@ function BaselineSelection({ snapshot, workspace, depth, onBack, reviewJob, relo
     if (started) onBack();
     return started;
   });
+  const approval = useRepositoryApproval(workspace.id, provider, 'map');
   const locked = Boolean(generation.pending || generation.preview || runningMap);
   const stale = generation.error?.code === 'STALE_INVENTORY';
+
+  function prepare(send: boolean) {
+    if (locked || stale || !selected.size) return;
+    void generation.inspect({
+      workspaceId: workspace.id, depth, provider, selection: { kind: 'baseline', commit: snapshot.commit, paths: Array.from(selected) },
+    }, send ? () => hasRepositoryApproval(workspace.id, provider, 'map') : undefined);
+  }
+
   return <section className="sheet" aria-label="Repository file selection">
     <p className="repository-ref">Snapshot <code>{snapshot.commit}</code></p>
     {snapshot.partial && <p className="repository-notice" role="status">Partial coverage. Only the available files are listed.</p>}
+    {runningMap && <p role="status">Building the map. Progress and cancellation are available in Repository generation.</p>}
+    {!selected.size && <p role="status">{snapshot.files.length ? 'Select files to prepare a map request.'
+      : 'Commit eligible source files, then reload the repository file list.'}</p>}
     <SetupProvider provider={provider} onChange={choose} label="Mapping provider" disabled={locked} />
+    {approval.allowed && <RevokeSourceApproval provider={provider} category="map" onRevoke={() => approval.setAllowed(false)} />}
     <FilePicker files={snapshot.files} selected={selected} onChange={setSelected} disabled={locked} />
     <div className="actions">
-      <button className="primary-btn" disabled={locked || !selected.size} onClick={() => void generation.inspect({
-        workspaceId: workspace.id, depth, provider, selection: { kind: 'baseline', commit: snapshot.commit, paths: Array.from(selected) },
-      })}>{generation.error && !stale ? 'Retry map preview' : 'Preview map request'}</button>
-      {stale && <button onClick={reload}>Reload repository files</button>}
+      {approval.allowed && <button className="primary-btn" disabled={locked || stale || !selected.size} onClick={() => prepare(true)}>Build map</button>}
+      <button className={approval.allowed ? undefined : 'primary-btn'} disabled={locked || stale || !selected.size} onClick={() => prepare(false)}>
+        {generation.error && !stale ? 'Retry map preview' : 'Preview map request'}
+      </button>
+      {(stale || !snapshot.files.length) && <button onClick={reload}>Reload repository files</button>}
     </div>
-    <ProviderReview generation={generation} provider={provider} depth={depth} workflow="map" disabled={runningMap} />
+    <ProviderReview generation={generation} provider={provider} depth={depth} approval={approval} disabled={runningMap} />
   </section>;
 }
 

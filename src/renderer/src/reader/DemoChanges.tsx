@@ -35,6 +35,7 @@ export function DemoChanges(props: ReaderProps) {
   return <>
     <ReaderHeader {...props} label={`Change brief / ${workspace.name} / PR #184 · fixture`}
       title="Reject late worker results." summary="One task, two owners, one late result. What should the daemon keep?" />
+    <div className="actions demo-change-action"><button className="primary-btn" onClick={() => onLesson(fence.id)}>Teach me this change</button></div>
     <div className="reader reader-layout">
       <article className="sheet">
         {demoBrief.sections.slice(0, 2 + DEPTHS.indexOf(depth)).map(([heading, text]) =>
@@ -47,7 +48,6 @@ export function DemoChanges(props: ReaderProps) {
         <span className="eyebrow">Change footprint</span><h3>{fence.title}</h3>
         <p>Review the repository-specific write rule that now rejects an expired claim.</p>
         <div className="impact"><span className="plate">Illustrative base → head</span><div className="mono mini">{demoBrief.base} → {graph.snapshot}</div></div>
-        <div className="impact"><button className="primary-btn" onClick={() => onLesson(fence.id)}>Explore this concept →</button></div>
       </aside>
     </div>
   </>;

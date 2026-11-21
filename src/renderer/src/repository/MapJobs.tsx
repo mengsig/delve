@@ -17,7 +17,8 @@ type JobInput = Omit<StartMap, 'preview'> & { token: string; files: readonly str
 type JobRequest = JobInput & ({ kind: 'map' } | { kind: 'change'; change: ChangeRef; title: string });
 type JobState =
   | { phase: 'generating'; cancelError?: string }
-  | { phase: 'cancelling' | 'cancelled' | 'ready' }
+  | { phase: 'cancelling' | 'cancelled' }
+  | { phase: 'ready'; conceptId?: number }
   | { phase: 'failed'; failure: RepositoryFailure };
 
 export type RepositoryJob = JobRequest & JobState & { key: string; requestId: string };
@@ -69,9 +70,9 @@ function useJobStore() {
       return updated;
     });
   }
-  function complete(job: RepositoryJob) {
+  function complete(job: RepositoryJob, conceptId?: number) {
     setCompletions(previous => new Map(previous).set(job.workspace.id, job.requestId));
-    replace(job, { ...job, phase: 'ready' });
+    replace(job, { ...job, phase: 'ready', conceptId });
   }
   return { jobs, completions, replace, complete, add: (job: RepositoryJob) => setJobs(previous => new Map(previous).set(job.key, job)) };
 }
@@ -85,7 +86,7 @@ function useMapQueue(): MapJobs {
       const result = await call('repo:generate', { token: job.token, requestId: job.requestId });
       const expected = job.kind === 'map' ? 'baseline' : 'change';
       if (result.kind !== expected) throw new Error('The provider returned a different type of result.');
-      complete(job);
+      complete(job, result.kind === 'change' ? result.brief.conceptId : undefined);
     } catch (cause) {
       const failure = repositoryFailure(cause);
       replace(job, failure.code === 'PROVIDER_CANCELLED' ? { ...job, phase: 'cancelled' } : { ...job, phase: 'failed', failure });

@@ -63,6 +63,7 @@ export function useAttachPreview(
     };
     return async () => {
       const preview = await call('repo:preview', request);
+      if (!preview.token) throw new Error('The request is missing its approval token. Prepare it again.');
       if (preview.commit !== commit) throw new Error('The request used a different commit. Refresh the repository files.');
       const files = new Set(preview.files);
       if (files.size !== selected.size || Array.from(selected).some(path => !files.has(path))) {

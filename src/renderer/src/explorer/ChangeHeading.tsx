@@ -42,8 +42,8 @@ function ChangeMetadata({ detail }: { detail: ChangeDetail }) {
   </>;
 }
 
-export function ChangeHeading({ change, detail, savedTitle, onTeach, disabled }: {
-  change: ChangeRef; detail?: ChangeDetail; savedTitle?: string; onTeach: () => void; disabled: boolean;
+export function ChangeHeading({ change, detail, savedTitle }: {
+  change: ChangeRef; detail?: ChangeDetail; savedTitle?: string;
 }) {
   return <header className="change-heading">
     <div className="change-heading-top"><span className="eyebrow">{changeLabel(change)}</span>
@@ -51,6 +51,5 @@ export function ChangeHeading({ change, detail, savedTitle, onTeach, disabled }:
     </div>
     <h2>{detail?.node.title ?? savedTitle ?? changeLabel(change)}</h2>
     {detail && <ChangeMetadata detail={detail} />}
-    <button className="primary-btn teach-change" disabled={disabled} onClick={onTeach}><Icon name="book" />Teach me this change</button>
   </header>;
 }

@@ -12,7 +12,7 @@ import '../explorer/explorer.css';
 interface Props extends ReaderProps {
   selected?: ChangeRef;
   openedJob?: ChangeJob;
-  onSelect: (change: ChangeRef) => void;
+  onSelect: (change: ChangeRef, title?: string) => void;
   onAtlas: (id: number) => void;
 }
 
@@ -33,7 +33,7 @@ export function Changes(props: Props) {
     <div className="explorer-split">
       <Timeline workspaceId={workspace.id} selected={selected} onSelect={props.onSelect} onOpen={openPage} onRefresh={() => setVersion(value => value + 1)} />
       <section className="change-page" ref={page} tabIndex={-1} aria-label="Selected change">
-        {selected ? <ChangePage key={key} version={version} {...props} change={selected} openedJob={openedJob?.key === key ? openedJob : undefined} />
+        {selected ? <ChangePage key={key} historyVersion={version} {...props} change={selected} openedJob={openedJob?.key === key ? openedJob : undefined} />
           : <div className="change-placeholder"><Icon name="pr" /><h2>Choose a change</h2><p>Open a commit or pull request from the timeline.</p></div>}
       </section>
     </div>

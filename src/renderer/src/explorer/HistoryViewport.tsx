@@ -65,7 +65,7 @@ interface ViewportProps {
   selected?: ChangeRef;
   more: boolean;
   loadMore: () => void;
-  onSelect: (node: ChangeRef) => void;
+  onSelect: (node: ChangeRef, title?: string) => void;
   onOpen?: () => void;
 }
 
@@ -86,8 +86,8 @@ export function HistoryViewport({ query, nodes, layout, selected, more, loadMore
   const active = focus.query === query && focus.index !== undefined && focus.index < nodes.length ? focus.index : fallback;
   const indices = visibleRows(bounds.top, bounds.height, nodes.length, active);
 
-  function choose({ kind, ref }: HistoryNode) {
-    onSelect({ kind, ref });
+  function choose({ kind, ref, title }: HistoryNode) {
+    onSelect({ kind, ref }, title);
     onOpen?.();
   }
 

@@ -27,6 +27,20 @@ async function launch(userData: string, firstRun: boolean, fakeBin?: string, lin
   return electron.launch({ args: [resolve(__dirname, '../../out/main/index.js'), ...(link ? [link] : [])], env, timeout: 30_000 });
 }
 
+async function installGitHubFixture(directory: string, fakeBin: string | undefined) {
+  if (!fakeBin || process.platform === 'win32') throw new Error('The GitHub smoke fixture requires a POSIX shim directory.');
+  const git = await findExecutable('git', process.env);
+  if (!git) throw new Error('The GitHub smoke fixture requires Git.');
+  const binDir = fakeBin;
+  function install(name: string, scriptName: string, args: string[]) {
+    const script = pathToFileURL(resolve(__dirname, '../fixtures/fake-cli', scriptName)).href;
+    writeFileSync(join(binDir, name), '#!' + process.execPath + '\nprocess.argv.splice(2, 0, ...' + JSON.stringify(args)
+      + ');import(' + JSON.stringify(script) + ');\n', { mode: 0o755 });
+  }
+  install('gh', 'github.mjs', [join(directory, 'github.json')]);
+  install('git', 'git.mjs', [git, join(directory, 'dispatch')]);
+}
+
 export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun: boolean; fixtureGitHub: boolean; providerMode: string | undefined }>({
   tutorCli: [false, { option: true }],
   firstRun: [false, { option: true }],
@@ -44,13 +58,7 @@ export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun:
     }
     try {
       fakeBin = tutorCli ? await makeShimDir() : undefined;
-      if (fixtureGitHub) {
-        if (!fakeBin || process.platform === 'win32') throw new Error('The GitHub smoke fixture requires a POSIX shim directory.');
-        const script = pathToFileURL(resolve(__dirname, '../fixtures/fake-cli/github.mjs')).href;
-        const fixture = join(directory, 'github.json');
-        writeFileSync(join(fakeBin, 'gh'), '#!' + process.execPath + '\nprocess.argv.splice(2, 0, ' + JSON.stringify(fixture)
-          + ');import(' + JSON.stringify(script) + ');\n', { mode: 0o755 });
-      }
+      if (fixtureGitHub) await installGitHubFixture(directory, fakeBin);
       const page = await start();
       if (!firstRun) await page.getByRole('button', { name: 'Explore demo atlas' }).click();
       await use({

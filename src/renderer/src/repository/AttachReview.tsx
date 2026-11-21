@@ -5,6 +5,7 @@ import type { RepositoryFile, RepoPreview } from '../../../shared/repository';
 import { PROVIDER_LABELS } from '../preferences';
 import { fitsFileSlice, MAX_BYTES, MAX_FILE_BYTES, MAX_FILES } from './fileSelection';
 import type { useAttachInventory, useAttachPreview } from './AttachReads';
+import { AlwaysAllowSource } from './SourceApproval';
 import './repository.css';
 
 function AttachFiles({ files, paths, onChange }: {
@@ -69,9 +70,11 @@ interface Props {
   onFiles: (paths: Set<string>) => void;
   depth: Depth;
   provider: ProviderId;
+  allowed?: boolean;
+  onAlwaysAllow?: (allowed: boolean) => void;
 }
 
-export function AttachReview({ inventory, request, selected, onFiles, depth, provider }: Props) {
+export function AttachReview({ inventory, request, selected, onFiles, depth, provider, allowed, onAlwaysAllow }: Props) {
   const snapshot = inventory.snapshot?.inventory;
   if (inventory.pending) return <p role="status">Reading the repository file list…</p>;
   if (inventory.error) return <div className="attach-feedback">
@@ -94,6 +97,9 @@ export function AttachReview({ inventory, request, selected, onFiles, depth, pro
         <button type="button" disabled={!inventory.canRetry} onClick={inventory.retry}>Refresh repository files</button>
       </div>
     </div>}
-    {request.preview && <ExactRequest preview={request.preview} provider={provider} depth={depth} />}
+    {request.preview && <>
+      <ExactRequest preview={request.preview} provider={provider} depth={depth} />
+      {onAlwaysAllow && <AlwaysAllowSource provider={provider} category="map" checked={allowed ?? false} onChange={onAlwaysAllow} />}
+    </>}
   </>;
 }

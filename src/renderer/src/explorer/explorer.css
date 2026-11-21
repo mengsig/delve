@@ -48,7 +48,7 @@
 .lines-added, .lines-removed { font-family: ui-monospace, monospace; font-weight: 600; }
 .lines-added { color: var(--green); }
 .lines-removed { color: color-mix(in srgb, var(--ink) 70%, #c04437); }
-.teach-change { display: inline-flex; align-items: center; gap: 7px; margin-top: 18px; }
+.teach-change { display: inline-flex; align-items: center; gap: 7px; }
 .teach-change .icon { width: 16px; height: 16px; }
 .change-tabs {
   display: flex;
@@ -67,13 +67,12 @@
 .change-panel .smallprint { margin: 8px 0 18px; }
 .brief-summary { color: var(--ink); font-size: 18px; line-height: 1.5; }
 .change-next { background: var(--soft); padding: 17px 19px; border-radius: 11px; margin-block: 18px; }
-.change-next p, .panel-message p, .lesson-start p, .explanation-start p { margin-top: 8px; }
+.change-next p, .panel-message p, .explanation-start p { margin-top: 8px; }
 .change-next button, .panel-message button { margin-top: 12px; }
 .explanation-start p { white-space: pre-line; }
 .brief-tools { font-size: 13px; margin-top: 16px; align-items: baseline; }
 .brief-provider summary { color: var(--dim); cursor: pointer; }
 .brief-provider[open] { flex-basis: 100%; }
-.lesson-start .back { margin-bottom: 12px; }
 .change-page > .repository-notice { margin-inline: 20px; }
 .change-placeholder { min-height: 240px; display: grid; align-content: center; justify-items: start; gap: 10px; }
 .change-placeholder .icon { color: var(--green); }
@@ -129,3 +128,10 @@
   display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: space-between;
   padding: 10px 14px; margin-bottom: 16px; background: var(--soft); border-radius: 10px;
 }
+
+.change-lesson-action { padding-inline: clamp(18px, 2.4vw, 34px); }
+.change-lesson-action .repository-review { margin-top: 0; }
+.change-lesson-action .repository-permission-status { margin-bottom: 12px; }
+.change-page > .panel-message { padding-inline: clamp(18px, 2.4vw, 34px); }
+.change-lesson-action > .actions, .change-lesson-action > p { margin-bottom: 16px; }
+.approved-change-source[open] { flex-basis: 100%; }

@@ -25,7 +25,7 @@ export function useRepositoryGeneration(start: (preview: RepoPreview) => boolean
 
   useEffect(() => () => { active.current = null; }, []);
 
-  async function inspect(request: RepoRequest) {
+  async function inspect(request: RepoRequest, maySend?: () => boolean) {
     if (active.current) return;
     active.current = request;
     setPending(true);
@@ -34,7 +34,9 @@ export function useRepositoryGeneration(start: (preview: RepoPreview) => boolean
     try {
       const result = await call('repo:preview', request);
       if (!result.token) throw new Error('The preview is missing an approval token. Request a new preview.');
-      if (active.current === request) setPreview(result);
+      if (active.current !== request) return;
+      if (maySend?.()) enqueue(result);
+      else setPreview(result);
     } catch (cause) {
       if (active.current === request) setError(repositoryFailure(cause));
     } finally {
@@ -45,13 +47,16 @@ export function useRepositoryGeneration(start: (preview: RepoPreview) => boolean
     }
   }
 
-  function approve() {
-    if (!preview || active.current) return;
+  function enqueue(reviewed: RepoPreview) {
+    if (!reviewed.token) throw new Error('Review the repository files before sending.');
+    if (!start(reviewed)) throw new Error('This request is already in progress.');
+  }
+
+  function approve(reviewed: RepoPreview, remember?: () => void) {
+    if (preview?.token !== reviewed.token || active.current) return;
     try {
-      if (!start(preview)) {
-        setError({ message: 'This request is already in progress.', action: 'retry' });
-        return;
-      }
+      remember?.();
+      enqueue(reviewed);
       setPreview(undefined);
       setError(undefined);
     } catch (cause) {
