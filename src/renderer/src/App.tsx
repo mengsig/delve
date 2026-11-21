@@ -29,6 +29,8 @@ function useShortcuts(nav: DesktopNavigation) {
       event.preventDefault();
       if (!event.repeat) setOpen(true);
     } else if (event.altKey && event.key === 'ArrowLeft') {
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || target.matches('input, textarea, select'))) return;
       event.preventDefault();
       nav.back();
     } else if (event.key === 'Escape' && nav.route.screen !== 'atlas') {

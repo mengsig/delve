@@ -85,3 +85,15 @@ test('finds views, workspaces and recent lessons in the keyboard palette', async
   await page.keyboard.press('Alt+ArrowLeft');
   await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
 });
+
+test('preserves a draft when moving or selecting words with Option+Left', async ({ desktop: { page } }) => {
+  await button(page, 'Open lesson →').click();
+  const composer = page.getByRole('textbox', { name: 'Ask the demo tutor' });
+  const question = 'How does a lease expire?';
+  await composer.fill(question);
+  for (const shortcut of ['Alt+ArrowLeft', 'Shift+Alt+ArrowLeft']) {
+    await composer.press(shortcut);
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveValue(question);
+  }
+});
