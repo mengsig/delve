@@ -50,6 +50,7 @@ function LessonThread({ body, address, props, onLesson }: {
   };
   return <article className="sheet reader-thread" aria-label="Lesson and conversation">
     <LessonInstruments address={address} body={body} onLesson={lesson => { onLesson(lesson); props.onEvidence?.(); }}>
+    <div className="reader-scroll">
     <TutorControls tutor={tutor} demo={props.graph.demo} canStart={!body.reused && !body.blocks.length && !body.invalidLatest} />
     {body.invalidLatest && <div className="reader-notice" role="status">
       <p>{body.revision ? 'The newest lesson is invalid. Showing the last valid version.' : 'The stored lesson could not be displayed.'}</p>
@@ -64,6 +65,7 @@ function LessonThread({ body, address, props, onLesson }: {
       <LessonBlocks key={body.revision} blocks={body.blocks} pending={tutor.pending || !body.revision} onAnswer={answer} />
     </section>}
     <Conversation messages={body.messages} earlierMessages={body.earlierMessages} />
+    </div>
     <Composer tutor={tutor} draft={draft} setDraft={setDraft} />
     </LessonInstruments>
   </article>;

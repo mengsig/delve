@@ -20,9 +20,18 @@
 .reader-conversation {
   margin-top: 16px;
 }
+.reader-thread {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 32px);
+}
+.reader-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 .reader-composer {
-  position: sticky;
-  bottom: 8px;
+  flex: none;
   display: grid;
   gap: 8px;
   margin-top: 18px;
