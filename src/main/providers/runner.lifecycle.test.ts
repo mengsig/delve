@@ -70,7 +70,8 @@ describe('ProviderRunner shared-run cancellation', () => {
     expect(isAlive(cliPid)).toBe(true);
     b.abort();
     await expect(runB).rejects.toMatchObject({ code: 'PROVIDER_CANCELLED' });
-    expect(await waitUntilDead(cliPid)).toBe(true);
+    await runner.drain();
+    expect(isAlive(cliPid)).toBe(false);
     expect(await readFile(counter, 'utf8')).toBe('1');
   }, 10_000);
 

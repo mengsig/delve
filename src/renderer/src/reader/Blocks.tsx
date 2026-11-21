@@ -1,75 +1,134 @@
-import { Fragment, useState } from 'react';
-import type { LessonAddress, LessonBlock } from '../../../shared/reader';
-import { call } from '../api';
+import { Fragment, useId, useState } from 'react';
+import { CHECK_ANSWER_LIMIT, type CodeSpan, type DiagramEdge, type LessonBlock } from '../../../shared/lesson-blocks';
+import './blocks.css';
+
+function HighlightedLine({ line, spans }: { line: string; spans: CodeSpan[] }) {
+  return <>{spans.map(({ start, end }, index) => <Fragment key={start}>
+    {line.slice(spans[index - 1]?.end ?? 0, start)}<mark>{line.slice(start, end)}</mark>
+  </Fragment>)}{line.slice(spans.at(-1)?.end ?? 0)}</>;
+}
 
 export function CodeExcerpt({ block }: { block: Extract<LessonBlock, { type: 'code' }> }) {
-  const { lines, span, source } = block;
+  const { lines, span, spans, source } = block;
+  const highlights = new Map<number, CodeSpan[]>();
+  for (const range of spans ?? (span ? [span] : [])) {
+    const ranges = highlights.get(range.line);
+    if (ranges) ranges.push(range);
+    else highlights.set(range.line, [range]);
+  }
+  for (const ranges of highlights.values()) ranges.sort((a, b) => a.start - b.start);
   return <section className="chapter">
-    <span className="plate">Highlighted source · {source}</span>
-    <pre><code>{lines.map((line, index) => <Fragment key={index}>
-      {index > 0 && '\n'}{span?.line === index + 1
-        ? <>{line.slice(0, span.start)}<mark>{line.slice(span.start, span.end)}</mark>{line.slice(span.end)}</>
-        : line}
-    </Fragment>)}</code></pre>
+    <span className="plate">{highlights.size ? 'Highlighted source' : 'Source excerpt'} · {source}</span>
+    <pre className="lesson-code"><code>{lines.map((line, index) => {
+      const ranges = highlights.get(index + 1);
+      return <Fragment key={index}>{index > 0 && '\n'}{ranges ? <HighlightedLine line={line} spans={ranges} /> : line}</Fragment>;
+    })}</code></pre>
   </section>;
 }
 
-export function Diagram({ nodes }: { nodes: string[] }) {
+function DiagramLinks({ nodes, edges }: { nodes: string[]; edges: DiagramEdge[] }) {
+  const linked = new Set(edges.flatMap(({ from, to }) => [from, to]));
+  return <ul className="lesson-diagram-links">
+    {edges.map(({ from, to, label }, index) => <li className="diagram" key={index}>
+      <span>{nodes[from]}</span>
+      {label && <small>{label}</small>}
+      <b aria-hidden="true">→</b><i className="sr-only">to</i>
+      <span>{nodes[to]}</span>
+    </li>)}
+    {nodes.map((node, index) => !linked.has(index) && <li className="diagram" key={`node-${index}`}><span>{node}</span></li>)}
+  </ul>;
+}
+
+export function Diagram({ nodes, edges }: { nodes: string[]; edges?: DiagramEdge[] }) {
   return <section className="chapter">
     <span className="plate">System trace</span>
-    <div className="diagram">{nodes.map((node, index) => <Fragment key={index}>
-      {index > 0 && <b aria-hidden="true">→</b>}<span>{node}</span>
-    </Fragment>)}</div>
+    {edges === undefined
+      ? <div className="diagram">{nodes.map((node, index) => <Fragment key={index}>
+        {index > 0 && <><b aria-hidden="true">→</b><i className="sr-only">to</i></>}<span>{node}</span>
+      </Fragment>)}</div>
+      : <DiagramLinks nodes={nodes} edges={edges} />}
   </section>;
 }
 
-export function EnvironmentSlot({ fallback }: { fallback?: string }) {
+export function EnvironmentSlot({ fallback, pack }: { fallback?: string; pack?: string }) {
   return <section className="chapter" id="instrument">
     <span className="eyebrow">Environment</span>
-    <h3>No environment in this lesson</h3>
-    {fallback && <p>{fallback}</p>}
+    {pack ? <div className="instrument-reading"><span className="plate">{pack} · text alternative</span>
+      <p className="lesson-text">{fallback ?? 'No description supplied for this instrument.'}</p></div>
+      : <><h3>No environment in this lesson</h3>{fallback && <p className="lesson-text">{fallback}</p>}</>}
+  </section>;
+}
+
+function Steps({ steps }: { steps: string[] }) {
+  return <ol className="lesson-steps">{steps.map((step, i) => <li key={i}>{step}</li>)}</ol>;
+}
+
+function Comparison({ block }: { block: Extract<LessonBlock, { type: 'comparison' }> }) {
+  const columns = 'columns' in block ? block.columns : ['Before', 'After'];
+  const rows = 'rows' in block ? block.rows : [[block.before, block.after]];
+  return <section className="chapter">
+    <div className="lesson-table-wrap">
+      <table className="lesson-table">
+        <caption><h3>{block.heading}</h3></caption>
+        <thead><tr>{columns.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead>
+        <tbody>{rows.map((row, index) => <tr key={index}>
+          {row.map((cell, column) => <td key={column}>{cell}</td>)}
+        </tr>)}</tbody>
+      </table>
+    </div>
   </section>;
 }
 
 export function TeachingBlock({ block }: { block: Exclude<LessonBlock, { type: 'check' }> }) {
   switch (block.type) {
-    case 'prose': return <section className="chapter"><h3>{block.heading}</h3><p>{block.text}</p></section>;
-    case 'diagram': return <Diagram nodes={block.nodes} />;
+    case 'prose':
+      return <section className="chapter"><h3>{block.heading}</h3><p className="lesson-text">{block.text}</p></section>;
+    case 'analogy':
+    case 'callout':
+      return <aside className="chapter"><div className="lesson-callout">
+        {block.type === 'analogy' && <span className="eyebrow">Analogy</span>}
+        <h3>{block.heading}</h3><p className="lesson-text">{block.text}</p>
+      </div></aside>;
+    case 'example':
+      return <section className="chapter">
+        <span className="eyebrow">Worked example</span>
+        <h3>{block.heading}</h3><p className="lesson-text">{block.setup}</p>
+        <Steps steps={block.steps} />
+        <p className="lesson-text">{block.takeaway}</p>
+      </section>;
+    case 'comparison': return <Comparison block={block} />;
+    case 'diagram': return <Diagram nodes={block.nodes} edges={block.edges} />;
     case 'code': return <CodeExcerpt block={block} />;
-    case 'trace': return <section className="chapter"><h3>Trace</h3><ol>{block.steps.map((step, i) => <li key={i}>{step}</li>)}</ol></section>;
-    case 'environment': return <EnvironmentSlot fallback={block.fallback} />;
+    case 'trace': return <section className="chapter"><h3>Trace</h3><Steps steps={block.steps} /></section>;
+    case 'environment': return <EnvironmentSlot fallback={block.fallback} pack={block.pack} />;
     case 'unknown': return <section className="chapter"><h3>Unsupported lesson block</h3><p>This version of Delve cannot display “{block.name}”.</p></section>;
   }
 }
 
 interface CheckProps {
   block: Extract<LessonBlock, { type: 'check' }>;
-  address: LessonAddress;
-  revision: string;
-  onEvidence?: () => void;
+  onAnswer: (answer: number | string) => void;
+  pending: boolean;
 }
 
-export function Check({ block, address, revision, onEvidence }: CheckProps) {
-  const [feedback, setFeedback] = useState('');
-  const [pending, setPending] = useState(false);
-  async function answer(option: number) {
-    setPending(true);
-    try {
-      const result = await call('reader:answer', { ...address, revision, option });
-      setFeedback(result.feedback);
-      if (result.demonstrated) onEvidence?.();
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : String(error));
-    } finally {
-      setPending(false);
-    }
-  }
-  return <section className="chapter" id="checkpoint"><div className="check">
+export function Check({ block, onAnswer, pending }: CheckProps) {
+  const prompt = useId();
+  const [draft, setDraft] = useState('');
+  const answer = draft.trim();
+  return <section className="chapter" id="checkpoint"><div className="check" aria-busy={pending}>
     <span className="eyebrow">One check · optional</span>
-    <h3>{block.prompt}</h3>
-    <p>A successful prediction saves evidence at this depth in your local atlas.</p>
-    <div className="actions">{block.options.map((option, i) =>
-      <button key={option} onClick={() => void answer(i)} disabled={pending}>{option}</button>)}</div>
-    <div className="feedback" role="status">{feedback}</div>
+    <h3 id={prompt}>{block.prompt}</h3>
+    <p>An answer records revisable evidence at this depth. You can also skip this check.</p>
+    {block.options
+      ? <div className="actions">{block.options.map((option, index) =>
+        <button type="button" key={option} onClick={() => onAnswer(index)} disabled={pending}>{option}</button>)}</div>
+      : <form className="lesson-written-check" onSubmit={event => {
+        event.preventDefault();
+        if (!pending && answer) onAnswer(answer);
+      }}>
+        <textarea aria-labelledby={prompt} rows={3} required maxLength={CHECK_ANSWER_LIMIT}
+          value={draft} onChange={event => setDraft(event.target.value)} disabled={pending} />
+        <div className="actions"><button type="submit" disabled={pending || !answer}>Submit answer</button></div>
+      </form>}
   </div></section>;
 }

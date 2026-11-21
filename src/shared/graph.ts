@@ -32,6 +32,7 @@ export interface WorkspaceGraph {
   evidence: GraphEvidence[];
   snapshot: string | null;
   demo: boolean;
+  suggestions?: Partial<Record<Depth, { conceptId: number; reason: string }>>;
 }
 
 export interface WorkspaceCoverage {

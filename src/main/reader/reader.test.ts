@@ -93,7 +93,7 @@ it('teaches from the explicit sample provider and supplies text alternatives for
   const sample = { workspaceId: archon!.id, conceptId: lease!.id, depth: 'low' as const };
   const handlers = readerHandlers(db);
   const body = handlers['reader:lesson'](sample);
-  expect(body.blocks.map(b => b.type)).toEqual(['prose', 'environment', 'prose', 'diagram', 'prose', 'code', 'check']);
+  expect(body.blocks.map(b => b.type)).toEqual(['prose', 'environment', 'prose', 'diagram', 'prose', 'code', 'analogy', 'check']);
   expect(body.blocks[1]).toMatchObject({ fallback: expect.stringContaining('generation 8') });
   expect(handlers['reader:message']({ ...sample, text: 'Show me an example' })).toMatchObject([
     { role: 'learner' }, { role: 'tutor', text: expect.stringContaining('generation 7') },

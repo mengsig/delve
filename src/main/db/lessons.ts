@@ -98,30 +98,46 @@ export function getLessonByCacheKey(db: Db, cacheKey: string): StoredLesson | nu
 
 /** Stores a validated lesson; a new body for the same cache key replaces the old one. */
 export function saveLesson(db: Db, input: LessonInput): StoredLesson {
+  return transaction(db, () => saveLessonInTransaction(db, input));
+}
+
+export function saveLessonInTransaction(db: Db, input: LessonInput): StoredLesson {
+  assert.ok(db.isTransaction, 'lesson writes must be atomic');
   if (!SCHEMA_VERSION.test(input.schemaVersion)) throw new DomainError('INVALID_LESSON', `Unknown lesson schema "${input.schemaVersion}".`);
   if (!(DEPTHS as readonly string[]).includes(input.depth)) throw new DomainError('INVALID_LESSON', `Unknown depth "${input.depth}".`);
   const body = JSON.stringify(input.body);
   assert.ok(typeof body === 'string' && body.length > 0, 'lesson body must serialize to JSON');
-  return transaction(db, () => {
-    const scope = resolveScope(db, input.conceptId, input.workspaceId, input.snapshotId);
-    db.prepare(
-      `INSERT INTO lessons (cache_key, schema_version, concept_id, workspace_id, snapshot_id, depth, provider, model, body, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (cache_key) DO UPDATE SET body = excluded.body, created_at = excluded.created_at`,
-    ).run(
-      input.cacheKey,
-      input.schemaVersion,
-      input.conceptId,
-      scope.workspaceId,
-      scope.snapshotId,
-      input.depth,
-      input.provider,
-      input.model,
-      body,
-      nowIso(),
-    );
-    const saved = getLessonByCacheKey(db, input.cacheKey);
-    assert.ok(saved, 'saved lesson must be readable');
-    return saved;
-  });
+  const scope = resolveScope(db, input.conceptId, input.workspaceId, input.snapshotId);
+  const createdAt = nextLessonTime(db, input);
+  db.prepare(
+    `INSERT INTO lessons (cache_key, schema_version, concept_id, workspace_id, snapshot_id, depth, provider, model, body, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (cache_key) DO UPDATE SET body = excluded.body, created_at = excluded.created_at`,
+  ).run(
+    input.cacheKey,
+    input.schemaVersion,
+    input.conceptId,
+    scope.workspaceId,
+    scope.snapshotId,
+    input.depth,
+    input.provider,
+    input.model,
+    body,
+    createdAt,
+  );
+  const saved = getLessonByCacheKey(db, input.cacheKey);
+  assert.ok(saved, 'saved lesson must be readable');
+  return saved;
+}
+
+// A cache hit can replace an older row in the same millisecond as a newer revision.
+function nextLessonTime(db: Db, input: LessonInput): string {
+  const now = nowIso();
+  const row = db.prepare('SELECT max(created_at) AS latest FROM lessons WHERE concept_id = ? AND depth = ?')
+    .get(input.conceptId, input.depth);
+  assert.ok(row && (row.latest === null || typeof row.latest === 'string'));
+  if (row.latest === null || row.latest < now) return now;
+  const previous = Date.parse(row.latest);
+  assert.ok(Number.isFinite(previous), 'a saved lesson must have a readable creation time');
+  return new Date(previous + 1).toISOString();
 }

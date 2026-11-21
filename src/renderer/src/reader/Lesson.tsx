@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import type { GraphConcept } from '../../../shared/graph';
 import type { LessonAddress, ReaderLesson } from '../../../shared/reader';
 import { call } from '../api';
-import { Check, TeachingBlock } from './Blocks';
-import { Conversation } from './Conversation';
+import { Composer, Conversation, LessonBlocks } from './Conversation';
 import { ReaderHeader, type ReaderProps } from './ReaderHeader';
+import { TutorControls, useTutor } from './Tutor';
 import './reader.css';
 
 interface LessonProps extends ReaderProps {
@@ -15,6 +15,8 @@ interface LessonProps extends ReaderProps {
 function FieldNotes({ props, body }: { props: LessonProps; body?: ReaderLesson }) {
   const { depth, conceptId, graph, view, workspace, onBack } = props;
   const evidence = graph.evidence.find(e => e.depth === depth && e.conceptId === conceptId);
+  const recommendation = body?.messages.findLast(m => m.recommendation)?.recommendation;
+  const target = recommendation?.targetId && graph.concepts.find(c => c.id === recommendation.targetId);
   const known = evidence?.status === 'demonstrated';
   const source = body ? body.source : graph.snapshot;
   return <aside className="card">
@@ -24,29 +26,43 @@ function FieldNotes({ props, body }: { props: LessonProps; body?: ReaderLesson }
       : evidence ? `Your evidence at ${depth} depth is marked ${evidence.status}.` : `No evidence recorded at ${depth} depth.`}</p>
     <div className="impact"><span className="plate">Source {workspace.kind === 'topic' ? 'study' : 'snapshot'}</span>
       <div className="mono mini">{source ?? 'No source recorded'}{graph.demo && ' · demo'}</div></div>
-    {body && !body.blocks.some(b => b.type === 'environment') && <div className="impact">
-      <span className="plate">Environment</span><p>No environment in this lesson.</p>
-    </div>}
-    {body?.blocks.some(b => b.type === 'check') && <div className="impact"><a href="#checkpoint">Jump to the check ↓</a></div>}
-    {body && <div className="impact"><a href="#reader-question">Ask a question ↓</a></div>}
+    {body?.blocks.some(b => b.type === 'environment') && !body.reused && <div className="impact"><a href="#instrument">Jump to instrument ↓</a></div>}
+    {body?.blocks.some(b => b.type === 'check') && !body.reused && <div className="impact"><a href="#checkpoint">Jump to the check ↓</a></div>}
+    {recommendation && <div className="impact"><span className="plate">Suggested next step</span><h4>{recommendation.action}</h4>
+      <p>{recommendation.reason}</p>{target && <button onClick={() => props.onLesson(target.id)}>Open {target.title} →</button>}</div>}
     <div className="impact"><button onClick={onBack}>See my atlas →</button></div>
   </aside>;
 }
 
-function LessonThread({ body, address, props, retry }: { body: ReaderLesson; address: LessonAddress; props: LessonProps; retry: () => void }) {
+function LessonThread({ body, address, props, onLesson }: {
+  body: ReaderLesson; address: LessonAddress; props: LessonProps; onLesson: (lesson: ReaderLesson) => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const [review, setReview] = useState(!body.reused);
+  const tutor = useTutor(address, props.graph.demo, (lesson, intent) => {
+    onLesson(lesson);
+    if (intent.kind === 'ask') setDraft(current => current.trim() === intent.text ? '' : current);
+    if (intent.kind === 'answer' || lesson.messages.at(-1)?.recommendation) props.onEvidence?.();
+  });
+  const answer = (value: number | string) => {
+    if (body.revision) void tutor.prepare({ kind: 'answer', revision: body.revision, answer: value });
+  };
   return <article className="sheet reader-thread" aria-label="Lesson and conversation">
+    <TutorControls tutor={tutor} demo={props.graph.demo} canStart={!body.reused && !body.blocks.length && !body.invalidLatest} />
     {body.invalidLatest && <div className="reader-notice" role="status">
       <p>{body.revision ? 'The newest lesson is invalid. Showing the last valid version.' : 'The stored lesson could not be displayed.'}</p>
-      <button onClick={retry}>Retry loading lesson</button>
+      <button disabled={tutor.pending} onClick={() => void tutor.prepare({ kind: 'teach' })}>Retry lesson generation</button>
     </div>}
-    {body.blocks.length > 0 ? <div>
-      <div className="reader-author"><span className="eyebrow">{props.graph.demo ? 'Demo tutor' : 'Tutor'} / Field lesson</span></div>
-      {body.blocks.map((block, i) => block.type === 'check'
-        ? body.revision && <Check key={i} block={block} address={address} revision={body.revision} onEvidence={props.onEvidence} />
-        : <TeachingBlock key={i} block={block} />)}
-    </div> : !body.invalidLatest && <section className="chapter"><h3>No saved lesson at this depth</h3>
-      <p>You can keep questions about this concept in the conversation below.</p></section>}
-    <Conversation address={address} demo={props.graph.demo} messages={body.messages} earlierMessages={body.earlierMessages} />
+    {body.reused && !review && <section className="chapter">
+      <h3>You know this connection</h3><p>You can build on your evidence at this depth or ask for another example.</p>
+      {body.blocks.length > 0 && <button onClick={() => setReview(true)}>Review opening lesson</button>}
+    </section>}
+    {review && body.blocks.length > 0 && <section id="opening-lesson">
+      <span className="eyebrow reader-author">{props.graph.demo ? 'Demo tutor' : 'Tutor'} / Field lesson</span>
+      <LessonBlocks key={body.revision} blocks={body.blocks} pending={tutor.pending || !body.revision} onAnswer={answer} />
+    </section>}
+    <Conversation messages={body.messages} earlierMessages={body.earlierMessages} />
+    <Composer tutor={tutor} draft={draft} setDraft={setDraft} />
   </article>;
 }
 
@@ -60,7 +76,7 @@ function Reader({ props, concept }: { props: LessonProps; concept: GraphConcept 
   useEffect(() => {
     let current = true;
     call('reader:lesson', { workspaceId, conceptId, depth }).then(
-      body => { if (current) setBody(body); },
+      result => { if (current) setBody(result); },
       reason => { if (current) setError(reason instanceof Error ? reason.message : String(reason)); },
     );
     return () => { current = false; };
@@ -70,7 +86,7 @@ function Reader({ props, concept }: { props: LessonProps; concept: GraphConcept 
       title={concept.title} summary={concept.summary} />
     <div className="reader reader-layout">
       {error ? <article className="sheet"><p role="alert">{error}</p><button onClick={retry}>Retry loading lesson</button></article>
-        : body ? <LessonThread body={body} props={props} address={{ workspaceId, conceptId, depth }} retry={retry} />
+        : body ? <LessonThread body={body} props={props} address={{ workspaceId, conceptId, depth }} onLesson={setBody} />
         : <article className="sheet" role="status">Loading lesson…</article>}
       <FieldNotes props={props} body={body} />
     </div>

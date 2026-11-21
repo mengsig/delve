@@ -83,6 +83,7 @@ export function requireSubscription(status: ProviderStatus): string {
  * caller cancels only its own wait; the process is stopped once every caller has cancelled.
  */
 export class ProviderRunner {
+  private readonly executions = new Set<Promise<RunResult<unknown>>>();
   private readonly inFlight = new Map<string, InFlight>();
 
   constructor(private readonly deps: RunnerDeps) {}
@@ -98,11 +99,18 @@ export class ProviderRunner {
     return this.subscribe(entry, req);
   }
 
+  // Cancelled subscribers return immediately; shutdown also waits for CLI termination and directory cleanup.
+  async drain(): Promise<void> {
+    await Promise.allSettled(this.executions);
+  }
+
   private start<T>(req: RunRequest<T>): InFlight {
     const controller = new AbortController();
     const promise: Promise<RunResult<unknown>> = this.runWithRetries(req, controller.signal).finally(() => {
+      this.executions.delete(promise);
       if (this.inFlight.get(req.cacheKey)?.promise === promise) this.inFlight.delete(req.cacheKey);
     });
+    this.executions.add(promise);
     const entry: InFlight = { controller, subscribers: 0, promise };
     this.inFlight.set(req.cacheKey, entry);
     assert(this.inFlight.get(req.cacheKey) === entry, 'new run must be registered');
