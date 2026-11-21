@@ -147,3 +147,19 @@
 .workspace-palette[open]::backdrop { animation: backdrop-in var(--motion-fast) ease-out; }
 @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .workspace-palette[open]::backdrop { animation: none; } }
+
+.setup-advanced {
+  margin-block: 12px;
+  padding-block: 10px;
+  border-block: 1px solid var(--rule);
+}
+.setup-advanced summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.setup-advanced[open] summary {
+  margin-bottom: 10px;
+}
+.setup-topic-review {
+  margin-block: 12px;
+}

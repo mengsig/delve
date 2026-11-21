@@ -132,4 +132,27 @@
 
 .reader-comparison .note + .note { margin-top: 0; }
 
+.reader-start, .reader-turn-status {
+  margin-block: 10px;
+}
+.reader-turn-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.reader-preview .actions {
+  flex-wrap: wrap;
+}
+.exact-tutor-request summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.exact-tutor-request pre {
+  max-height: 32vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .demo-change-action { margin-block: 0 16px; }

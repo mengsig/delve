@@ -100,10 +100,11 @@ export function TeachingBlock({ block, blockIndex, messageId = null }: { block: 
 interface CheckProps {
   block: Extract<LessonBlock, { type: 'check' }>;
   onAnswer: (answer: number | string) => void;
+  onPreview?: (answer: number | string) => void;
   pending: boolean;
 }
 
-export function Check({ block, onAnswer, pending }: CheckProps) {
+export function Check({ block, onAnswer, onPreview, pending }: CheckProps) {
   const prompt = useId();
   const [draft, setDraft] = useState('');
   const answer = draft.trim();
@@ -113,14 +114,21 @@ export function Check({ block, onAnswer, pending }: CheckProps) {
     <p>An answer records revisable evidence at this depth. You can also skip this check.</p>
     {block.options
       ? <div className="actions">{block.options.map((option, index) =>
-        <button type="button" key={option} onClick={() => onAnswer(index)} disabled={pending}>{option}</button>)}</div>
+        <div className="check-choice" key={option}>
+          <button type="button" onClick={() => onAnswer(index)} disabled={pending}>{option}</button>
+          {onPreview && <button type="button" disabled={pending} aria-label={`Preview answer: ${option}`}
+            onClick={() => onPreview(index)}>Preview</button>}
+        </div>)}</div>
       : <form className="lesson-written-check" onSubmit={event => {
         event.preventDefault();
         if (!pending && answer) onAnswer(answer);
       }}>
         <textarea aria-labelledby={prompt} rows={3} required maxLength={CHECK_ANSWER_LIMIT}
           value={draft} onChange={event => setDraft(event.target.value)} disabled={pending} />
-        <div className="actions"><button type="submit" disabled={pending || !answer}>Submit answer</button></div>
+        <div className="actions">
+          {onPreview && <button type="button" disabled={pending || !answer} onClick={() => onPreview(answer)}>Preview answer</button>}
+          <button type="submit" disabled={pending || !answer}>Submit answer</button>
+        </div>
       </form>}
   </div></section>;
 }

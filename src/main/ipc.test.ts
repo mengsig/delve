@@ -19,6 +19,7 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
     'workspaces:switch': () => ({ workspaces: [workspace], activeId: workspace.id }),
     'workspaces:pick-folder': () => null,
     'providers:detect': () => [],
+    'tutor:preview-topic': () => { throw new Error('Unexpected topic preview'); },
     'tutor:preview': () => { throw new Error('Unexpected tutor preview'); },
     'tutor:run': () => { throw new Error('Unexpected tutor turn'); },
     'tutor:cancel': () => false,

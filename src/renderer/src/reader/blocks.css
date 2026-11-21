@@ -75,3 +75,5 @@
   color: var(--ink);
   font: inherit;
 }
+
+.check-choice { display: inline-flex; flex-wrap: wrap; gap: 6px; }

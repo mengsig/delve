@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ProviderId, ProviderState, ProviderStatus } from '../../shared/domain';
 import { call } from './api';
-import { PROVIDER_LABELS, storeProvider } from './preferences';
+import { preferredProvider, PROVIDER_LABELS, storeProvider } from './preferences';
 import { errorMessage } from './useRead';
 
 const STATES: Record<ProviderState, string> = {
@@ -32,6 +32,15 @@ export function useProviderDetection(enabled = true) {
   };
 }
 
+export function useDetectedProvider(statuses: ProviderStatus[]) {
+  const [choice, choose] = useState<ProviderId>();
+  const [preferred] = useState(preferredProvider);
+  const preferredStatus = statuses.find(status => status.id === preferred);
+  const available = statuses.find(status => status.state === 'signed-in');
+  const provider = choice ?? (preferredStatus?.state === 'signed-in' ? preferred : available?.id ?? preferred);
+  return { provider, choose, cli: statuses.find(status => status.id === provider) };
+}
+
 interface Props {
   provider: ProviderId;
   onChange: (provider: ProviderId) => void;
@@ -40,7 +49,7 @@ interface Props {
   detection?: ReturnType<typeof useProviderDetection>;
 }
 
-export function SetupProvider({ provider, onChange, label = '03 \u00a0 Your signed-in CLI', disabled, detection }: Props) {
+export function SetupProvider({ provider, onChange, label = 'Your signed-in CLI', disabled, detection }: Props) {
   const ownDetection = useProviderDetection(!detection);
   const { statuses, error, checking, retry } = detection ?? ownDetection;
   const [preferenceError, setPreferenceError] = useState('');
@@ -81,7 +90,7 @@ export function SetupProvider({ provider, onChange, label = '03 \u00a0 Your sign
   );
 }
 
-function providerHint(status: ProviderStatus): string {
+export function providerHint(status: ProviderStatus): string {
   switch (status.state) {
     case 'signed-in': return `${PROVIDER_LABELS[status.id]} is ready to use with your subscription.`;
     case 'signed-out': return `Sign in to ${PROVIDER_LABELS[status.id]} with your subscription to use the tutor.`;

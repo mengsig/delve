@@ -12,9 +12,9 @@ import { readWorkspaceGraph } from '../db/graph';
 import { bindSnapshot, saveLesson } from '../db/lessons';
 import { addWorkspace } from '../db/workspaces';
 import { makeShimDir, makeTempDir, setupRunner } from '../providers/test-helpers';
-import { readLesson } from '../reader/ipc';
+import { readLesson, readerHandlers } from '../reader/ipc';
 import { tutorSchemas } from './ipc';
-import { prepareTurn } from './prompt';
+import { prepareTurn, previewNewTopic } from './prompt';
 import { createGenerator, type Generate, type TutorReply } from './provider';
 import { TutorSession } from './session';
 
@@ -73,6 +73,20 @@ function run(intent: TutorIntent, base = request) {
   const { token } = prepareTurn(db, next).preview;
   return session.run({ ...next, token, requestId: randomUUID() });
 }
+
+it('previews a new topic before creating its workspace and matches the first tokenized turn', () => {
+  const input = { title: '  Café   acoustics ', depth: 'low', provider: 'codex' } as const;
+  const preview = previewNewTopic(input);
+  expect(preview).not.toHaveProperty('token');
+  expect(preview.prompt).toContain('Café acoustics');
+  expect(preview.bytes).toBe(Buffer.byteLength(preview.prompt));
+  expect(db.prepare('SELECT count(*) AS count FROM workspaces').get()?.count).toBe(1);
+  const workspace = addWorkspace(db, { kind: 'topic', title: input.title });
+  const conceptId = readerHandlers(db)['reader:start-topic']({ workspaceId: workspace.id });
+  const actual = prepareTurn(db, { ...request, workspaceId: workspace.id, conceptId, depth: input.depth }).preview;
+  expect(actual).toMatchObject(preview);
+  expect(actual.token).toMatch(/^[a-f0-9]{64}$/);
+});
 
 it('previews the exact UTF-8 prompt, chosen depth, known prerequisites and most recent answer', async () => {
   const known = upsertConcept(db, { key: 'ip', title: 'IP addresses', workspaceId: request.workspaceId, portable: true });

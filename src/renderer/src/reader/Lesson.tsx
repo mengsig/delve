@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useState } from 'react';
 import type { GraphConcept } from '../../../shared/graph';
 import type { LessonAddress, ReaderLesson } from '../../../shared/reader';
 import { LessonInstruments } from '../lab/Environment';
+import { EnvironmentActivity } from '../lab/EnvironmentActivity';
 import { call } from '../api';
 import { Composer, Conversation, LessonBlocks } from './Conversation';
 import { ReaderHeader, type ReaderProps } from './ReaderHeader';
-import { TutorControls, useTutor } from './Tutor';
+import { TutorControls, TutorTurnStatus, useTutor } from './Tutor';
+import { lessonKey, useTutorJobs } from './TutorJobs';
 import './reader.css';
 
 interface LessonProps extends ReaderProps {
@@ -37,26 +39,48 @@ function FieldNotes({ props, body }: { props: LessonProps; body?: ReaderLesson }
   </aside>;
 }
 
+function useLessonPosition(address: LessonAddress) {
+  const { positions } = useTutorJobs();
+  const key = lessonKey(address);
+  useLayoutEffect(() => {
+    const position = positions.current.get(key);
+    if (position) window.scrollTo({ top: position, behavior: 'instant' });
+    function remember() {
+      positions.current.set(key, window.scrollY);
+    }
+    window.addEventListener('scroll', remember, { passive: true });
+    return () => window.removeEventListener('scroll', remember);
+  }, [key, positions]);
+}
+
 function LessonThread({ body, address, props, onLesson }: {
   body: ReaderLesson; address: LessonAddress; props: LessonProps; onLesson: (lesson: ReaderLesson) => void;
 }) {
   const [draft, setDraft] = useState(props.initialQuestion ?? '');
-  const [review, setReview] = useState(!body.reused);
-  const tutor = useTutor(address, props.graph.demo, (lesson, intent) => {
+  const resumeInstrument = useContext(EnvironmentActivity)?.resumeKey;
+  const [review, setReview] = useState(!body.reused || Boolean(resumeInstrument));
+  const [animate] = useState(!body.revision);
+  useLessonPosition(address);
+  const title = props.graph.concepts.find(concept => concept.id === address.conceptId)?.title ?? props.workspace.name;
+  const tutor = useTutor(address, title, props.graph.demo, (lesson, intent) => {
     onLesson(lesson);
     if (intent.kind === 'ask') setDraft(current => current.trim() === intent.text ? '' : current);
     if (intent.kind === 'answer' || lesson.messages.at(-1)?.recommendation) props.onEvidence?.();
   });
-  const answer = (value: number | string) => {
-    if (body.revision) void tutor.prepare({ kind: 'answer', revision: body.revision, answer: value });
+  const answer = (value: number | string, exact = false) => {
+    if (body.revision) tutor.prepare({ kind: 'answer', revision: body.revision, answer: value }, exact);
   };
   return <article className="sheet reader-thread" aria-label="Lesson and conversation">
     <LessonInstruments address={address} body={body} onLesson={lesson => { onLesson(lesson); props.onEvidence?.(); }}>
     <div className="reader-scroll">
-    <TutorControls tutor={tutor} demo={props.graph.demo} canStart={!body.reused && !body.blocks.length && !body.invalidLatest} />
+    <TutorControls tutor={tutor} demo={props.graph.demo} canStart={!tutor.running && !body.reused && !body.blocks.length && !body.invalidLatest} />
     {body.invalidLatest && <div className="reader-notice" role="status">
       <p>{body.revision ? 'The newest lesson is invalid. Showing the last valid version.' : 'The stored lesson could not be displayed.'}</p>
-      <button disabled={tutor.pending} onClick={() => void tutor.prepare({ kind: 'teach' })}>Retry lesson generation</button>
+      <div className="actions">
+        <button disabled={tutor.pending} onClick={() => tutor.prepare({ kind: 'teach' })}>Retry lesson generation</button>
+        {!props.graph.demo && <button disabled={tutor.pending}
+          onClick={() => tutor.prepare({ kind: 'teach' }, true)}>Preview lesson request</button>}
+      </div>
     </div>}
     {body.reused && !review && <section className="chapter">
       <h3>You know this connection</h3><p>You can build on your evidence at this depth or ask for another example.</p>
@@ -64,10 +88,12 @@ function LessonThread({ body, address, props, onLesson }: {
     </section>}
     {review && body.blocks.length > 0 && <section id="opening-lesson">
       <span className="eyebrow reader-author">{props.graph.demo ? 'Demo tutor' : 'Tutor'} / Field lesson</span>
-      <LessonBlocks key={body.revision} blocks={body.blocks} pending={tutor.pending || !body.revision} onAnswer={answer} />
+      <LessonBlocks key={body.revision} blocks={body.blocks} pending={tutor.pending || !body.revision} onAnswer={answer} animate={animate}
+        onPreview={props.graph.demo ? undefined : value => answer(value, true)} />
     </section>}
     <Conversation messages={body.messages} earlierMessages={body.earlierMessages} />
     </div>
+    <TutorTurnStatus tutor={tutor} onBackground={props.onBackToChange ?? props.onBack} />
     <Composer tutor={tutor} draft={draft} setDraft={setDraft} focusOnOpen={Boolean(props.onBackToChange || props.initialQuestion)} />
     </LessonInstruments>
   </article>;

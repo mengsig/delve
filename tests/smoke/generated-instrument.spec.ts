@@ -26,12 +26,8 @@ function boardWithFollowingContent(directory: string) {
 
 async function createTopic(page: Page) {
   await page.getByRole('button', { name: '+ Add', exact: true }).click();
-  await page.getByRole('button', { name: 'Any topic', exact: true }).click();
-  await page.getByLabel('Any topic', { exact: true }).fill('Routing workshop');
-  await page.getByRole('button', { name: 'Add to atlas →' }).click();
-  await page.getByRole('button', { name: 'Start a topic lesson →' }).click();
-  await page.getByRole('button', { name: 'Start lesson', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Allow and continue' }).click();
+  await page.getByRole('textbox', { name: 'Topic or repository' }).fill('Routing workshop');
+  await page.getByRole('button', { name: 'Allow once and start lesson' }).click();
 }
 
 function bundle(source: string) {
@@ -119,7 +115,7 @@ test('a new topic wires a network, then opens a generated board inside a tutor r
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
   const preview = page.getByRole('dialog');
   await expect(preview).toContainText('The simulated request reached the service through the proxy.');
-  await preview.getByRole('button', { name: 'Allow and continue' }).click();
+  await preview.getByRole('button', { name: 'Allow once and continue' }).click();
   const board = page.getByRole('log').frameLocator('.instrument-frame');
   await expect(board.getByRole('status')).toHaveText('Token at square 2');
   await board.getByRole('button', { name: 'Move token' }).click();
