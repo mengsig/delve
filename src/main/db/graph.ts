@@ -37,7 +37,7 @@ function tutorSuggestions(db: Db, workspaceId: string, ids: Set<number>): NonNul
   const latest = db.prepare(`SELECT json_extract(m.body, '$.recommendation.targetId') AS target,
     json_extract(m.body, '$.recommendation.reason') AS reason
     FROM conversations c JOIN messages m ON m.conversation_id = c.id
-    WHERE c.workspace_id = ? AND c.depth = ? AND m.role = 'tutor' AND json_type(m.body, '$.recommendation') = 'object'
+    WHERE c.workspace_id = ? AND c.depth = ? AND m.role IN ('tutor', 'system') AND json_type(m.body, '$.recommendation') = 'object'
     ORDER BY m.id DESC LIMIT 1`);
   const suggestions: NonNullable<WorkspaceGraph['suggestions']> = {};
   for (const depth of DEPTHS) {

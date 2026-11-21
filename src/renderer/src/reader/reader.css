@@ -52,14 +52,10 @@
   .reader-message, .lesson-blocks > .chapter { animation: none; }
 }
 .reader-message, #checkpoint, #instrument { scroll-margin-block: 18px 180px; }
-.instrument-reading {
-  padding: 16px 20px;
-  border-radius: 10px;
-  background: #172d26;
-  color: #edf4e9;
-}
-.instrument-reading .plate { color: #c1d7b6; }
-.instrument-reading p { color: inherit; margin-top: 6px; }
+.instrument-frame { display: block; width: 100%; border: 0; border-radius: 12px; background: #172f29; }
+.lab-chapter details { margin-top: 10px; color: var(--dim); }
+.lab-chapter summary { cursor: pointer; }
+.lab-update { border: 1px solid var(--rule); border-radius: 9px; padding: 11px 13px; background: var(--soft); }
 .reader-composer-footer {
   display: flex;
   align-items: center;

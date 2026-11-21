@@ -72,7 +72,8 @@ test('lesson depth, local conversations and linked change concepts work offline'
   await page.getByRole('button', { name: 'Open lesson →' }).click();
   await expect(page.getByRole('heading', { name: 'Worker leases', level: 1 })).toBeVisible();
   await page.getByRole('button', { name: 'Low · Protocol detail' }).click();
-  await expect(page.getByText('lease-handoff@1 · text alternative')).toBeVisible();
+  await page.getByText('Text alternative', { exact: true }).click();
+  await expect(page.locator('#instrument details')).toContainText('Compare before committing.');
   await expect(page.locator('pre mark')).toBeVisible();
   await page.getByRole('textbox', { name: 'Ask the demo tutor' }).fill('How does the result writer check ownership?');
   await page.getByRole('button', { name: 'Ask question' }).click();

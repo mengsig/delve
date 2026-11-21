@@ -21,6 +21,19 @@ for PR #184. Repository lessons use the concepts and snapshot already stored in 
 - Binding requirements (R1–R17): [`docs/requirements.md`](docs/requirements.md)
 - Approved design: [`docs/design/proposal-v1.html`](docs/design/proposal-v1.html) (open in a browser)
 
+## Interactive lessons
+
+Open **Worker leases** in Archon or **Moving subjects** in Photography. Advance the lease clock and decide
+whether to accept the late write, or change shutter speed and ISO and capture the rider. The observation
+appears in the conversation, with a reason for the next exercise. **Progress** shows the evidence and
+its originating workspace. Each lab has a keyboard interface and a text alternative.
+
+The tutor can insert instruments into an opening lesson or a later message. A network instrument lets
+you wire simulated ports by dragging or by selecting an output followed by an input. For a custom
+topic, the tutor can also supply a self-contained program with its own state, drawing and controls.
+Custom programs run as practice. Host-verifiable rubrics currently ship for the dispatch, exposure
+and network instruments. See the [environment protocol](docs/environments.md).
+
 ## Install
 
 Download a package for your platform from the CI artifacts or a release: an AppImage or `.deb` for

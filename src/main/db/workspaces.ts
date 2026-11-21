@@ -115,6 +115,10 @@ export function listWorkspaces(db: Db): WorkspaceList {
   return { workspaces, activeId };
 }
 
+export function isActiveWorkspace(db: Db, id: string): boolean {
+  return db.prepare('SELECT 1 FROM app_state WHERE key = ? AND value = ?').get(ACTIVE_WORKSPACE_KEY, id) !== undefined;
+}
+
 export function switchWorkspace(db: Db, id: string): WorkspaceList {
   transaction(db, () => {
     const result = db.prepare('UPDATE workspaces SET last_opened_at = ? WHERE id = ?').run(nowIso(), id);

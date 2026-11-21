@@ -1,5 +1,6 @@
 import { tutorSchemas } from './tutor/ipc';
 import { readerSchemas } from './reader/ipc';
+import { labSchemas } from './environment/ipc';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { DEPTHS } from '../shared/domain';
@@ -22,6 +23,7 @@ export const REQUEST_SCHEMAS: { [C in IpcChannel]: z.ZodType<IpcRequest<C>> } = 
   'providers:detect': z.null(),
   ...readerSchemas,
   ...tutorSchemas,
+  ...labSchemas,
   'graph:read': z.strictObject({ workspaceId }),
   'progress:read': z.null(),
   'evidence:reset': z.strictObject({ workspaceId, conceptId: z.int().positive(), depth: z.enum(DEPTHS) }),
@@ -51,7 +53,7 @@ export async function dispatch<C extends IpcChannel>(handlers: IpcHandlers, chan
 }
 
 export interface IpcRegistrar {
-  handle(channel: string, listener: (event: { senderFrame: { url: string } | null }, raw: unknown) => Promise<unknown>): void;
+  handle(channel: string, listener: (event: { senderFrame: { url: string; parent: unknown } | null }, raw: unknown) => Promise<unknown>): void;
 }
 
 /** Registers one handler per channel; requests from frames outside the app are refused. */
@@ -60,7 +62,7 @@ export function registerIpc(ipc: IpcRegistrar, handlers: IpcHandlers, isTrustedU
   for (const channel of IPC_CHANNELS) {
     ipc.handle(channel, async (event, raw) => {
       const url = event.senderFrame?.url ?? '';
-      if (!isTrustedUrl(url)) {
+      if (event.senderFrame?.parent !== null || !isTrustedUrl(url)) {
         return { ok: false, error: { code: 'FORBIDDEN', message: 'Request from an untrusted frame.' } } satisfies IpcResult<never>;
       }
       return dispatch(handlers, channel, raw);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { GraphConcept } from '../../../shared/graph';
 import type { LessonAddress, ReaderLesson } from '../../../shared/reader';
+import { LessonInstruments } from '../lab/Environment';
 import { call } from '../api';
 import { Composer, Conversation, LessonBlocks } from './Conversation';
 import { ReaderHeader, type ReaderProps } from './ReaderHeader';
@@ -48,6 +49,7 @@ function LessonThread({ body, address, props, onLesson }: {
     if (body.revision) void tutor.prepare({ kind: 'answer', revision: body.revision, answer: value });
   };
   return <article className="sheet reader-thread" aria-label="Lesson and conversation">
+    <LessonInstruments address={address} body={body} onLesson={lesson => { onLesson(lesson); props.onEvidence?.(); }}>
     <TutorControls tutor={tutor} demo={props.graph.demo} canStart={!body.reused && !body.blocks.length && !body.invalidLatest} />
     {body.invalidLatest && <div className="reader-notice" role="status">
       <p>{body.revision ? 'The newest lesson is invalid. Showing the last valid version.' : 'The stored lesson could not be displayed.'}</p>
@@ -63,6 +65,7 @@ function LessonThread({ body, address, props, onLesson }: {
     </section>}
     <Conversation messages={body.messages} earlierMessages={body.earlierMessages} />
     <Composer tutor={tutor} draft={draft} setDraft={setDraft} />
+    </LessonInstruments>
   </article>;
 }
 

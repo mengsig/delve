@@ -1,12 +1,13 @@
 import type { ReaderContract, TutorContract } from './reader';
 import type { AddWorkspaceInput, Depth, ProviderStatus, Workspace, WorkspaceList } from './domain';
 import type { WorkspaceCoverage, WorkspaceGraph } from './graph';
+import type { LabContract } from './lab-ipc';
 
 /**
  * The one typed channel map shared by main, preload and renderer.
  * Adding a channel here forces a main handler (see src/main/ipc.ts).
  */
-export interface IpcContract extends ReaderContract, TutorContract {
+export interface IpcContract extends ReaderContract, TutorContract, LabContract {
   'workspaces:list': { request: null; response: WorkspaceList };
   'workspaces:add': { request: AddWorkspaceInput; response: Workspace };
   'workspaces:switch': { request: { id: string }; response: WorkspaceList };
@@ -38,6 +39,9 @@ const CHANNEL_FLAGS: Record<IpcChannel, true> = {
   'graph:read': true,
   'progress:read': true,
   'evidence:reset': true,
+  'lab:open': true,
+  'lab:input': true,
+  'lab:close': true,
 };
 
 export const IPC_CHANNELS = Object.freeze(Object.keys(CHANNEL_FLAGS) as IpcChannel[]);
