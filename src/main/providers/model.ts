@@ -28,10 +28,14 @@ function codexConfigModel(): string | null {
   return typeof model === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(model) ? model : null;
 }
 
-export function selectTutorModel(provider: TutorRequest['provider']): ModelSelection {
+export function selectModel(provider: TutorRequest['provider']): ModelSelection {
   if (provider === 'demo') return { model: 'field-tutor-v1', modelSource: 'demo' };
   const override = process.env[MODEL_OVERRIDE_ENV[provider]];
   if (override !== undefined) return { model: validateModel(override), modelSource: 'override' };
   const configured = provider === 'codex' ? codexConfigModel() : null;
   return configured === null ? { model: null, modelSource: 'default' } : { model: configured, modelSource: 'codex-config' };
+}
+
+export function cacheModel(model: string | null): string {
+  return model ?? '(provider default)';
 }

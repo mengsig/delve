@@ -73,10 +73,11 @@ test('a pointer can move the token while scrolling past the composer', async ({ 
   await expect(page.frameLocator('.instrument-frame').getByRole('status')).toHaveText('Token at square 3');
 });
 
-for (const size of ['default', '1280x800'] as const) {
+for (const size of ['default', '1280x800', '960x640'] as const) {
   for (const pack of ['bundle@1', 'lease-handoff@1', 'camera-exposure@1', 'network-builder@1'] as const) {
     test(`${pack} stays clear of the composer after jumping at ${size}`, async ({ desktop: { page, directory } }) => {
       if (size === '1280x800') await page.setViewportSize({ width: 1280, height: 800 });
+      if (size === '960x640') await page.setViewportSize({ width: 960, height: 640 });
       response(directory, pack === 'bundle@1' ? bundle(boardSource) :
         { type: 'environment', pack, config: null, fallback: 'Practice the lesson.' });
       await createTopic(page);
@@ -92,6 +93,7 @@ for (const size of ['default', '1280x800'] as const) {
       expect(instrument).not.toBeNull();
       expect(composer).not.toBeNull();
       expect(instrument!.y + instrument!.height).toBeLessThanOrEqual(composer!.y);
+      if (pack !== 'bundle@1') await page.frameLocator('.instrument-frame').locator('button').first().click();
       if (pack === 'bundle@1') {
         const board = page.frameLocator('.instrument-frame');
         await board.getByRole('button', { name: 'Move token' }).click();

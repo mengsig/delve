@@ -1,3 +1,4 @@
+import { modelLabel } from '../modelLabel';
 import { useEffect, useRef, useState } from 'react';
 import type { ProviderStatus } from '../../../shared/domain';
 import type { LessonAddress, ReaderLesson, TutorIntent, TutorPreview, TutorRequest } from '../../../shared/reader';
@@ -97,8 +98,7 @@ function RequestPreview({ preview, approve, close }: { preview: Preview; approve
   }, []);
   const { data, request } = preview;
   const offline = request.provider === 'demo';
-  const model = offline ? data.model : data.modelSource === 'codex-config' ? `${data.model} · from Codex config` :
-    data.model === null ? `${request.provider === 'codex' ? 'Codex' : 'Claude'} default` : `Requested model: ${data.model}`;
+  const model = modelLabel(request.provider, data);
   return <dialog ref={dialog} className="reader-preview" aria-labelledby="preview-title" onCancel={close}>
     <span className="eyebrow">Provider request / {request.provider}</span>
     <h3 id="preview-title">{offline ? 'Review local tutor input' : 'Review what will be sent'}</h3>

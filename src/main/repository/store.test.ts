@@ -6,7 +6,7 @@ import { recordEvidence } from '../db/evidence';
 import { readWorkspaceCoverage, readWorkspaceGraph } from '../db/graph';
 import { addWorkspace } from '../db/workspaces';
 import { readLesson } from '../reader/ipc';
-import { modelFor } from '../tutor/prompt';
+import { selectModel } from '../providers/model';
 import { baselineReply, changeReply } from './schemas';
 import { cachedGeneration, digest, latestBrief, persistGeneration, useCachedGeneration, type ApprovedSource } from './store';
 
@@ -27,7 +27,7 @@ function source(selection: RepoSelection, commit: string): ApprovedSource {
   const revision = digest([selection, commit]);
   return { request: { workspaceId, selection, provider: 'codex', depth: 'medium' }, revision, cacheKey: digest([workspaceId, revision]),
     preview: { token: 'preview', prompt: 'preview', bytes: 7, files: ['src/routes.ts'], commit,
-      title: 'Routing policy', model: modelFor('codex'), partial: true } };
+      title: 'Routing policy', ...selectModel('codex'), partial: true } };
 }
 beforeEach(() => {
   db = openDatabase(':memory:');

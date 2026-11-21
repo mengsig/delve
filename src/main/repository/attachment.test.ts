@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { RepoRequest } from '../../shared/repository';
 import { openDatabase, type Db } from '../db/connection';
 import { listWorkspaces } from '../db/workspaces';
 import { ProviderRunner } from '../providers/runner';
+import { makeShimDir, makeTempDir, setupRunner } from '../providers/test-helpers';
 import { RepositoryLearning } from './service';
 import { listFiles, readFiles, repositoryPath } from './source';
 
@@ -20,7 +23,7 @@ beforeEach(() => {
   vi.mocked(readFiles).mockResolvedValue([{ path: 'main.rs', text: 'fn main() {}' }]);
   vi.mocked(repositoryPath).mockResolvedValue('/objects');
 });
-afterEach(async () => { await learning.close(); db.close(); vi.resetAllMocks(); });
+afterEach(async () => { await learning.close(); db.close(); vi.resetAllMocks(); vi.unstubAllEnvs(); });
 
 it('prepares the exact request from a pinned snapshot before attaching a workspace or running the provider', async () => {
   const staged = await learning.stage({ kind: 'github', owner: 'example', repo: 'test' });
@@ -46,4 +49,48 @@ it('rejects unlisted paths and stale approval tokens without creating a workspac
   expect(readFiles).not.toHaveBeenCalled();
   expect(() => learning.attach(randomUUID())).toThrow(/Refresh/);
   expect(listWorkspaces(db).activeId).toBeNull();
+});
+
+it('uses the Codex config model for repository generation and reports account rejection', async () => {
+  const home = await makeTempDir('repo-config');
+  const record = join(home, 'request.json');
+  await writeFile(join(home, 'config.toml'), 'model = "gpt-test"\n');
+  vi.stubEnv('CODEX_HOME', home);
+  vi.stubEnv('DELVE_CODEX_MODEL', undefined);
+  const { runner: fakeRunner } = await setupRunner(await makeShimDir(), {
+    FAKE_PROVIDER_MODE: 'model-rejected', FAKE_PROVIDER_RECORD: record,
+  });
+  await learning.close();
+  learning = new RepositoryLearning(db, '/cache', fakeRunner);
+  const staged = await learning.stage({ kind: 'github', owner: 'example', repo: 'test' });
+  const preview = await learning.preview({ workspaceId: staged.workspace.id, provider: 'codex', depth: 'medium',
+    selection: { kind: 'baseline', commit, paths: ['main.rs'] } });
+  expect(preview).toMatchObject({ model: 'gpt-test', modelSource: 'codex-config' });
+  learning.attach(preview.token);
+  await expect(learning.generate(preview.token, randomUUID())).rejects.toMatchObject({
+    code: 'PROVIDER_MODEL', message: expect.stringContaining('update the model in Codex config'),
+  });
+  const call = JSON.parse(await readFile(record, 'utf8')) as { argv: string[] };
+  expect(call.argv.slice(call.argv.indexOf('--model'), call.argv.indexOf('--model') + 2)).toEqual(['--model', 'gpt-test']);
+});
+
+it.each(['codex', 'claude'] as const)('leaves the %s CLI default unpinned', async provider => {
+  const home = await makeTempDir('repo-default');
+  const record = join(home, 'request.json');
+  vi.stubEnv('CODEX_HOME', home);
+  vi.stubEnv('DELVE_CODEX_MODEL', undefined);
+  vi.stubEnv('DELVE_CLAUDE_MODEL', undefined);
+  const { runner: fakeRunner } = await setupRunner(await makeShimDir(), {
+    FAKE_PROVIDER_MODE: 'model-rejected', FAKE_PROVIDER_RECORD: record,
+  });
+  await learning.close();
+  learning = new RepositoryLearning(db, '/cache', fakeRunner);
+  const staged = await learning.stage({ kind: 'github', owner: 'example', repo: 'test' });
+  const preview = await learning.preview({ workspaceId: staged.workspace.id, provider, depth: 'medium',
+    selection: { kind: 'baseline', commit, paths: ['main.rs'] } });
+  expect(preview).toMatchObject({ model: null, modelSource: 'default' });
+  learning.attach(preview.token);
+  await expect(learning.generate(preview.token, randomUUID())).rejects.toMatchObject({ code: 'PROVIDER_MODEL' });
+  const call = JSON.parse(await readFile(record, 'utf8')) as { argv: string[] };
+  expect(call.argv).not.toContain('--model');
 });

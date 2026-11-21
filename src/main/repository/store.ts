@@ -6,7 +6,7 @@ import { addPrerequisiteInTransaction, conceptStorageKey, getConceptByKey, upser
 import { nowIso, transaction, type Db } from '../db/connection';
 import { bindSnapshot, saveLessonInTransaction } from '../db/lessons';
 import { documentSchema } from '../reader/document';
-import { modelFor } from '../tutor/prompt';
+import { cacheModel, selectModel } from '../providers/model';
 import { baselineReply, type ChangeReply, type GraphProposal } from './schemas';
 
 export interface ApprovedSource {
@@ -90,7 +90,7 @@ function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: Ch
     ...(preview.partial ? [{ type: 'callout', heading: 'Partial coverage', text: preview.coverageNote ?? 'This brief covers only the available excerpts.' }] : []),
   ] });
   saveLessonInTransaction(db, { workspaceId: request.workspaceId, snapshotId, conceptId: change.id, cacheKey,
-    depth: request.depth, model: preview.model, provider: request.provider, schemaVersion: document.schema, body: document });
+    depth: request.depth, model: cacheModel(preview.model), provider: request.provider, schemaVersion: document.schema, body: document });
   const touched = [...new Set(reply.touched)].map(key => {
     const concept = concepts.get(key);
     if (!concept) invalid('The change footprint refers to an unknown concept.');
@@ -141,7 +141,7 @@ export function latestBrief(db: Db, request: SavedRequest): ChangeBrief | null {
   const ref = request.kind === 'commit' ? request.ref.toLowerCase() + '%' : request.ref;
   const rows = db.prepare(`SELECT result FROM repository_generations WHERE workspace_id = ? AND kind = ?
     AND ref LIKE ? AND depth = ? AND provider = ? AND model = ? AND schema_version = 'delve.change/1'
-    GROUP BY ref ORDER BY max(last_used) DESC LIMIT 2`).all(request.workspaceId, request.kind, ref, request.depth, request.provider, modelFor(request.provider));
+    GROUP BY ref ORDER BY max(last_used) DESC LIMIT 2`).all(request.workspaceId, request.kind, ref, request.depth, request.provider, cacheModel(selectModel(request.provider).model));
   if (rows.length !== 1 || !rows[0]) return null;
   const result = JSON.parse(String(rows[0].result)) as GenerationResult;
   assert.equal(result.kind, 'change');
@@ -165,7 +165,7 @@ export function persistGeneration(db: Db, source: ApprovedSource, proposal: Grap
     db.prepare(`INSERT INTO repository_generations (cache_key, workspace_id, snapshot_id, kind, ref, depth,
       provider, model, schema_version, result, proposal, next_concept, reason, created_at, last_used)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT coalesce(max(last_used), 0) + 1 FROM repository_generations))`)
-      .run(cacheKey, workspaceId, snapshotId, selection.kind, ref, depth, provider, preview.model, proposal.schema,
+      .run(cacheKey, workspaceId, snapshotId, selection.kind, ref, depth, provider, cacheModel(preview.model), proposal.schema,
         JSON.stringify(result), JSON.stringify(proposal), next, proposal.recommendation.reason, nowIso());
     return result;
   });
