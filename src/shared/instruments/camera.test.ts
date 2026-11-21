@@ -20,7 +20,7 @@ describe('camera exposure', () => {
     expect(isoChange.assessment).toBeUndefined();
     expect(result).toMatchObject({
       state: { shutter, iso, captured: true },
-      assessment: { demonstrated, targetKey },
+      assessment: { status: demonstrated ? 'demonstrated' : 'partial', targetKey },
     });
     expect(transition(config, result.state, { type: 'reset' })).toEqual({ state: initial });
   });
@@ -33,4 +33,16 @@ describe('camera exposure', () => {
     expect(() => transition(config, { pack: 'lease-handoff@1', tick: 0, decision: null }, { type: 'reset' })).toThrow();
     expect(defaultPack('camera-exposure@1')?.parameters).toEqual({ initialShutter: 125, initialIso: 200 });
   });
+});
+
+it('requires a real setting change before a pre-solved exposure can demonstrate the goal', () => {
+  const supplied = packSchema.parse({ pack: 'camera-exposure@1', parameters: { initialShutter: 500, initialIso: 800 } });
+  const start = initialState(supplied);
+  const unchanged = transition(supplied, start, { type: 'iso', value: 800 }).state;
+  expect(transition(supplied, unchanged, { type: 'capture' }).assessment?.status).toBe('practice');
+  const dark = transition(supplied, start, { type: 'iso', value: 200 }).state;
+  const corrected = transition(supplied, dark, { type: 'iso', value: 800 }).state;
+  expect(transition(supplied, corrected, { type: 'capture' }).assessment?.status).toBe('demonstrated');
+  const reset = transition(supplied, corrected, { type: 'reset' }).state;
+  expect(transition(supplied, reset, { type: 'capture' }).assessment?.status).toBe('practice');
 });

@@ -28,6 +28,10 @@ Saved pack references without explicit parameters use the version's defaults.
 | `camera-exposure@1` | Set shutter or ISO, capture, reset | `motion-and-brightness@1` checks motion trails and the exposure ratio at capture. |
 | `network-builder@1` | Connect or disconnect two configured ports, test path, reset | `route-through-proxy@1` reconstructs both hops of the simulated route. |
 
+An already-solved starting configuration is a worked example. Capturing it or testing its route records a
+practice observation without changing the learner’s evidence. Demonstrating the goal requires changing
+a camera setting or adding a hop. Reset clears the record of those choices.
+
 The provider may choose a built-in config or return a new `bundle@1` with API version `delve.view/1`.
 The bundle carries UTF-8 source, the fixed entry point `step`, a title and an initial parameter string.
 Delve computes the SHA-256 digest at ingestion and verifies it against the saved bytes at launch.

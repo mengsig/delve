@@ -165,3 +165,18 @@ describe('activity assessment', () => {
     expect(labs.input({ session: opened.session, seq: 4, input: { type: 'reject' } }).lesson).toBeTruthy();
   });
 });
+
+it.each([
+  { pack: 'camera-exposure@1', parameters: { initialShutter: 500, initialIso: 800 }, action: 'capture' },
+  { pack: 'network-builder@1', parameters: { clientPort: 'c', proxyInputPort: 'i', proxyOutputPort: 'o', servicePort: 's',
+    initialLinks: [{ fromPort: 'c', toPort: 'i' }, { fromPort: 'o', toPort: 's' }] }, action: 'test' },
+])('records only practice for a supplied solution to $pack', ({ pack, parameters, action }) => {
+  save([{ ...block, pack, config: { pack, parameters } }]);
+  const host = new LabHost(db);
+  const { session } = host.open(openRequest());
+  const result = host.input({ session, seq: 1, input: { type: action } });
+  expect(listEvidence(db, address.conceptId)).toEqual([]);
+  expect(result.lesson?.reused).toBe(false);
+  expect(result.lesson?.messages.at(-1)).toMatchObject({ role: 'system', observation: expect.any(String),
+    recommendation: { reason: expect.any(String) } });
+});

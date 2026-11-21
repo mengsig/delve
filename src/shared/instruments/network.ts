@@ -40,7 +40,7 @@ const networkParametersSchema = portsSchema.extend({ initialLinks: linksSchema }
 export const networkConfigSchema = z.strictObject({ pack, parameters: networkParametersSchema });
 
 const route = z.enum(['disconnected', 'direct', 'via-proxy']);
-export const networkStateSchema = z.strictObject({ pack, links: linksSchema, testedRoute: route.nullable() });
+export const networkStateSchema = z.strictObject({ pack, links: linksSchema, testedRoute: route.nullable(), addedLink: z.boolean() });
 
 export const networkInputSchema = z.discriminatedUnion('type', [
   linkSchema.extend({ type: z.literal(['link.added', 'link.removed']) }),
@@ -63,7 +63,7 @@ export const networkDefaults = networkConfigSchema.parse({
 });
 
 export function initialNetwork(config: NetworkConfig): NetworkState {
-  return { pack: config.pack, links: config.parameters.initialLinks.map(link => ({ ...link })), testedRoute: null };
+  return { pack: config.pack, links: config.parameters.initialLinks.map(link => ({ ...link })), testedRoute: null, addedLink: false };
 }
 
 function traceRoute(ports: NetworkPorts, links: readonly Link[]): Route {
@@ -74,15 +74,21 @@ function traceRoute(ports: NetworkPorts, links: readonly Link[]): Route {
   return 'disconnected';
 }
 
-function assessRoute(route: Route): Assessment {
+function assessRoute(route: Route, addedLink: boolean): Assessment {
+  if (route === 'via-proxy' && !addedLink) return {
+    status: 'practice',
+    observation: 'The supplied topology already routed the request through the proxy.',
+    action: 'Disconnect a hop, predict the result, then rebuild the route.',
+    reason: 'Testing the starting topology shows where its links lead.',
+  };
   if (route === 'via-proxy') return {
-    demonstrated: true,
+    status: 'demonstrated',
     observation: 'The simulated request reached the service through the proxy.',
     action: 'Remove one link and trace where the request stops.',
     reason: 'Both hops are connected in the requested order.',
   };
   return {
-    demonstrated: false,
+    status: 'partial',
     observation: route === 'direct'
       ? 'The simulated request reached the service directly.'
       : 'The simulated request could not reach the service.',
@@ -104,12 +110,12 @@ export function transitionNetwork(config: NetworkConfig, state: NetworkState, ra
     case 'reset': return { state: initialNetwork(config) };
     case 'test': {
       const testedRoute = traceRoute(ports, state.links);
-      return { state: { ...state, testedRoute }, assessment: assessRoute(testedRoute) };
+      return { state: { ...state, testedRoute }, assessment: assessRoute(testedRoute, state.addedLink) };
     }
     case 'link.added': {
       const { fromPort, toPort } = input;
       if (!canConnect(ports, state.links, input)) throw new Error('Those ports cannot be connected');
-      return { state: { ...state, links: [...state.links, { fromPort, toPort }], testedRoute: null } };
+      return { state: { ...state, links: [...state.links, { fromPort, toPort }], testedRoute: null, addedLink: true } };
     }
     case 'link.removed': {
       const links = state.links.filter(link => link.fromPort !== input.fromPort || link.toPort !== input.toPort);

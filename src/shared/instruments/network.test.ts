@@ -18,12 +18,12 @@ describe('network builder', () => {
     expect(linked.assessment).toBeUndefined();
     expect(tested).toMatchObject({
       state: { links: [firstHop, secondHop], testedRoute: 'via-proxy' },
-      assessment: { demonstrated: true },
+      assessment: { status: 'demonstrated' },
     });
     const removed = transition(config, tested.state, { type: 'link.removed', ...firstHop });
     expect(removed.state).toMatchObject({ testedRoute: null });
     expect(transition(config, removed.state, { type: 'test' })).toMatchObject({
-      state: { testedRoute: 'disconnected' }, assessment: { demonstrated: false },
+      state: { testedRoute: 'disconnected' }, assessment: { status: 'partial' },
     });
     expect(transition(config, removed.state, { type: 'reset' })).toEqual({ state: initial });
   });
@@ -31,7 +31,7 @@ describe('network builder', () => {
   it('reports a direct route as bypassing the proxy', () => {
     const direct = packSchema.parse({ ...config, parameters: { ...ports, initialLinks: [bypass] } });
     expect(transition(direct, initialState(direct), { type: 'test' })).toMatchObject({
-      state: { testedRoute: 'direct' }, assessment: { demonstrated: false },
+      state: { testedRoute: 'direct' }, assessment: { status: 'partial' },
     });
   });
 
@@ -50,4 +50,15 @@ describe('network builder', () => {
     expect(packContracts['network-builder@1'].inputSchema.safeParse({ type: 'test', route: 'via-proxy' }).success)
       .toBe(false);
   });
+});
+
+it('requires a learner-added hop before a fully connected seed can demonstrate the route', () => {
+  const supplied = packSchema.parse({ ...config, parameters: { ...ports, initialLinks: [firstHop, secondHop] } });
+  const start = initialState(supplied);
+  expect(transition(supplied, start, { type: 'test' }).assessment?.status).toBe('practice');
+  const broken = transition(supplied, start, { type: 'link.removed', ...secondHop }).state;
+  const rebuilt = transition(supplied, broken, { type: 'link.added', ...secondHop }).state;
+  expect(transition(supplied, rebuilt, { type: 'test' }).assessment?.status).toBe('demonstrated');
+  const reset = transition(supplied, rebuilt, { type: 'reset' }).state;
+  expect(transition(supplied, reset, { type: 'test' }).assessment?.status).toBe('practice');
 });

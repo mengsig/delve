@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { assessmentSchema, type Assessment } from '../../shared/instruments/assessment';
 import { manifestFor } from './manifest';
 import { DomainError } from '../../shared/errors';
 import { defaultPack, initialState, packContracts, packStateSchema, transition, type PackState } from '../../shared/instruments';
@@ -17,11 +18,7 @@ import { readLesson } from '../reader/ipc';
 import { lessonContext, selectLesson } from '../reader/stored-lesson';
 
 type OpenRequest = LabContract['lab:open']['request'];
-type Assessment = z.infer<typeof assessmentSchema>;
 type Session = { id: string; request: OpenRequest; snapshotId: number | null; config: LabConfig; state: PackState | null; seq: number; expires: number; events: number[] };
-const assessmentSchema = z.strictObject({ demonstrated: z.boolean(), observation: z.string().trim().min(1).max(1500),
-  action: z.string().trim().min(1).max(500), reason: z.string().trim().min(1).max(1500), targetKey: z.string().min(1).max(1024).optional() });
-
 function fail(message: string): never { throw new DomainError('LAB_UNAVAILABLE', message); }
 
 function active(db: Db, address: LessonAddress): void {
@@ -69,8 +66,8 @@ function saveAssessment(db: Db, activity: ReturnType<typeof resolveActivity>, as
   const { context, lessonId } = activity;
   const prior = listEvidence(db, context.conceptId).find(e => e.depth === context.depth);
   const foreignOrigin = prior?.workspaceId && prior.workspaceId !== context.workspaceId;
-  if (!foreignOrigin) recordEvidenceInTransaction(db, { workspaceId: context.workspaceId, conceptId: context.conceptId,
-    depth: context.depth, snapshotId: context.snapshotId ?? undefined, status: assessment.demonstrated ? 'demonstrated' : 'partial',
+  if (!foreignOrigin && assessment.status !== 'practice') recordEvidenceInTransaction(db, { workspaceId: context.workspaceId, conceptId: context.conceptId,
+    depth: context.depth, snapshotId: context.snapshotId ?? undefined, status: assessment.status,
     source: 'environment', note: assessment.observation });
   const targetId = suggestedConcept(db, context.workspaceId, context.demo, assessment.targetKey);
   appendEntries(db, context, lessonId, [{ role: 'system', text: foreignOrigin

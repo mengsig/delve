@@ -17,7 +17,7 @@ describe('lease handoff', () => {
     expect(result).toMatchObject({
       state: { tick: 2, decision },
       assessment: {
-        demonstrated: decision === 'reject',
+        status: decision === 'reject' ? 'demonstrated' : 'partial',
         observation: `You ${decision === 'accept' ? 'accepted' : 'rejected'} generation 7 while generation 8 was active.`,
         targetKey: decision === 'reject' ? 'recovery' : 'fence',
       },

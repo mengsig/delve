@@ -37,14 +37,14 @@ export function initialLease(config: LeaseConfig): LeaseState {
 function assessWrite(generation: number, decision: NonNullable<LeaseState['decision']>): Assessment {
   const observation = `You ${decision === 'accept' ? 'accepted' : 'rejected'} generation ${generation} while generation ${generation + 1} was active.`;
   if (decision === 'accept') return {
-    demonstrated: false,
+    status: 'partial',
     observation,
     action: 'Practice write fencing.',
     reason: 'Accepting the stale result overwrote the active worker’s slot.',
     targetKey: 'fence',
   };
   return {
-    demonstrated: true,
+    status: 'demonstrated',
     observation,
     action: 'Apply the same ownership rule across a daemon restart.',
     reason: 'Rejecting the stale result left the active worker free to publish.',
