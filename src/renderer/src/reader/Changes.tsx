@@ -10,6 +10,7 @@ import type { ReaderProps } from './ReaderHeader';
 import '../explorer/explorer.css';
 
 interface Props extends ReaderProps {
+  onAdd: () => void;
   selected?: ChangeRef;
   openedJob?: ChangeJob;
   onSelect: (change: ChangeRef, title?: string) => void;
@@ -26,7 +27,11 @@ export function Changes(props: Props) {
     requestAnimationFrame(() => page.current?.focus({ preventScroll: !window.matchMedia('(max-width: 800px)').matches }));
   }
   return <div className="explorer" onKeyDown={event => {
-    if (event.key === 'Escape' && !event.defaultPrevented) document.getElementById('change-timeline')?.focus();
+    const timeline = document.getElementById('change-timeline');
+    if (event.key === 'Escape' && !event.defaultPrevented && timeline && event.target !== timeline) {
+      event.preventDefault();
+      timeline.focus();
+    }
   }}>
     <header className="explorer-intro"><div><span className="eyebrow">Repository / {workspace.name}</span><h1>Changes<span className="atlas-period">.</span></h1></div>
       <ReadingDepth depth={depth} onDepth={props.onDepth} /></header>

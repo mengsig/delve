@@ -43,7 +43,7 @@ export function paletteCommands({ workspaces, active, recent, visit, select, res
     { id: 'add', label: 'Add a workspace', detail: 'Topic or repository', open: () => visit({ screen: 'setup' }) },
     { id: 'first-run', label: 'Getting started', detail: 'Workspace setup', open: () => visit({ screen: 'first-run' }) },
   );
-  if (active && active.kind !== 'topic') views.push({
+  if (active && active.kind !== 'topic' && !active.source.startsWith('Demo: ')) views.push({
     id: 'baseline', label: 'Map repository files', detail: active.name, open: () => visit({ screen: 'baseline' }),
   });
   const saved = recent.flatMap(entry => {

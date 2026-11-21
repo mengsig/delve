@@ -1,7 +1,8 @@
 import { expect, type Page } from '@playwright/test';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { test } from './desktop';
+import { shortcut, test } from './desktop';
+import { withinBudget } from './action-budget';
 
 test.use({ tutorCli: true });
 
@@ -28,15 +29,17 @@ async function typeTopic(page: Page, title: string) {
 test('opens the first block from home in two actions, including first-use consent', async ({ desktop: { page, directory } }) => {
   writeOpening(directory);
   await page.setViewportSize({ width: 1280, height: 800 });
-  await add(page).click(); // Action 1: open + Add. The input already has focus.
-  await typeTopic(page, 'IP routing');
-  await expect(page.getByText('Advanced options', { exact: false })).toBeVisible();
-  await expect(page.locator('.setup-advanced')).toHaveJSProperty('open', false);
-  await expect(start(page)).toBeInViewport({ ratio: 1 });
   const receipt = join(directory, 'request.json');
-  expect(existsSync(receipt)).toBe(false);
-  await start(page).click(); // Action 2: submit the topic and approve its displayed request.
-  await expect(page.getByRole('heading', { name: explanation.heading })).toBeInViewport();
+  await withinBudget(page, 'Create a topic and read the first block', 2, async () => {
+    await add(page).click();
+    await typeTopic(page, 'IP routing');
+    await expect(page.getByText('Advanced options', { exact: false })).toBeVisible();
+    await expect(page.locator('.setup-advanced')).toHaveJSProperty('open', false);
+    await expect(start(page)).toBeInViewport({ ratio: 1 });
+    expect(existsSync(receipt)).toBe(false);
+    await start(page).click();
+    await expect(page.getByRole('heading', { name: explanation.heading })).toBeInViewport();
+  });
   const invocation = JSON.parse(readFileSync(receipt, 'utf8'));
   expect(invocation.stdin).toContain('"depth": "medium"');
   expect(invocation.stdin).toContain('IP routing');
@@ -52,8 +55,11 @@ test.describe('first run', () => {
     await typeTopic(page, 'Routing');
     await expect(page.locator('.setup-advanced')).toHaveJSProperty('open', false);
     await expect(start(page)).toBeInViewport({ ratio: 1 });
-    await start(page).click();
-    await expect(page.getByRole('heading', { name: explanation.heading })).toBeInViewport();
+    await withinBudget(page, 'Approve workspace tutoring from first run', 1, async () => {
+      await page.getByRole('button', { name: 'Always allow for this workspace' }).click();
+      await expect(page.getByRole('heading', { name: explanation.heading })).toBeInViewport();
+      await expect(page.getByRole('button', { name: 'Revoke workspace tutor permission' })).toBeVisible();
+    });
   });
 });
 
@@ -97,6 +103,9 @@ test('shows the exact opening request before sending, then cancels, retries and 
   await page.getByRole('textbox', { name: check.prompt }).fill('It covers a smaller destination network.');
   await page.getByRole('button', { name: 'Preview answer', exact: true }).click();
   await expect(page.getByRole('dialog').getByLabel('Exact provider request')).toContainText('It covers a smaller destination network.');
+  await page.keyboard.press(shortcut);
+  await expect(page.locator('dialog[open]')).toHaveCount(1);
+  await expect(page.getByRole('dialog', { name: 'Review what will be sent' })).toBeVisible();
   await page.getByRole('dialog').getByRole('button', { name: 'Always allow for this workspace' }).click();
   await expect(page.getByRole('log')).toContainText('You recognized prefix specificity.');
   await expect(page.getByRole('log')).toContainText('Choose /24');

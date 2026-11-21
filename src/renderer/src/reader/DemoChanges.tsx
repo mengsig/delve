@@ -14,7 +14,7 @@ function Comparison() {
   </section>;
 }
 
-function EmptyChanges(props: ReaderProps) {
+function EmptyChanges(props: ReaderProps & { onAdd: () => void }) {
   const { workspace, graph } = props;
   const topic = workspace.kind === 'topic';
   const summary = topic ? 'This topic has no Git history.'
@@ -22,13 +22,14 @@ function EmptyChanges(props: ReaderProps) {
     : 'There is no saved pull request or commit diff for this repository.';
   return <>
     <ReaderHeader {...props} label={'Change notes / ' + workspace.name} title="No change brief here." summary={summary} showDepth={false} />
+    <button className="primary-btn" onClick={props.onAdd}>Add a repository</button>
     {!topic && graph.snapshot && <section className="sheet">
       <span className="eyebrow">Partial coverage</span><h3>Snapshot only</h3><p className="mono">{graph.snapshot}</p>
     </section>}
   </>;
 }
 
-export function DemoChanges(props: ReaderProps) {
+export function DemoChanges(props: ReaderProps & { onAdd: () => void }) {
   const { workspace, graph, depth, onLesson } = props;
   const fence = graph.concepts.find(concept => concept.key.endsWith(':fence'));
   if (graph.workspaceId !== workspace.id || !graph.demo || graph.snapshot !== demoBrief.head || !fence) return <EmptyChanges {...props} />;

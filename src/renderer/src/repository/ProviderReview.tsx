@@ -39,7 +39,7 @@ function MapPermission({ preview, generation, approval, provider, disabled }: Pi
 }) {
   const [allowed, setAllowed] = useState(false);
   return <>
-    <p>“Approve and map” sends the source shown above to {PROVIDER_LABELS[provider]}.</p>
+    <p>“Approve and map” sends these files to {PROVIDER_LABELS[provider]}.</p>
     {!approval.allowed && <AlwaysAllowSource provider={provider} category="map" checked={allowed} onChange={setAllowed} />}
     <div className="actions">
       <button className="primary-btn" disabled={disabled} onClick={() => generation.approve(preview, allowed ? () => approval.setAllowed(true) : undefined)}>
@@ -61,7 +61,7 @@ export function ProviderReview({ generation, provider, depth, approval, disabled
       <CopyGitHubLogin message={error.message} /></div>}
     {preview && <section className="repository-review" aria-labelledby={title}>
       <h3 id={title} ref={heading} tabIndex={-1}>Review provider request</h3>
-      <RepositoryRequestSource preview={preview} provider={provider} depth={depth} expanded />
+      <RepositoryRequestSource preview={preview} provider={provider} depth={depth} />
       <MapPermission key={preview.token} preview={preview} generation={generation} approval={approval} provider={provider} disabled={disabled} />
     </section>}
   </>;
@@ -72,10 +72,10 @@ export function RepositoryRequestSource({ preview, provider, depth, expanded, in
 }) {
   const exact = <pre aria-label="Exact provider request" tabIndex={0}>{preview.prompt}</pre>;
   return <>
-    <p>{PROVIDER_LABELS[provider]} · {modelLabel(provider, preview)} · {depth} depth · {preview.bytes.toLocaleString()} bytes</p>
+    <p>{PROVIDER_LABELS[provider]} · {modelLabel(provider, preview)} · {depth} depth · {preview.files.length} {preview.files.length === 1 ? 'file' : 'files'} · {preview.bytes.toLocaleString()} bytes</p>
     <p className="repository-ref"><strong>{preview.title}</strong> · <code>{preview.commit}</code></p>
     {preview.partial && <p className="repository-notice" role="status">Partial coverage. {preview.coverageNote ?? 'The provider request uses only the available content shown here.'}</p>}
-    {preview.files.length > 0 && <p>Files included: {preview.files.join(', ')}</p>}
+    {preview.files.length > 0 && <p className="shared-paths" title={preview.files.join(', ')}>Files included: {preview.files.join(', ')}</p>}
     {inlinePrompt ? exact : <details open={expanded}><summary>Exact request</summary>{exact}</details>}
   </>;
 }

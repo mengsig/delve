@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { Command } from './commands';
-import { moveIndex } from './switcher';
+import { filterCommands, moveIndex } from './switcher';
 import './setup.css';
 
 interface Props {
@@ -10,7 +10,7 @@ interface Props {
 }
 
 const OPTIONS_ID = 'workspace-switcher-options';
-const optionId = (id: string) => `workspace-option-${id}`;
+const optionId = (id: string) => `workspace-option-${encodeURIComponent(id)}`;
 
 function SwitcherSearch({ commands, onChoose, pending }: Pick<Props, 'commands'> & {
   onChoose: (command: Command) => void;
@@ -18,11 +18,7 @@ function SwitcherSearch({ commands, onChoose, pending }: Pick<Props, 'commands'>
 }) {
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(() => Math.max(0, commands.findIndex(item => item.current)));
-  const words = query.toLowerCase().trim().split(/\s+/);
-  const matches = commands.filter(item => {
-    const text = [item.label, item.detail, item.search].join(' ').toLowerCase();
-    return words.every(word => text.includes(word));
-  });
+  const matches = filterCommands(commands, query);
   const current = Math.min(highlight, matches.length - 1);
   const highlighted = matches[current];
   const selected = useRef<HTMLLIElement>(null);
@@ -68,17 +64,26 @@ export function WorkspaceSwitcher({ commands, onClose, onAdd }: Props) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
 
+  const dismiss = useEffectEvent(onClose);
   useLayoutEffect(() => {
     const element = dialog.current;
     const opener = document.activeElement;
     if (!element) throw new Error('The workspace switcher needs a mounted dialog.');
     const finder = element.querySelector('input');
     if (!finder) throw new Error('The workspace switcher needs a search field.');
+    function yieldToDialog(event: Event) {
+      if (event.target !== element && event.target instanceof HTMLDialogElement && (event as ToggleEvent).newState === 'open') {
+        element?.close();
+        dismiss();
+      }
+    }
+    document.addEventListener('beforetoggle', yieldToDialog, true);
     element.showModal();
     finder.focus();
     return () => {
+      document.removeEventListener('beforetoggle', yieldToDialog, true);
       element.close();
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+      if (opener instanceof HTMLElement && opener.isConnected && !document.querySelector('dialog[open]') && !document.activeElement?.matches('#source-input')) opener.focus({ preventScroll: true });
     };
   }, []);
 

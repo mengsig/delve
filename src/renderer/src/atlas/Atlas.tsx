@@ -2,6 +2,7 @@ import type { ChangeRef } from '../../../shared/repository';
 import { useMemo, useState, type ReactNode } from 'react';
 import type { Depth, Workspace } from '../../../shared/domain';
 import type { WorkspaceGraph } from '../../../shared/graph';
+import { jobInProgress, mapJobKey, useMapJobs } from '../repository/MapJobs';
 import { ContourMap } from './ContourMap';
 import { demoPlate } from './demoAtlas';
 import { FieldGuide } from './FieldGuide';
@@ -68,6 +69,19 @@ function StartTopic({ start }: { start: () => Promise<void> }) {
     {error && <p role="alert">{error}</p>}</>;
 }
 
+function EmptyAtlas({ workspace, onStartTopic, onMap }: Pick<AtlasProps, 'workspace' | 'onStartTopic' | 'onMap'>) {
+  const job = useMapJobs().jobs.get(mapJobKey(workspace.id));
+  if (jobInProgress(job)) return <section className="sheet atlas-empty atlas-building">
+    <h3>Your map is on its way</h3><p>The concepts will appear here when they’re ready. You can explore another workspace while you wait.</p>
+  </section>;
+  const topic = workspace.kind === 'topic';
+  return <section className="sheet atlas-empty">
+    <h3>No concepts mapped yet</h3>
+    <p>{topic ? 'Start a lesson to add the first concept.' : 'Choose repository files to build your first map.'}</p>
+    {topic ? <StartTopic start={onStartTopic} /> : <button className="primary-btn" onClick={onMap}>Map this repository →</button>}
+  </section>;
+}
+
 function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel }) {
   const { workspace, graph, depth, view, onLesson, onChanges } = props;
   const demo = useMemo(() => demoPlate(graph, model), [graph, model]);
@@ -87,7 +101,7 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
     <Topline workspace={workspace} name={name} blurb={blurb} continueActivity={props.continueActivity} />
     {props.workspaceBar}
     {!graph.demo && workspace.kind !== 'topic' && selected &&
-      <button className="repository-setup-link" onClick={props.onMap}>{graph.baselineCommit ? 'Map another repository slice →' : 'Map this repository →'}</button>}
+      <button className="repository-setup-link" onClick={props.onMap}>{graph.baselineCommit ? 'Map more files →' : 'Map this repository →'}</button>}
     {selected && target ? <div className="split"><div>
       {view === 'contour'
         ? <ContourMap model={model} selected={selected} recommendedId={recommendedId} workspaceId={workspace.id} depth={depth}
@@ -96,14 +110,8 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
       <Inspector selected={selected} status={statusText(selected, workspace.id, selected.id === demo?.changed?.id)}
         onSelect={setSelection} onLesson={onLesson} />
     </div><FieldGuide suggestedChange={graph.changeSuggestions?.[depth]} model={model} target={target} reason={adaptive && suggestion?.reason} workspace={workspace} demo={demo} onLesson={onLesson} onChanges={onChanges} /></div>
-      : <section className="sheet atlas-empty"><h3>No concepts mapped yet</h3>
-        <p>This workspace has no saved concepts to explore.</p>
-        <div className="actions">{workspace.kind === 'topic'
-          ? <StartTopic start={props.onStartTopic} />
-          : <button className="primary-btn" onClick={props.onMap}>Map this repository →</button>}
-</div>
-      </section>}
-    <AtlasFooter model={model} depth={depth} onProgress={props.onProgress} view={view} onView={props.onView} />
+      : <EmptyAtlas {...props} />}
+    {selected && <AtlasFooter model={model} depth={depth} onProgress={props.onProgress} view={view} onView={props.onView} />}
   </div>;
 }
 

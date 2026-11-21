@@ -135,3 +135,7 @@
 .change-page > .panel-message { padding-inline: clamp(18px, 2.4vw, 34px); }
 .change-lesson-action > .actions, .change-lesson-action > p { margin-bottom: 16px; }
 .approved-change-source[open] { flex-basis: 100%; }
+
+.change-source-review { display: grid; gap: 6px; }
+.change-source-review > p { margin: 0; }
+.change-source-review .shared-paths { font: 12px/1.5 ui-monospace, monospace; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

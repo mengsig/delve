@@ -24,17 +24,30 @@ function latestInstrument(body: ReaderLesson): string | null {
   return index >= 0 ? blockKey(null, index) : null;
 }
 
+function instrumentExists(body: ReaderLesson, key: string) {
+  const [source, index] = key.split('/');
+  const blocks = source === 'opening' ? body.blocks : body.messages.find(message => message.id === Number(source))?.blocks;
+  const block = blocks?.[Number(index)];
+  return block && runnable(block);
+}
+
 export function LessonInstruments({ address, body, onLesson, children }: {
   address: LessonAddress; body: ReaderLesson; onLesson: Scope['onLesson']; children: ReactNode;
 }) {
-  const resumeKey = useContext(EnvironmentActivity)?.resumeKey;
+  const activity = useContext(EnvironmentActivity);
+  const resumeKey = activity?.resumeKey;
+  const missing = Boolean(resumeKey && !instrumentExists(body, resumeKey));
+  const fallBackToLesson = useEffectEvent(() => activity?.onRead());
+  useEffect(() => { if (missing) fallBackToLesson(); }, [missing]);
   const latest = latestInstrument(body);
-  const saved = resumeKey && [body.blocks, ...body.messages.map(message => message.blocks ?? [])].some((blocks, i) =>
-    blocks.some((block, index) => runnable(block) && blockKey(i === 0 ? null : body.messages[i - 1]!.id, index) === resumeKey));
+  const saved = resumeKey && !missing ? resumeKey : latest;
   const [choice, setChoice] = useState<{ latest: string | null; active: string }>();
-  const active = choice?.latest === latest ? choice.active : saved ? resumeKey! : latest;
+  const active = choice?.latest === latest ? choice.active : saved;
   return <LabContext.Provider value={{ address, revision: body.revision, active,
-    select: id => setChoice({ latest, active: id }), onLesson }}>{children}</LabContext.Provider>;
+    select: id => setChoice({ latest, active: id }), onLesson }}>
+    {missing && <p role="status">This environment is no longer in the saved lesson. Continue reading below.</p>}
+    {children}
+  </LabContext.Provider>;
 }
 
 function TextAlternative({ text, expanded = false }: { text?: string; expanded?: boolean }) {

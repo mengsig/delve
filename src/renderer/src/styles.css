@@ -8,6 +8,7 @@
   --motion-page: 200ms;
   --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
+html { scrollbar-gutter: stable; }
 body { padding-bottom: 24px; }
 .brand { border: 0; padding: 0; background: transparent; }
 button { transition: background-color var(--motion-fast), border-color var(--motion-fast), filter var(--motion-fast); }
@@ -28,3 +29,13 @@ button:active:not(:disabled) { translate: 0 1px; }
 }
 .brand kbd { font: 500 11px/1.3 ui-monospace, monospace; letter-spacing: 0; color: var(--dim); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 5px; }
 textarea:focus-visible { outline: 3px solid var(--green); outline-offset: 2px; }
+
+.workspace-wait {
+  position: fixed;
+  z-index: 4;
+  inset: auto 1rem 1rem auto;
+  padding: .5rem .8rem;
+  border: 1px solid var(--rule);
+  border-radius: .4rem;
+  background: var(--surface);
+}

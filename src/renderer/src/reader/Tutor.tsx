@@ -50,10 +50,10 @@ function useTutorPreview(start: (request: TutorRequest, token: string) => boolea
 function useApproval(address: LessonAddress, provider: Provider, refresh: () => void) {
   const [error, setError] = useState('');
   const permitted = provider === 'demo' || hasTutorApproval(address.workspaceId, provider);
-  function setAllowed(allowed: boolean) {
-    if (provider === 'demo') return false;
+  function setAllowed(allowed: boolean, reviewedProvider = provider) {
+    if (reviewedProvider === 'demo') return false;
     try {
-      setTutorApproval(address.workspaceId, provider, allowed);
+      setTutorApproval(address.workspaceId, reviewedProvider, allowed);
       setError('');
       refresh();
       return true;
@@ -106,7 +106,7 @@ export function useTutor(address: LessonAddress, title: string, demo: boolean, o
 
   function approve(always: boolean) {
     const preview = review.preview;
-    if (!preview || (always && !approval.setAllowed(true))) return;
+    if (!preview || (always && !approval.setAllowed(true, preview.request.provider))) return;
     if (start(preview.request, preview.data.token)) review.close();
     else review.setError('A tutor request is already running for this lesson.');
   }

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useContext, useEffect, useRef, useState, type FormEvent } from 'react';
 import type { LessonBlock, ReaderMessage } from '../../../shared/reader';
+import { EnvironmentActivity } from '../lab/EnvironmentActivity';
 import { Check, TeachingBlock } from './Blocks';
 import type { useTutor } from './Tutor';
 
@@ -44,10 +45,12 @@ export function Composer({ tutor, draft, setDraft, focusOnOpen }: {
   tutor: ReturnType<typeof useTutor>; draft: string; setDraft: (text: string) => void; focusOnOpen?: boolean;
 }) {
   const input = useRef<HTMLTextAreaElement>(null);
+  const activity = useContext(EnvironmentActivity);
   useEffect(() => { if (focusOnOpen) input.current?.focus({ preventScroll: true }); }, [focusOnOpen]);
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!draft.trim() || tutor.pending) return;
+    activity?.onRead();
     tutor.prepare({ kind: 'ask', text: draft.trim() });
   }
   return <form className="reader-composer" onSubmit={submit}>

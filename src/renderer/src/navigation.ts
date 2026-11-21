@@ -40,7 +40,21 @@ function usePageHistory(initial: WorkspaceList) {
     if (route.screen === 'first-run') dismissOnboarding();
     setStack(previous => previous.length > 1 ? previous.slice(0, -1) : [{ screen: 'atlas' }]);
   }
-  return { route, visit, back, reset: (next: Route) => setStack([next]) };
+  function backTo(next: Route) {
+    setStack(previous => {
+      const index = previous.findLastIndex(entry => entry.screen === next.screen);
+      if (index < 0) return [next];
+      const prior = previous[index];
+      const sameChange = next.screen === 'changes' && prior?.screen === 'changes'
+        && next.change?.kind === prior.change?.kind && next.change?.ref === prior.change?.ref;
+      return [...previous.slice(0, index), sameChange ? prior : next];
+    });
+  }
+  function openPrimary(screen: 'atlas' | 'progress' | 'changes' | 'setup') {
+    const saved = screen === 'changes' && stack.findLast(entry => entry.screen === 'changes');
+    visit(saved || { screen });
+  }
+  return { route, visit, back, backTo, openPrimary, reset: (next: Route) => setStack([next]) };
 }
 
 export function useDesktopNavigation(initial: WorkspaceList) {

@@ -69,19 +69,21 @@ interface ViewportProps {
   onOpen?: () => void;
 }
 
+function findSelectedNode(nodes: HistoryNode[], key?: string) {
+  if (!key) return -1;
+  const exact = nodes.findIndex(node => changeKey(node) === key);
+  if (exact >= 0 || !key.startsWith('commit/')) return exact;
+  const matches = nodes.filter(node => changeKey(node).startsWith(key.toLowerCase()));
+  return matches.length === 1 ? nodes.indexOf(matches[0]!) : -1;
+}
+
 export function HistoryViewport({ query, nodes, layout, selected, more, loadMore, onSelect, onOpen }: ViewportProps) {
   const width = useMemo(() => graphWidth(layout), [layout]);
   const { viewport, bounds, scroll } = useViewport(nodes.length, loadMore);
   const [focus, setFocus] = useState<{ query: string; index?: number }>({ query });
   if (focus.query !== query) setFocus({ query });
   const selectedKey = selected && changeKey(selected);
-  const selectedIndex = useMemo(() => {
-    if (!selectedKey) return -1;
-    const exact = nodes.findIndex(node => changeKey(node) === selectedKey);
-    if (exact >= 0 || !selectedKey.startsWith('commit/')) return exact;
-    const matches = nodes.filter(node => changeKey(node).startsWith(selectedKey.toLowerCase()));
-    return matches.length === 1 ? nodes.indexOf(matches[0]!) : -1;
-  }, [nodes, selectedKey]);
+  const selectedIndex = useMemo(() => findSelectedNode(nodes, selectedKey), [nodes, selectedKey]);
   const fallback = selectedIndex >= 0 ? selectedIndex : Math.min(0, nodes.length - 1);
   const active = focus.query === query && focus.index !== undefined && focus.index < nodes.length ? focus.index : fallback;
   const indices = visibleRows(bounds.top, bounds.height, nodes.length, active);

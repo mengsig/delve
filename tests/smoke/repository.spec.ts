@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { join } from 'node:path';
 import type { DelveApi } from '../../src/shared/ipc';
 import { test } from './desktop';
+import { withinBudget } from './action-budget';
 
 test.use({ tutorCli: true, firstRun: true });
 
@@ -51,7 +52,7 @@ async function generateBrief(page: Page, directory: string, depth: 'medium' | 'l
   expect(prompt).toContain('+export const attempts = 3;');
   const gate = join(directory, 'gate');
   if (depth === 'medium') writeFileSync(gate, '');
-  await test.step('Approve and request a commit lesson in one click', async () => {
+  await withinBudget(page, 'Approve and request a commit lesson in one click', 1, async () => {
     await review.getByRole('button', { name: 'Teach me this change' }).click();
     if (depth === 'low') await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
   });
@@ -81,7 +82,7 @@ async function addAndMap(page: Page, directory: string, repo: string, info: Test
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({ ...graph, schema: 'delve.map/1' }));
   writeFileSync(gate, '');
   const jobs = page.getByRole('region', { name: 'Repository generation' });
-  await test.step('Map a pasted local repository in place with one confirmation', async () => {
+  await withinBudget(page, 'Map a pasted local repository in place with one confirmation', 1, async () => {
     await page.getByRole('button', { name: 'Add and build map' }).click();
     await expect(jobs.getByRole('progressbar')).toBeVisible();
     await capture(page, info, 'background-map');
@@ -156,7 +157,7 @@ test('accepts a folder dropped into the initial repository field and offers a re
   await expect(page.getByRole('alert')).toHaveCount(0);
   expect(existsSync(join(directory, 'request.json'))).toBe(false);
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({ ...graph, schema: 'delve.map/1' }));
-  await test.step('Map a dropped folder in place with one confirmation', async () => {
+  await withinBudget(page, 'Map a dropped folder in place with one confirmation', 1, async () => {
     await page.getByRole('button', { name: 'Add and build map' }).click();
     await expect(page.getByLabel('Field guide')).toContainText(concept.title);
   });

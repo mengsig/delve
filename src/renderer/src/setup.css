@@ -1,9 +1,8 @@
-.setup-controls {
-  min-inline-size: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
+.setup-controls { min-inline-size: 0; margin: 0; padding: 0; border: 0; }
+.setup-form { margin: 0; min-inline-size: 0; }
+.setup-source-review { align-self: start; }
+.setup-source-review .attach-files:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.setup-source-review .attach-preview { border: 0; padding-inline: 0; }
 .source-control {
   display: flex;
   align-items: stretch;
@@ -163,3 +162,5 @@
 .setup-topic-review {
   margin-block: 12px;
 }
+.setup-art button { align-self: start; margin-top: 16px; color: #18392a; background: #e2efcd; border-color: #c4d4b3; }
+.setup-form > .exact-tutor-request { margin-top: 14px; }

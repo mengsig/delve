@@ -37,9 +37,7 @@ function useJobStore() {
 function useQueue() {
   const { jobs, add, replace } = useJobStore();
   const running = useRef(new Map<string, TutorJob>());
-  const positions = useRef(new Map<string, number>());
-  const [visible, setVisible] = useState<string>();
-  const [openError, setOpenError] = useState('');
+
 
   async function generate(job: TutorJob, token: string) {
     try {
@@ -91,14 +89,22 @@ function useQueue() {
     }
   }
 
-  return { jobs, start, reportFailure, cancel, positions, visible, setVisible, openError, setOpenError,
+  return { jobs, start, reportFailure, cancel,
     dismiss: (job: TutorJob) => { if (!running.current.has(job.key)) replace(job); } };
 }
 
-const TutorJobsContext = createContext<ReturnType<typeof useQueue> | null>(null);
+function useTutorActivity() {
+  const queue = useQueue();
+  const positions = useRef(new Map<string, number>());
+  const [visible, setVisible] = useState<string>();
+  const [openError, setOpenError] = useState('');
+  return { ...queue, positions, visible, setVisible, openError, setOpenError };
+}
+
+const TutorJobsContext = createContext<ReturnType<typeof useTutorActivity> | null>(null);
 
 export function TutorJobsProvider({ children }: { children: ReactNode }) {
-  return <TutorJobsContext.Provider value={useQueue()}>{children}</TutorJobsContext.Provider>;
+  return <TutorJobsContext.Provider value={useTutorActivity()}>{children}</TutorJobsContext.Provider>;
 }
 
 export function useTutorJobs() {

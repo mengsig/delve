@@ -34,7 +34,6 @@ function useShortcuts(nav: DesktopNavigation) {
     } else if (event.key === 'Escape' && nav.route.screen !== 'atlas') {
       const target = event.target;
       if (target instanceof HTMLElement && target.matches('textarea, select')) return target.blur();
-      if (nav.route.screen === 'changes' && document.querySelector('.explorer')?.contains(target as Node)) return;
       nav.back();
     }
   });
@@ -95,8 +94,9 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
     if (!setup) main.current?.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, [route.screen, active?.id, setup]);
-  function added(workspace: Workspace, depth: Depth, conceptId?: number) {
+  function added(workspace: Workspace, depth: Depth, conceptId?: number, notice?: string) {
     nav.activate(workspace, conceptId ? { screen: 'lesson', conceptId } : { screen: 'atlas' }, depth);
+    if (notice) nav.setError(notice);
   }
   function accepted(intent: LearnIntent, workspace: Workspace) {
     palette.hide();
@@ -107,10 +107,10 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
   return <>
     <a className="skip-link" href="#workspace-page">Skip to workspace</a>
     <section className="shell" aria-label="Delve desktop">
-      <Header screen={route.screen} go={screen => nav.visit({ screen })} openSwitcher={palette.show} />
+      <Header screen={route.screen} go={nav.openPrimary} openSwitcher={palette.show} />
       <main id="workspace-page" ref={main} tabIndex={-1} className="app">
-        {nav.error && <div role="alert">{nav.error} <button onClick={palette.show}>Choose workspace</button></div>}
-        {nav.switching && <span role="status">Opening workspace…</span>}
+        {nav.error && <div role="alert">{nav.error} <button onClick={palette.show}>Choose workspace</button> <button onClick={() => nav.setError('')}>Dismiss</button></div>}
+        {nav.switching && <span className="workspace-wait" role="status">Opening workspace…</span>}
         <LearnLink onAccepted={accepted} />
         <DesktopJobs nav={nav} />
         <div className="screen" key={active?.id}>

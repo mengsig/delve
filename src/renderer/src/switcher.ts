@@ -1,4 +1,4 @@
-import type { Workspace } from '../../shared/domain';
+import type { Command } from './commands';
 
 export interface ShortcutKey {
   key: string;
@@ -14,13 +14,12 @@ export function isSwitcherShortcut(event: ShortcutKey, isMac: boolean): boolean 
   return modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k';
 }
 
-/** Workspaces whose name or source contains every word of `query`, in their listed order. */
-export function filterWorkspaces(workspaces: Workspace[], query: string): Workspace[] {
-  const words = query.toLowerCase().split(/\s+/).filter((word) => word.length > 0);
-  if (words.length === 0) return workspaces;
-  return workspaces.filter((workspace) => {
-    const haystack = `${workspace.name} ${workspace.source}`.toLowerCase();
-    return words.every((word) => haystack.includes(word));
+export function filterCommands(commands: Command[], query: string): Command[] {
+  const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return commands;
+  return commands.filter(command => {
+    const text = [command.label, command.detail, command.search].join(' ').toLowerCase();
+    return words.every(word => text.includes(word));
   });
 }
 
