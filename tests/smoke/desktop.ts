@@ -16,6 +16,7 @@ function launch(userData: string): Promise<ElectronApplication> {
 }
 
 export const test = base.extend<{ desktop: Desktop }>({
+  // eslint-disable-next-line no-empty-pattern -- Playwright requires a destructured fixture argument.
   desktop: async ({}, use) => {
     const directory = mkdtempSync(join(tmpdir(), 'delve-smoke-'));
     let app: ElectronApplication | undefined;
