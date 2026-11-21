@@ -17,6 +17,8 @@ A click, Enter to submit or a keyboard shortcut counts as one action. Typing the
 | PR page → saved lesson | 1 | **1** | Reopen the cached lesson, including offline. |
 | Atlas → another workspace | 2 | **1** | Direct workspace buttons replace opening a picker first. The full list remains searchable. |
 | Go to Atlas, Changes or Progress | 1 | **1 each** | Persistent header actions also keep the selected change when returning to Changes. |
+| Open global Knowledge | Not available | **1** | The header opens the cross-workspace graph; Ctrl/⌘-K also finds Knowledge. |
+| Selected concept → lesson or review | Not available | **1 each** | The detail panel opens its lesson or review directly; a new model request still needs consent. |
 | Command palette | Shortcut, type, Enter for workspaces only | **1 shortcut**, then type + Enter | Ctrl/⌘-K searches workspaces, primary views, Terrain, Folio, setup and recent lessons across workspaces. Escape returns focus to the opener. |
 | Home → last lesson, environment or change | No direct action | **1 each** | Continue restores the workspace, depth and destination. For a lab it selects and focuses the saved block. This also works after restart. |
 | Approve a tutor request | 1 approval after opening review | **1 approval** | Allow once or allow future tutoring here with this provider. Revoke from the reader. Inspect exact input in one click. |
@@ -44,7 +46,7 @@ The mockup's separate Atlas destination remains available through the persistent
 
 The map retains a small, muted React Flow attribution in both themes. Delve and React Flow are MIT-licensed; [React Flow's attribution policy](https://reactflow.dev/remove-attribution) asks projects that remove the badge to subscribe. Keeping it acknowledges the library while fitting the Contour map, unlike the unbadged mockup.
 
-CI runs the journey assertions against the built desktop as part of `npm run test:smoke`. The [action counter](../tests/smoke/action-budget.ts) measures trusted pointer and keyboard events. [Tutor](../tests/smoke/tutor.spec.ts), [repository](../tests/smoke/repository.spec.ts), [Changes](../tests/smoke/explorer.spec.ts) and [navigation](../tests/smoke/navigation.spec.ts) cover the budgets above. Tests exercise actual Git operations and the normal CLI boundary with deterministic provider and GitHub fixtures.
+CI runs the journey assertions against the built desktop as part of `npm run test:smoke`. The [action counter](../tests/smoke/action-budget.ts) measures trusted pointer and keyboard events. [Tutor](../tests/smoke/tutor.spec.ts), [repository](../tests/smoke/repository.spec.ts), [Changes](../tests/smoke/explorer.spec.ts) and [navigation](../tests/smoke/navigation.spec.ts) and [Knowledge](../tests/smoke/knowledge.spec.ts) cover the budgets above. Tests exercise actual Git operations and the normal CLI boundary with deterministic provider and GitHub fixtures.
 
 The packaged before/after artifact, **delve-ux-journeys**, includes matching 1280 × 800 captures of setup, Atlas, search, first-use consent, the first lesson, repository attachment, map progress and the selected PR. The accessibility checks exercise keyboard focus, native dialogs, reduced motion and the dark and light designs. Automated checks complement the keyboard and viewport journeys. Verification used Linux and fixture subscription responses.
 

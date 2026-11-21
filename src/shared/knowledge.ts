@@ -1,4 +1,17 @@
-import type { Depth } from './domain';
+import type { Depth, ProviderId } from './domain';
+
+export interface ConnectionProvenance {
+  provider: ProviderId;
+  model: string | null;
+  modelSource: 'default' | 'override' | 'codex-config';
+}
+export interface ConnectionPreview extends ConnectionProvenance {
+  token: string; prompt: string; bytes: number; outputSchema: string; files: string[];
+}
+export interface ConnectionResult {
+  provenance: ConnectionProvenance;
+  suggestions: { fromConceptId: number; toConceptId: number; reason: string }[];
+}
 
 export type MasteryState = 'verified' | 'in-progress' | 'skipped' | 'not-started';
 
@@ -23,6 +36,7 @@ export interface KnowledgeConcept {
   evidenceRevision: number | null;
   /** When mastery was first verified (earliest verified evidence), or null. */
   learnedAt: string | null;
+  learnedWorkspaceId: string | null;
   /** True when the concept is used by two or more workspaces. */
   bridge: boolean;
 }

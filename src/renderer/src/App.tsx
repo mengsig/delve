@@ -118,7 +118,7 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
         <DesktopJobs nav={nav} />
         <div className="screen" key={active?.id}>
           {route.screen === 'knowledge' ? <Knowledge onOpen={(workspaceId, conceptId, target, depth) => {
-            void nav.select(workspaceId, target === 'atlas' ? { screen: 'atlas', conceptId } : { screen: 'lesson', conceptId }, depth)
+            void nav.select(workspaceId, target === 'atlas' ? { screen: 'atlas', conceptId } : { screen: 'lesson', conceptId, review: target === 'review' }, depth)
               .catch(cause => nav.setError(errorMessage(cause)));
           }} /> : setup ? <AddWorkspaceForm onOpenSwitcher={palette.show} onAdded={added} onCancel={active ? nav.back : undefined}
             firstRun={route.screen === 'first-run' || !active} />

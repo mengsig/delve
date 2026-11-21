@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { PROVIDER_IDS, type ProviderId } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
+import type { ConnectionPreview, ConnectionResult } from '../../shared/knowledge';
 import { cancelledError, invalidOutputError } from '../providers/errors';
 import { selectModel } from '../providers/model';
 import type { RunRequest, RunResult } from '../providers/runner';
@@ -30,25 +31,6 @@ const PREVIEW_LIFETIME_MS = 10 * 60_000;
 export type ConnectionPreviewRequest = z.infer<typeof connectionSchemas['connections:preview']>;
 export type ConnectionRunRequest = z.infer<typeof connectionSchemas['connections:run']>;
 export type ConnectionSuggestion = z.infer<typeof replySchema>['suggestions'][number];
-
-export interface ConnectionProvenance {
-  provider: ProviderId;
-  model: string | null;
-  modelSource: Exclude<ReturnType<typeof selectModel>['modelSource'], 'demo'>;
-}
-
-export interface ConnectionPreview extends ConnectionProvenance {
-  token: string;
-  prompt: string;
-  bytes: number;
-  outputSchema: string;
-  files: string[];
-}
-
-export interface ConnectionResult {
-  provenance: ConnectionProvenance;
-  suggestions: ConnectionSuggestion[];
-}
 
 interface PendingPreview {
   conceptId: number;

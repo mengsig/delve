@@ -50,7 +50,7 @@ function StudyLesson({ route, common, remember, refresh, backTo }: {
     remember({ kind: 'environment', workspaceId, conceptId, depth, title: name, blockKey, change });
   }
   return <EnvironmentActivity.Provider value={{ resumeKey: environment, onUse: used, onRead: read }}>
-    <Lesson {...common} conceptId={conceptId} initialQuestion={route.question} onEvidence={refresh}
+    <Lesson {...common} conceptId={conceptId} initialQuestion={route.question} initialReview={route.review} onEvidence={refresh}
       onBack={() => backTo({ screen: 'atlas', conceptId })}
       onBackToChange={change ? () => backTo({ screen: 'changes', change }) : undefined} />
   </EnvironmentActivity.Provider>;

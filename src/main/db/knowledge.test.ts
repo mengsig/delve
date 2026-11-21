@@ -4,6 +4,7 @@ import { openDatabase, type Db } from './connection';
 import { recordEvidence } from './evidence';
 import { createTransferLink, deleteTransferLink, getGlobalKnowledgeGraph } from './knowledge';
 import { addWorkspace } from './workspaces';
+import { seedDemoWorkspaces } from './demo';
 
 let db: Db;
 let alpha: string;
@@ -30,7 +31,7 @@ describe('global knowledge graph', () => {
     const graph = getGlobalKnowledgeGraph(db);
     expect(graph.concepts.map((c) => c.id)).toEqual([shared.id, local.id]);
     expect(graph.concepts[0]).toMatchObject({ bridge: true, masteredDepth: null, learnedAt: null });
-    expect(graph.concepts[0].memberships.map((m) => m.workspaceName)).toEqual(['Alpha', 'Beta']);
+    expect(graph.concepts[0]!.memberships.map((m) => m.workspaceName)).toEqual(['Alpha', 'Beta']);
     expect(graph.concepts[1]).toMatchObject({ bridge: false, memberships: [{ workspaceId: alpha, workspaceName: 'Alpha' }] });
     expect(graph.edges).toEqual([{ conceptId: local.id, prerequisiteId: shared.id }]);
   });
@@ -40,24 +41,24 @@ describe('global knowledge graph', () => {
     recordEvidence(db, { conceptId: c.id, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true, workspaceId: alpha });
     recordEvidence(db, { conceptId: c.id, depth: 'low', status: 'demonstrated', source: 'environment', workspaceId: alpha });
     const [verifiedHigh] = getGlobalKnowledgeGraph(db).concepts;
-    expect(verifiedHigh.masteredDepth).toBe('high');
-    expect(verifiedHigh.learnedAt).not.toBeNull();
+    expect(verifiedHigh!.masteredDepth).toBe('high');
+    expect(verifiedHigh!.learnedAt).not.toBeNull();
 
     recordEvidence(db, { conceptId: c.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true, workspaceId: alpha });
-    expect(getGlobalKnowledgeGraph(db).concepts[0].masteredDepth).toBe('medium');
+    expect(getGlobalKnowledgeGraph(db).concepts[0]!.masteredDepth).toBe('medium');
   });
 
   it('reports in-progress, skipped and not-started lesson states with the evidence revision', () => {
-    const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((key) => upsertConcept(db, { key, title: key, portable: true, workspaceId: alpha }));
+    const [a, b, c, d] = (['a', 'b', 'c', 'd'] as const).map((key) => upsertConcept(db, { key, title: key, portable: true, workspaceId: alpha }));
     const stage = db.prepare("INSERT INTO lesson_mastery (workspace_id, concept_id, depth, scope, revision, state) VALUES (?, ?, 'medium', 's', 'r', ?)");
-    stage.run(alpha, a.id, JSON.stringify({ stage: 'checking' }));
-    stage.run(alpha, b.id, JSON.stringify({ stage: 'skipped' }));
+    stage.run(alpha, a!.id, JSON.stringify({ stage: 'checking' }));
+    stage.run(alpha, b!.id, JSON.stringify({ stage: 'skipped' }));
     for (let i = 0; i < 2; i += 1) {
-      recordEvidence(db, { conceptId: d.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true, workspaceId: alpha });
+      recordEvidence(db, { conceptId: d!.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true, workspaceId: alpha });
     }
     const states = getGlobalKnowledgeGraph(db).concepts.map((x) => [x.masteryState, x.evidenceRevision]);
     expect(states).toEqual([['in-progress', null], ['skipped', null], ['not-started', null], ['verified', 2]]);
-    expect(c.id).toBeGreaterThan(0);
+    expect(c!.id).toBeGreaterThan(0);
   });
 
   it('omits concepts that no workspace uses', () => {
@@ -66,6 +67,16 @@ describe('global knowledge graph', () => {
     expect(getGlobalKnowledgeGraph(db).concepts).toEqual([]);
   });
 
+  it('keeps demo evidence out of a learner’s global record', () => {
+    seedDemoWorkspaces(db);
+    expect(getGlobalKnowledgeGraph(db).concepts).toEqual([]);
+    const learned = upsertConcept(db, { key: 'real', title: 'Real concept', portable: true, workspaceId: alpha });
+    expect(getGlobalKnowledgeGraph(db).concepts.map(concept => concept.id)).toEqual([learned.id]);
+  });
+
+});
+
+describe('global graph performance', () => {
   it('handles 2000 concepts and 5000 edges within budget', () => {
     const insert = db.prepare('INSERT INTO concepts (key, title, portable, created_at, updated_at) VALUES (?, ?, 1, ?, ?)');
     const member = db.prepare('INSERT INTO workspace_concepts (workspace_id, concept_id) VALUES (?, ?)');

@@ -9,6 +9,7 @@ export const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`;
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'none'",
   "script-src 'self'",
+  "worker-src 'self'",
   "style-src 'self'",
   "img-src 'self' data:",
   "font-src 'self'",

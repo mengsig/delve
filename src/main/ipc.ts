@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { DEPTHS } from '../shared/domain';
 import { IPC_CHANNELS, type IpcChannel, type IpcError, type IpcRequest, type IpcResponse, type IpcResult } from '../shared/ipc';
 import { DomainError } from '../shared/errors';
+import { connectionSchemas } from './connections/session';
 
 const text = z.string().max(4096);
 const workspaceId = z.uuid();
@@ -29,6 +30,8 @@ export const REQUEST_SCHEMAS: { [C in IpcChannel]: z.ZodType<IpcRequest<C>> } = 
   'graph:read': z.strictObject({ workspaceId, includeChangeLessons: z.boolean().optional() }),
   'knowledge:read': z.null(),
   'knowledge:remove-link': z.strictObject({ id: z.int().positive() }),
+  ...connectionSchemas,
+  'connections:cancel': z.null(),
   'progress:read': z.null(),
   'evidence:reset': z.strictObject({ workspaceId, conceptId: z.int().positive(), depth: z.enum(DEPTHS) }),
 };

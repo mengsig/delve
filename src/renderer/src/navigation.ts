@@ -10,7 +10,7 @@ import type { AtlasFocus } from './explorer/ChangeAtlas';
 export type Route =
   | { screen: 'atlas'; focus?: AtlasFocus; conceptId?: number; intent?: LearnIntent }
   | { screen: 'changes'; change?: ChangeRef; title?: string; job?: RepositoryJob }
-  | { screen: 'lesson'; conceptId: number; question?: string; change?: ChangeRef; environment?: string }
+  | { screen: 'lesson'; conceptId: number; question?: string; change?: ChangeRef; environment?: string; review?: boolean }
   | { screen: 'progress' | 'knowledge' | 'setup' | 'first-run' }
   | { screen: 'baseline'; job?: RepositoryJob };
 export type Screen = Route['screen'];
