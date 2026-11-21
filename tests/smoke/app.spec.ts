@@ -2,6 +2,7 @@ import { expect, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, shortcut } from './desktop';
+import packageInfo from '../../package.json';
 
 async function add(page: Page, value: string, topic = false) {
   await page.getByRole('button', { name: '+ Add', exact: true }).click();
@@ -13,6 +14,9 @@ test('loads a hardened desktop and persists workspaces added through the source 
   const { page } = desktop;
   await expect(page).toHaveTitle('Delve');
   await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
+  await page.getByRole('button', { name: 'About', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'About Delve' })).toContainText(`Delve ${packageInfo.version}`);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   expect(await page.evaluate(() => typeof (globalThis as { require?: unknown }).require)).toBe('undefined');
   expect(await page.evaluate(() => typeof (globalThis as { process?: unknown }).process)).toBe('undefined');
 

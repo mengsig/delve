@@ -2,6 +2,9 @@
 
 Learn the codebase your agents are building. A local-first, open-source desktop app (Electron) that keeps developers in touch with a repository: learn it from scratch, then follow what changed and why, at three depths.
 
+![Delve atlas in light theme](docs/screenshots/light.png)
+![Delve atlas in dark theme](docs/screenshots/dark.png)
+
 Open the Atlas to explore prerequisites on a terrain map or switch to the Folio relationship list.
 On first launch, type a topic or paste a repository into the focused field. Medium is the starting
 depth. Use **Advanced options** to change it or choose a different tutor. **Explore demo atlas**
@@ -76,6 +79,12 @@ and network instruments. See the [environment protocol](docs/environments.md).
 Download a package for your platform from the CI artifacts or a release: an AppImage or `.deb` for
 Linux, a `.dmg` for macOS, or an NSIS installer for Windows. Packages are not yet code-signed.
 
+- **Linux:** make the AppImage executable (`chmod +x Delve-*.AppImage`) and run it, or install the Debian package with `sudo apt install ./Delve-*.deb`. AppImage requires FUSE 2 on distributions that do not include it; alternatively run the AppImage with `--appimage-extract` and launch `squashfs-root/AppRun`. Wayland sessions are selected automatically when available; X11 is also supported. For a standalone AppImage, register a desktop entry and link handler as described in [Linux setup](docs/linux.md).
+- **macOS:** open the DMG and drag Delve to Applications. For an unsigned build, open Delve once, then use System Settings → Privacy & Security → Open Anyway if Gatekeeper blocks it.
+- **Windows:** run the setup executable. If SmartScreen reports an unknown publisher, choose More info → Run anyway after verifying the release checksum.
+
+Compare the package's SHA-256 checksum with `SHA256SUMS` from the release before installation.
+
 To generate lessons, Delve uses a CLI you already have and are signed in to:
 [Claude Code](https://code.claude.com/docs/en/headless) (`claude`) or
 [Codex](https://developers.openai.com/codex/noninteractive/) (`codex`). Delve never calls a paid API
@@ -149,6 +158,12 @@ still holds. Limits: descendants that outlive the CLI's exit are not stopped, an
 the process group or session is out of scope (claude and codex do neither). Output is capped at
 8 MiB, including Codex's final-message file. npm `.cmd` launchers on Windows are run through Node directly, never
 through a shell.
+
+## Privacy
+
+Workspaces, conversations, evidence, and the SQLite database stay on your device. The demo tutor is offline. When you approve a provider request, Delve sends the displayed prompt, selected repository material where applicable, and relevant learning context through the chosen CLI to its provider. The provider's own terms and retention policies apply. GitHub repository and pull request operations contact GitHub using your existing Git or `gh` authentication. Delve does not copy CLI credentials or send telemetry.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## License
 

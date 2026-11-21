@@ -3,10 +3,14 @@ import { ThemeButton } from './ThemeButton';
 
 import { primaryViews } from './commands';
 import type { Screen } from './navigation';
+import { useRef } from 'react';
+
+declare const __DELVE_VERSION__: string;
 
 type HeaderScreen = typeof primaryViews[number]['screen'] | 'setup';
 
 export function Header({ screen, go, openSwitcher }: { screen: Screen; go: (screen: HeaderScreen) => void; openSwitcher: () => void }) {
+  const about = useRef<HTMLDialogElement>(null);
   return <header className="windowbar">
     <button className="brand" onClick={openSwitcher} aria-label="Switch workspace" title="Switch workspace (Ctrl or ⌘ K)">
       <svg className="mark" viewBox="0 0 36 36" aria-hidden="true">
@@ -24,6 +28,13 @@ export function Header({ screen, go, openSwitcher }: { screen: Screen; go: (scre
     <div className="row">
       <button className="tool" onClick={() => go('setup')} title="Add a workspace">+ Add</button>
       <ThemeButton />
+      <button className="tool" onClick={() => about.current?.showModal()}>About</button>
+      <dialog ref={about} className="workspace-palette" aria-labelledby="about-title">
+        <div className="palette-header"><h2 id="about-title">About Delve</h2></div>
+        <p>Delve {__DELVE_VERSION__}</p>
+        <p>Learn the codebase your agents are building.</p>
+        <form method="dialog"><button autoFocus>Close</button></form>
+      </dialog>
     </div>
   </header>;
 }

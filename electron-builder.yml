@@ -20,6 +20,7 @@ electronFuses:
   enableEmbeddedAsarIntegrityValidation: true
   onlyLoadAppFromAsar: true
 linux:
+  icon: icon.png
   target:
     - AppImage
     - deb
@@ -27,11 +28,13 @@ linux:
   maintainer: mengsig <https://github.com/mengsig>
   artifactName: ${productName}-${version}-${arch}.${ext}
 mac:
+  icon: icon.png
   target:
     - dmg
   category: public.app-category.education
   artifactName: ${productName}-${version}-${arch}.${ext}
 win:
+  icon: icon.png
   target:
     - nsis
   artifactName: ${productName}-${version}-${arch}-setup.${ext}
