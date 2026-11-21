@@ -180,3 +180,5 @@
 
 .demo-change-action { margin-block: 0 16px; }
 .reader-thread :is(.chapter > p, .reader-message > p) { max-inline-size: 72ch; font-size: 1.025rem; line-height: 1.65; }
+
+.lesson-move-on { padding: 0; border: 0; background: none; color: var(--green); text-decoration: underline; }

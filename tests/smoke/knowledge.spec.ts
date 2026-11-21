@@ -41,9 +41,42 @@ async function verifyConnections(page: Page, directory: string, sharedId: number
   await expect(page.locator('.knowledge-detail')).not.toContainText('Both regulate work.');
 }
 
+async function captureThemes(page: Page, name: string) {
+  mkdirSync('.archon/evidence', { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
+    await page.screenshot({ path: `.archon/evidence/${name}-${theme}.png` });
+  }
+}
+
+async function verifyLearnedLessonActions(page: Page) {
+  await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  await page.getByRole('button', { name: 'Everything I’ve learned' }).click();
+  const openLesson = page.getByRole('button', { name: 'Open lesson: Queues and workers' }).first();
+  await openLesson.focus();
+  await withinBudget(page, 'Open a learned concept lesson by keyboard', 1, async () => {
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Queues and workers', level: 1 })).toBeVisible();
+  });
+  await page.keyboard.press(shortcut);
+  await page.getByRole('combobox', { name: /search/i }).fill('Knowledge');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Knowledge.' })).toBeVisible();
+  await expect(page.getByLabel('State')).toHaveValue('verified');
+  await page.getByRole('button', { name: 'Everything I’ve learned' }).click();
+  await withinBudget(page, 'Open a learned concept lesson by pointer', 1, async () => {
+    await page.getByRole('button', { name: 'Open lesson: Queues and workers' }).first().click();
+    await expect(page.getByRole('heading', { name: 'Queues and workers', level: 1 })).toBeVisible();
+  });
+}
+
 test('opens the global graph, finds a shared learned concept and opens its lesson', async ({ desktop: { page, application, directory } }) => {
   const { shared, backpressure } = seedKnowledge(directory);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await captureThemes(page, 'readme-after');
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
+  await page.setViewportSize({ width: 1280, height: 771 });
   await withinBudget(page, 'Open Knowledge from the header', 1, async () => {
     await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Knowledge.' })).toBeVisible();
@@ -64,22 +97,23 @@ test('opens the global graph, finds a shared learned concept and opens its lesso
     if (!context) return false;
     return context.getImageData(0, 0, element.width, element.height).data.some((value, index) => index % 4 === 3 && value > 0);
   })).toBe(true);
-  mkdirSync('.archon/evidence', { recursive: true });
   await page.evaluate(() => window.scrollTo(0, 0));
-  for (const theme of ['light', 'dark'] as const) {
-    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
-    await page.screenshot({ path: `.archon/evidence/knowledge-${theme}.png` });
-  }
+  await captureThemes(page, 'knowledge');
   await page.getByRole('button', { name: 'Everything I’ve learned' }).click();
   await expect(page.locator('.knowledge-list')).toContainText('Transfers: Retry strategies');
+  await captureThemes(page, 'learned-after');
   await page.getByLabel('Group by workspace').check();
-  await expect(page.locator('.knowledge-list').getByRole('button', { name: /Queues and workers/ })).toHaveCount(3);
+  await expect(page.locator('.knowledge-list-select').filter({ hasText: 'Queues and workers' })).toHaveCount(3);
+  await page.locator('.knowledge-list-select').filter({ hasText: 'Queues and workers' }).first().click();
+  await expect(page.locator('.knowledge-detail')).toContainText('Queues and workers');
   await page.getByRole('button', { name: 'Show graph' }).click();
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(960, 640));
+  await page.setViewportSize({ width: 960, height: 611 });
   await expect(page.getByRole('searchbox', { name: 'Search' })).toBeVisible();
   for (const name of ['Workspace', 'State', 'Depth']) await expect(page.getByRole('combobox', { name, exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open lesson', exact: true })).toBeVisible();
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
+  await page.setViewportSize({ width: 1280, height: 771 });
   await verifyConnections(page, directory, shared.id, backpressure.id);
   await page.getByLabel('State').selectOption('verified');
   await withinBudget(page, 'Open a review of the selected concept', 1, async () => {
@@ -87,16 +121,5 @@ test('opens the global graph, finds a shared learned concept and opens its lesso
     await expect(page.getByRole('dialog', { name: 'Review what will be sent' })).toBeVisible();
   });
   await page.getByRole('button', { name: 'Close preview' }).click();
-  await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
-  await page.getByRole('searchbox', { name: 'Search' }).fill('Queues and workers');
-  await page.getByRole('button', { name: 'Queues and workers', exact: true }).click();
-  await withinBudget(page, 'Open the selected concept lesson', 1, async () => {
-    await page.getByRole('button', { name: 'Open lesson', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Queues and workers', level: 1 })).toBeVisible();
-  });
-  await page.keyboard.press(shortcut);
-  await page.getByRole('combobox', { name: /search/i }).fill('Knowledge');
-  await page.keyboard.press('Enter');
-  await expect(page.getByRole('heading', { name: 'Knowledge.' })).toBeVisible();
-  await expect(page.getByLabel('State')).toHaveValue('verified');
+  await verifyLearnedLessonActions(page);
 });
