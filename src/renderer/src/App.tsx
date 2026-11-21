@@ -1,136 +1,133 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { Depth, Workspace, WorkspaceList } from '../../shared/domain';
 import type { LearnIntent } from '../../shared/repository';
 import { AddWorkspaceForm } from './AddWorkspaceForm';
 import { call } from './api';
-import { Header, type Screen } from './Header';
-import { dismissOnboarding, onboardingDismissed, storeDepth } from './preferences';
+import { ContinueActivity, WorkspaceBar } from './atlas/WorkspaceBar';
+import { paletteCommands } from './commands';
+import { Header } from './Header';
+import { routeForActivity, useDesktopNavigation, type DesktopNavigation, type Route } from './navigation';
+import { atlasView, workspaceDepth, type AtlasView } from './preferences';
+import { useRecentActivity } from './recentActivity';
 import { ReadState } from './ReadState';
 import { LearnLink } from './repository/LearnLink';
 import { MapJobsProvider, useMapJobs, type RepositoryJob } from './repository/MapJobs';
 import { MapJobStatus } from './repository/MapJobStatus';
 import { Study } from './Study';
+import { TutorJobsProvider, TutorJobStatus } from './reader/TutorJobs';
 import { isSwitcherShortcut } from './switcher';
 import { errorMessage, useRead } from './useRead';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 const readWorkspaces = () => call('workspaces:list', null);
 
-function useSwitcher() {
+function useShortcuts(nav: DesktopNavigation) {
   const [open, setOpen] = useState(false);
-  useEffect(() => {
-    const mac = /Mac/i.test(navigator.platform);
-    function shortcut(event: KeyboardEvent) {
-      if (isSwitcherShortcut(event, mac)) {
-        event.preventDefault();
-        if (!event.repeat) setOpen(true);
-      }
+  const onKey = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.isComposing || document.querySelector('dialog[open], [aria-modal="true"]')) return;
+    if (isSwitcherShortcut(event, /Mac/i.test(navigator.platform))) {
+      event.preventDefault();
+      if (!event.repeat) setOpen(true);
+    } else if (event.altKey && event.key === 'ArrowLeft') {
+      event.preventDefault();
+      nav.back();
+    } else if (event.key === 'Escape' && nav.route.screen !== 'atlas') {
+      const target = event.target;
+      if (target instanceof HTMLElement && target.matches('textarea, select')) return target.blur();
+      if (nav.route.screen === 'changes' && document.querySelector('.explorer')?.contains(target as Node)) return;
+      nav.back();
     }
-    window.addEventListener('keydown', shortcut);
-    return () => window.removeEventListener('keydown', shortcut);
+  });
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => onKey(event);
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   }, []);
   return { open, show: () => setOpen(true), hide: () => setOpen(false) };
 }
 
-function firstScreen(initial: WorkspaceList): Screen {
-  if (!initial.activeId || (initial.hasUserWorkspace === false && !onboardingDismissed())) return 'first-run';
-  return 'atlas';
+function useStudyDestinations(nav: DesktopNavigation) {
+  const [view, setView] = useState(atlasView);
+  const { recent, remember } = useRecentActivity();
+  const report = (cause: unknown) => nav.setError(errorMessage(cause));
+  const select = (id: string) => nav.select(id, { screen: 'atlas' });
+  const resume = (entry: typeof recent[number]) => nav.select(entry.workspaceId, routeForActivity(entry), entry.depth);
+  function changeView(next: AtlasView) {
+    localStorage.setItem('delve.view', next);
+    setView(next);
+  }
+  const { workspaces } = nav.list;
+  const commands = paletteCommands({ workspaces, active: nav.active, recent, visit: nav.visit, select, resume,
+    showMap: next => { changeView(next); nav.visit({ screen: 'atlas' }); } });
+  const last = recent.find(entry => workspaces.some(workspace => workspace.id === entry.workspaceId));
+  const workspace = workspaces.find(item => item.id === last?.workspaceId);
+  const continueActivity = last && workspace && <ContinueActivity entry={last} workspace={workspace.name}
+    onResume={() => void resume(last).catch(report)} />;
+  const workspaceBar = nav.active && <WorkspaceBar workspaces={workspaces} activeId={nav.active.id}
+    onSwitch={id => { if (id !== nav.list.activeId) void select(id).catch(report); }} />;
+  return { view, onView: changeView, remember, commands, continueActivity, workspaceBar };
 }
 
-function useDesktopNavigation(initial: WorkspaceList) {
-  const [list, setList] = useState(initial);
-  const [screen, setScreen] = useState(() => firstScreen(initial));
-  const [error, setError] = useState('');
-  const [origin, setOrigin] = useState<{ workspaceId: string; intent: LearnIntent }>();
-  const active = list.workspaces.find(workspace => workspace.id === list.activeId);
-  async function select(id: string, destination: Screen) {
-    const next = await call('workspaces:switch', { id });
-    if (next.activeId !== id || !next.workspaces.some(workspace => workspace.id === id)) {
-      throw new Error('The selected workspace did not become active.');
-    }
-    setList(next);
-    setError('');
-    setScreen(destination);
+function DesktopJobs({ nav }: { nav: DesktopNavigation }) {
+  const jobs = useMapJobs();
+  async function openJob(job: RepositoryJob, review: boolean) {
+    const route: Route = job.kind === 'change' ? { screen: 'changes', change: job.change, title: job.title, job }
+      : review ? { screen: 'baseline', job } : { screen: 'atlas' };
+    try {
+      await nav.select(job.workspace.id, route, job.depth);
+      if (!review) jobs.dismiss(job);
+    } catch (cause) { nav.setError(errorMessage(cause)); }
   }
-  function added(workspace: Workspace, depth: Depth) {
-    storeDepth(workspace.id, depth);
-    activate(workspace, true);
-    setScreen('atlas');
-  }
-  function activate(workspace: Workspace, created: boolean) {
-    setList(previous => ({
-      activeId: workspace.id, hasUserWorkspace: created || previous.hasUserWorkspace,
-      workspaces: [workspace, ...previous.workspaces.filter(item => item.id !== workspace.id)],
-    }));
-    setError('');
-  }
-  function accepted(intent: LearnIntent, workspace: Workspace) {
-    activate(workspace, !list.workspaces.some(item => item.id === workspace.id));
-    setOrigin({ workspaceId: workspace.id, intent });
-    setScreen(intent.kind === 'proposed' ? 'atlas' : 'changes');
-  }
-  function cancelSetup() {
-    if (screen === 'first-run') dismissOnboarding();
-    setScreen('atlas');
-  }
-  return { list, screen, setScreen, error, setError, origin, active, select, added, accepted, cancelSetup };
+  return <>
+    <TutorJobStatus onOpen={({ workspaceId, conceptId, depth }) => nav.select(workspaceId, { screen: 'lesson', conceptId }, depth)} />
+    <MapJobStatus onOpen={job => void openJob(job, false)} onReview={job => void openJob(job, true)} />
+  </>;
 }
 
 function Desktop({ initial }: { initial: WorkspaceList }) {
-  const { list, screen, setScreen, error, setError, origin, active, select, added, accepted, cancelSetup } = useDesktopNavigation(initial);
-  const palette = useSwitcher();
+  const nav = useDesktopNavigation(initial);
+  const palette = useShortcuts(nav);
+  const destinations = useStudyDestinations(nav);
   const main = useRef<HTMLElement>(null);
-  const jobs = useMapJobs();
-  const [openedJob, setOpenedJob] = useState<RepositoryJob>();
-  async function openJob(job: RepositoryJob, reviewing: boolean) {
-    const destination = job.kind === 'change' ? 'changes' : reviewing ? 'baseline' : 'atlas';
-    try {
-      if (job.workspace.id === list.activeId) {
-        setError('');
-        setScreen(destination);
-        main.current?.focus({ preventScroll: true });
-      } else {
-        await select(job.workspace.id, destination);
-      }
-      setOpenedJob(job);
-      if (!reviewing) jobs.dismiss(job);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }
+  const { active, route } = nav;
+  const setup = route.screen === 'setup' || route.screen === 'first-run' || !active;
   useEffect(() => {
-    main.current?.focus({ preventScroll: true });
+    if (!setup) main.current?.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: 'instant' });
-  }, [screen, list.activeId]);
-
+  }, [route.screen, active?.id, setup]);
+  function added(workspace: Workspace, depth: Depth, conceptId?: number) {
+    nav.activate(workspace, conceptId ? { screen: 'lesson', conceptId } : { screen: 'atlas' }, depth);
+  }
+  function accepted(intent: LearnIntent, workspace: Workspace) {
+    palette.hide();
+    const target: Route = intent.kind === 'proposed' ? { screen: 'atlas', intent }
+      : { screen: 'changes', change: { kind: intent.kind, ref: intent.ref } };
+    nav.activate(workspace, target, workspaceDepth(workspace.id));
+  }
   return <>
     <a className="skip-link" href="#workspace-page">Skip to workspace</a>
     <section className="shell" aria-label="Delve desktop">
-      <Header screen={screen} go={setScreen} openSwitcher={palette.show} />
+      <Header screen={route.screen} go={screen => nav.visit({ screen })} openSwitcher={palette.show} />
       <main id="workspace-page" ref={main} tabIndex={-1} className="app">
-        {error && <p role="alert">{error}</p>}
-        <LearnLink onAccepted={(intent, workspace) => { palette.hide(); setOpenedJob(undefined); accepted(intent, workspace); }} />
-        <MapJobStatus onOpen={job => void openJob(job, false)} onReview={job => void openJob(job, true)} />
-        <div className="screen" key={list.activeId}>
-          {screen === 'setup' || screen === 'first-run' || !active
-            ? <AddWorkspaceForm onOpenSwitcher={palette.show} onAdded={added} onCancel={active ? cancelSetup : undefined}
-              firstRun={screen === 'first-run' || !active} />
-            : <Study key={openedJob?.workspace.id === active.id ? openedJob.requestId : undefined}
-              workspace={active} workspaces={list.workspaces} screen={screen} go={setScreen} onSwitch={palette.show}
-              openedJob={openedJob?.workspace.id === active.id ? openedJob : undefined}
-              intent={origin?.workspaceId === active.id ? origin?.intent : undefined}
-              onSelect={id => void select(id, 'progress').catch(cause => setError(errorMessage(cause)))} />}
+        {nav.error && <div role="alert">{nav.error} <button onClick={palette.show}>Choose workspace</button></div>}
+        {nav.switching && <span role="status">Opening workspace…</span>}
+        <LearnLink onAccepted={accepted} />
+        <DesktopJobs nav={nav} />
+        <div className="screen" key={active?.id}>
+          {setup ? <AddWorkspaceForm onOpenSwitcher={palette.show} onAdded={added} onCancel={active ? nav.back : undefined}
+            firstRun={route.screen === 'first-run' || !active} />
+            : <Study {...destinations} nav={nav} workspace={active} onSwitch={palette.show}
+              onSelect={id => void nav.select(id, { screen: 'progress' }).catch(cause => nav.setError(errorMessage(cause)))} />}
         </div>
       </main>
     </section>
-    {palette.open && <WorkspaceSwitcher activeId={list.activeId} workspaces={list.workspaces} onClose={palette.hide}
-      onSelect={id => select(id, 'atlas')} onAdd={() => setScreen('setup')} />}
+    {palette.open && <WorkspaceSwitcher commands={destinations.commands} onClose={palette.hide} onAdd={() => nav.visit({ screen: 'setup' })} />}
   </>;
 }
 
 export function App() {
   const { result, refresh } = useRead(readWorkspaces);
-  if (result.status === 'ready') return <MapJobsProvider><Desktop initial={result.value} /></MapJobsProvider>;
+  if (result.status === 'ready') return <MapJobsProvider><TutorJobsProvider><Desktop initial={result.value} /></TutorJobsProvider></MapJobsProvider>;
   return <main className="shell app"><ReadState label="Workspaces" retry={refresh}
     message={result.status === 'error' ? result.message : undefined} /></main>;
 }
