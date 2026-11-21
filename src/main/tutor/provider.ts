@@ -3,10 +3,11 @@ import { z } from 'zod';
 import { DomainError } from '../../shared/errors';
 import { detectProviders } from '../providers/detect';
 import { ProviderRunner } from '../providers/runner';
-import { documentGenerationSchema, documentJsonSchema, type Document } from '../reader/document';
+import { documentGenerationSchema, documentJsonSchema, documentSchema, type Document } from '../reader/document';
 import { observationSchema, recommendationSchema } from '../reader/conversation';
 import type { PreparedTurn } from './prompt';
 import { demoTurn } from './sample';
+import { assertFreshCheck, canRecommend, checkIn, nextGrade } from './mastery';
 
 const metadata = z.strictObject({
   observation: observationSchema.nullable(),
@@ -46,24 +47,41 @@ export function createGenerator(runner = createTutorRunner()): Generate {
   };
 }
 
-export function validateTurn(turn: PreparedTurn, reply: TutorReply) {
-  const reject = (message: string) => { throw new DomainError('INVALID_TUTOR_REPLY', message + ' Retry this turn.'); };
+function invalidReply(message: string): never {
+  throw new DomainError('INVALID_TUTOR_REPLY', message + ' Retry this turn.');
+}
+
+export function validateTurn(turn: PreparedTurn, output: TutorReply): TutorReply {
+  const { intent } = turn.request;
+  if (Buffer.byteLength(JSON.stringify(output)) > 128 * 1024) invalidReply('The response exceeds the lesson size limit.');
+  const parsed = metadata.extend({ lesson: documentSchema }).safeParse(output);
+  if (!parsed.success) invalidReply('The tutor returned invalid teaching content or feedback.');
+  const reply = parsed.data;
   const blocks = reply.lesson.blocks;
-  if (Buffer.byteLength(JSON.stringify(reply)) > 128 * 1024) reject('The response exceeds the lesson size limit.');
-  const targetId = reply.recommendation?.targetId;
-  if (targetId != null && !turn.nextConcepts.some(c => c.id === targetId)) reject('The suggested concept is outside your learning path.');
-  const opening = turn.request.intent.kind === 'teach';
-  const checkIndex = blocks.findIndex(block => block.type === 'check');
-  if (checkIndex >= 0 && (!opening || checkIndex !== blocks.length - 1)) reject('The tutor placed a check outside the end of the opening lesson.');
+  if (turn.needsDiagram && !blocks.some(block => block.type === 'diagram' && block.nodes.length >= 2 && block.edges?.length)) {
+    invalidReply('The tutor did not provide a diagram with connected nodes.');
+  }
+  const check = checkIn(reply.lesson);
+  if (check && blocks.at(-1) !== check) invalidReply('The tutor placed a check outside the end of its response.');
   if (!blocks.some(b => ['prose', 'example', 'analogy', 'callout', 'diagram', 'code', 'comparison', 'trace'].includes(b.type))) {
-    reject('The response is missing teaching content.');
+    invalidReply('The response is missing teaching content.');
   }
-  if (opening && !blocks.some(b => b.type === 'prose' || b.type === 'example' || b.type === 'analogy')) {
-    reject('The opening lesson needs an explanation.');
+  if (intent.kind === 'teach' && !blocks.some(b => b.type === 'prose' || b.type === 'example' || b.type === 'analogy')) {
+    invalidReply('The opening lesson needs an explanation.');
   }
-  if (turn.response && (!reply.observation || !reply.recommendation || reply.assessment === null)) {
-    reject('The tutor did not explain its assessment and next step.');
+  if (turn.response && (!reply.observation || reply.assessment === null)) invalidReply('The tutor did not explain its assessment.');
+  if (turn.response?.correct != null && reply.assessment !== turn.response.correct) invalidReply('The assessment disagrees with the recorded answer key.');
+  if (!turn.response && reply.assessment !== null) invalidReply('Only a submitted check answer can be assessed.');
+  const afterGrade = reply.assessment === null ? null : nextGrade(turn.mastery, reply.assessment);
+  const needsCheck = intent.kind === 'teach' || intent.kind === 'review' || afterGrade?.stage === 'checking';
+  if (needsCheck && !check) invalidReply('The tutor did not provide the required check.');
+  if (!needsCheck && check) invalidReply('The tutor placed a check outside the active lesson sequence.');
+  if (check && intent.kind !== 'teach') assertFreshCheck(turn.mastery, check);
+  if (reply.recommendation) {
+    const allowed = afterGrade?.stage === 'understood' || intent.kind === 'ask' && canRecommend(turn.mastery);
+    if (!allowed) invalidReply('The tutor recommended another step before the lesson was understood or skipped.');
+    const targetId = reply.recommendation.targetId;
+    if (targetId !== null && !turn.nextConcepts.some(c => c.id === targetId)) invalidReply('The suggested concept is outside your learning path.');
   }
-  if (turn.response?.correct != null && reply.assessment !== turn.response.correct) reject('The assessment disagrees with the recorded answer key.');
-  if (!turn.response && reply.assessment !== null) reject('Only an optional check can be assessed.');
+  return reply;
 }

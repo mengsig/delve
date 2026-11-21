@@ -17,6 +17,23 @@ export interface ReaderMessage {
   recommendation?: { action: string; reason: string; targetId?: number | null };
 }
 
+export interface ActiveMasteryCheck {
+  kind: 'recognition' | 'applied';
+  prompt: string;
+  options?: string[];
+  hint?: string;
+}
+
+export interface ReaderMastery {
+  stage: 'teaching' | 'checking' | 'review' | 'understood' | 'skipped';
+  revision: string | null;
+  activeCheck: ActiveMasteryCheck | null;
+  attempts: number;
+  maxAttempts: number;
+  correctAnswers: number;
+  requiredCorrectAnswers: number;
+}
+
 export interface ReaderLesson {
   blocks: LessonBlock[];
   revision: string | null;
@@ -25,20 +42,22 @@ export interface ReaderLesson {
   reused: boolean;
   messages: ReaderMessage[];
   earlierMessages: boolean;
+  mastery: ReaderMastery;
 }
 
 export interface ReaderContract {
   'reader:start-topic': { request: { workspaceId: string }; response: number };
   'reader:lesson': { request: LessonAddress; response: ReaderLesson };
   'reader:message': { request: LessonAddress & { text: string }; response: ReaderMessage[] };
-  'reader:answer': {
-    request: LessonAddress & { revision: string; option: number };
-    response: { demonstrated: boolean; feedback: string };
+  'reader:skip': {
+    request: LessonAddress & { revision: string };
+    response: ReaderLesson;
   };
 }
 
 export type TutorIntent =
   | { kind: 'teach' }
+  | { kind: 'review'; revision: string }
   | { kind: 'ask'; text: string }
   | { kind: 'answer'; revision: string; answer: number | string };
 

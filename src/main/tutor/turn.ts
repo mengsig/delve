@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { DomainError } from '../../shared/errors';
-import type { ReaderMessage, TutorRequest } from '../../shared/reader';
+import type { TutorRequest } from '../../shared/reader';
 import { transaction, type Db } from '../db/connection';
-import { listEvidence, recordEvidenceInTransaction } from '../db/evidence';
 import { saveLessonInTransaction } from '../db/lessons';
 import { appendEntries } from '../reader/conversation';
 import { storedLesson } from '../reader/stored-lesson';
 import type { Document } from '../reader/document';
 import { readLesson } from '../reader/ipc';
-import { assessedEvidence } from './assessment';
+import { saveCheckEvidence } from './assessment';
+import { checkIn, loadMastery, nextGrade, saveMastery } from './mastery';
 import { prepareTurn, type PreparedTurn } from './prompt';
 import { validateTurn, type Generate, type TutorReply } from './provider';
 
@@ -20,46 +20,61 @@ function saveOpening(db: Db, turn: PreparedTurn, lesson: Document) {
 }
 
 function reuseOpening(db: Db, turn: PreparedTurn): boolean {
-  if (turn.request.intent.kind !== 'teach') return false;
-  if (turn.selected.invalidLatest) return false;
+  if (turn.request.intent.kind !== 'teach' || turn.selected.invalidLatest) return false;
   if (turn.reused) return true;
   const cached = storedLesson(db, turn.context, turn.cacheKey);
-  if (!cached.document || cached.invalidLatest) return false;
+  if (!cached.document || cached.invalidLatest || !checkIn(cached.document)) return false;
   const lesson = cached.document;
   if (turn.selected.id !== cached.id) transaction(db, () => saveOpening(db, turn, lesson));
   return true;
 }
 
-function saveAssessment(db: Db, turn: PreparedTurn, reply: TutorReply): string {
-  const { context, response } = turn;
-  if (!response) return '';
-  const correct = response.correct ?? reply.assessment;
-  assert.ok(typeof correct === 'boolean', 'a graded check must have a decision');
-  const evidence = assessedEvidence(context, response, correct);
-  const prior = listEvidence(db, context.conceptId).find(e => e.depth === context.depth);
-  if (prior?.workspaceId && prior.workspaceId !== context.workspaceId) {
-    return 'Your practice answer was recorded here. The original evidence stays in its workspace.';
-  }
-  if (prior?.status !== evidence.status || prior.note !== evidence.note || prior.snapshotId !== context.snapshotId) {
-    recordEvidenceInTransaction(db, evidence);
-  }
-  return correct ? 'Connection learned. Your evidence is saved at ' + context.depth + ' depth.'
-    : 'Your prediction is saved as partial evidence. You can revise it after the explanation.';
+function gradeFeedback(correct: boolean, stage: 'understood' | 'review' | 'checking') {
+  const verdict = correct ? 'Correct.' : 'That answer was incorrect.';
+  if (stage === 'understood') return verdict + ' You demonstrated understanding at this depth.';
+  if (stage === 'review') return verdict + ' This round is complete. Review the lesson or skip the remaining checks.';
+  return verdict + ' Try a fresh example to show how the rule applies.';
 }
 
-function commitReply(db: Db, turn: PreparedTurn, reply: TutorReply) {
-  const { context, request, response } = turn;
-  const tutor = { role: 'tutor' as const, observation: reply.observation ?? undefined, recommendation: reply.recommendation ?? undefined };
-  if (request.intent.kind === 'teach') {
+function commitAnswer(db: Db, turn: PreparedTurn, reply: TutorReply): void {
+  const { context, mastery, response } = turn;
+  assert.ok(response && reply.assessment !== null, 'a check answer has a validated grade');
+  const next = nextGrade(mastery, reply.assessment);
+  const revision = saveMastery(db, context, mastery, { ...next, check: checkIn(reply.lesson) });
+  saveCheckEvidence(db, context, response, next.stage === 'understood');
+  appendEntries(db, context, turn.selected.id, [
+    { role: 'learner', text: response.answer },
+    { role: 'tutor', text: gradeFeedback(reply.assessment, next.stage), lesson: reply.lesson,
+      observation: reply.observation ?? undefined, recommendation: reply.recommendation ?? undefined,
+      masteryRevision: reply.recommendation ? revision : undefined },
+  ]);
+}
+
+function commitReply(db: Db, turn: PreparedTurn, reply: TutorReply): void {
+  const { context, selected, mastery, request: { intent } } = turn;
+  const tutor = { role: 'tutor' as const, observation: reply.observation ?? undefined,
+    recommendation: reply.recommendation ?? undefined, masteryRevision: reply.recommendation ? mastery.revision ?? undefined : undefined };
+  if (intent.kind === 'answer') return commitAnswer(db, turn, reply);
+  if (intent.kind === 'teach' || intent.kind === 'review' && !selected.document) {
     const id = saveOpening(db, turn, reply.lesson);
-    if (tutor.observation || tutor.recommendation) appendEntries(db, context, id, [{ ...tutor, text: '' }]);
+    const current = loadMastery(db, context, storedLesson(db, context), false);
+    assert.equal(current.lessonId, id);
+    assert.ok(checkIn(reply.lesson));
+    if (current.scope !== mastery.scope || intent.kind === 'review') {
+      saveMastery(db, context, current, { stage: 'checking', check: checkIn(reply.lesson),
+        cycle: intent.kind === 'review' ? mastery.cycle + 1 : 0 });
+    }
+    if (tutor.observation) appendEntries(db, context, id, [{ ...tutor, text: '' }]);
     return;
   }
-  const learnerText = request.intent.kind === 'ask' ? request.intent.text : response?.answer;
-  assert.ok(learnerText, 'a follow-up must have a learner question or an answer');
-  const learner: Pick<ReaderMessage, 'role' | 'text'> = { role: 'learner', text: learnerText };
-  const text = saveAssessment(db, turn, reply);
-  appendEntries(db, context, turn.selected.id, [learner, { ...tutor, text, lesson: reply.lesson }]);
+  if (intent.kind === 'review') {
+    saveMastery(db, context, mastery, { stage: 'checking', check: checkIn(reply.lesson), attempts: 0,
+      correctAnswers: 0, applied: false, cycle: mastery.cycle + 1 });
+    appendEntries(db, context, selected.id, [{ ...tutor, text: 'A fresh review round is ready.', lesson: reply.lesson }]);
+    return;
+  }
+  assert.equal(intent.kind, 'ask');
+  appendEntries(db, context, selected.id, [{ role: 'learner', text: intent.text }, { ...tutor, text: '', lesson: reply.lesson }]);
 }
 
 export function checkedTurn(db: Db, request: TutorRequest, token: string) {
@@ -70,9 +85,9 @@ export function checkedTurn(db: Db, request: TutorRequest, token: string) {
 
 export async function executeTurn(db: Db, generate: Generate, turn: PreparedTurn, signal: AbortSignal) {
   if (reuseOpening(db, turn)) return readLesson(db, turn.context);
-  const reply = await generate(turn, signal);
+  const output = await generate(turn, signal);
   if (signal.aborted) throw new DomainError('TUTOR_CANCELLED', 'The tutor response was cancelled.');
-  validateTurn(turn, reply);
+  const reply = validateTurn(turn, output);
   transaction(db, () => {
     checkedTurn(db, turn.request, turn.preview.token);
     commitReply(db, turn, reply);

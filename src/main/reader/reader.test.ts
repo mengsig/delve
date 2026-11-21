@@ -34,20 +34,19 @@ describe('stored lesson reader', () => {
     expect(lesson.messages).toEqual([]);
   });
 
-  it('binds the answer to the displayed lesson and records exact-depth evidence once', () => {
+  it('binds skip to the displayed mastery revision, without awarding evidence', () => {
     const check = { type: 'check', prompt: 'Which point?', options: ['Near', 'Far'], expected: 1 };
     save('one', [check]);
     const handlers = readerHandlers(db);
     const lesson = handlers['reader:lesson'](address);
-    expect(lesson.blocks[0]).not.toHaveProperty('expected');
-    const request = { ...address, revision: lesson.revision!, option: 0 };
-    expect(handlers['reader:answer'](request).demonstrated).toBe(false);
+    expect(lesson.mastery).toMatchObject({ stage: 'checking', activeCheck: { kind: 'recognition', prompt: check.prompt } });
+    expect(lesson.mastery.activeCheck).not.toHaveProperty('expected');
+    const request = { ...address, revision: lesson.mastery.revision! };
+    expect(handlers['reader:skip'](request).mastery).toMatchObject({ stage: 'skipped', activeCheck: null });
     expect(listEvidence(db, address.conceptId)).toEqual([]);
-    expect(handlers['reader:answer']({ ...request, option: 1 }).demonstrated).toBe(true);
-    handlers['reader:answer']({ ...request, option: 1 });
-    expect(listEvidence(db, address.conceptId)).toMatchObject([{ revision: 1, depth: address.depth, workspaceId: address.workspaceId }]);
+    expect(() => handlers['reader:skip'](request)).toThrow(/current check/);
     save('one', [{ ...check, expected: 0 }]);
-    expect(() => handlers['reader:answer'](request)).toThrow(/current check/);
+    expect(handlers['reader:lesson'](address).mastery).toMatchObject({ stage: 'checking' });
     save('two', [check, check]);
     expect(handlers['reader:lesson'](address).invalidLatest).toBe(true);
   });

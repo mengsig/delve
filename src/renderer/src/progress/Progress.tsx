@@ -23,7 +23,7 @@ export function Progress({ workspace, graph, workspaces, onSelect, onBack, onEvi
   const coverage = useRead(readCoverage);
   const [notice, setNotice] = useState('');
   function evidenceChanged() {
-    setNotice('Evidence reset. Coverage is updating.');
+    setNotice('Learning record reset. Coverage is updating.');
     onEvidence();
     coverage.refresh();
   }
@@ -32,7 +32,7 @@ export function Progress({ workspace, graph, workspaces, onSelect, onBack, onEvi
     <div className="intro">
       <span className="eyebrow">Profile / Local learner</span>
       <h1>Your field record.</h1>
-      <p>How much of each terrain have you explored? Each depth has its own evidence. Opening a lesson does not count.</p>
+      <p>How much of each terrain have you explored? Progress is tracked separately at each depth. Opening a lesson does not count.</p>
     </div>
     {coverage.result.status === 'ready'
       ? <Coverage workspaces={workspaces} rows={coverage.result.value} activeId={workspace.id} onSelect={onSelect} />
@@ -42,9 +42,9 @@ export function Progress({ workspace, graph, workspaces, onSelect, onBack, onEvi
       <EvidenceLedger graph={graph} workspaceName={workspace.name} onSelect={onSelect} onReset={evidenceChanged} onExplore={onBack} />
       <section className="note">
         <span className="eyebrow">Privacy / Local record</span>
-        <h3>Your evidence stays here.</h3>
-        <p>Delve stores this field record on your device. Choose a workspace above to inspect its evidence or reset a record at a single depth.</p>
-        <p>Shared records show which workspace the evidence came from. Resetting one also updates coverage wherever that concept is shared.</p>
+        <h3>Your learning record stays here.</h3>
+        <p>Delve stores this field record on your device. Choose a workspace above to inspect your progress or reset a record at a single depth.</p>
+        <p>Shared records show which workspace they came from. Resetting one also updates coverage wherever that concept is shared.</p>
         <p role="status">{notice}</p>
       </section>
     </div>

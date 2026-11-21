@@ -128,6 +128,15 @@ describe('saved activity provenance', () => {
 });
 
 describe('activity assessment', () => {
+  it('keeps completed learning when a later activity is practised', () => {
+    recordEvidence(db, { ...address, status: 'demonstrated', source: 'check', note: 'Completed checks.' });
+    const labs = new LabHost(db);
+    const opened = labs.open(openRequest());
+    for (let seq = 1; seq <= 3; seq++) labs.input({ session: opened.session, seq, input: { type: 'advance' } });
+    labs.input({ session: opened.session, seq: 4, input: { type: 'reject' } });
+    expect(listEvidence(db, address.conceptId)).toMatchObject([{ source: 'check', status: 'demonstrated', revision: 1 }]);
+  });
+
   it('does not replace portable evidence from another workspace', () => {
     const origin = addWorkspace(db, { kind: 'topic', title: 'Origin' });
     upsertConcept(db, { workspaceId: origin.id, key: 'lease', title: 'Lease', portable: true });
@@ -147,7 +156,7 @@ describe('activity assessment', () => {
     const opened = labs.open(openRequest());
     for (let seq = 1; seq <= 3; seq++) labs.input({ session: opened.session, seq, input: { type: 'advance' } });
     const result = labs.input({ session: opened.session, seq: 4, input: { type: 'reject' } });
-    expect(listEvidence(db, address.conceptId)).toMatchObject([{ source: 'environment', status: 'demonstrated', workspaceId: address.workspaceId }]);
+    expect(listEvidence(db, address.conceptId)).toMatchObject([{ source: 'environment', status: 'partial', workspaceId: address.workspaceId }]);
     const observation = result.lesson?.messages.at(-1)?.observation;
     expect(observation).toBeTruthy();
     const preview = prepareTurn(db, { ...address, provider: 'codex', intent: { kind: 'ask', text: 'What next?' } }).preview;
@@ -177,6 +186,6 @@ it.each([
   const result = host.input({ session, seq: 1, input: { type: action } });
   expect(listEvidence(db, address.conceptId)).toEqual([]);
   expect(result.lesson?.reused).toBe(false);
-  expect(result.lesson?.messages.at(-1)).toMatchObject({ role: 'system', observation: expect.any(String),
-    recommendation: { reason: expect.any(String) } });
+  expect(result.lesson?.messages.at(-1)).toMatchObject({ role: 'system', observation: expect.any(String) });
+  expect(result.lesson?.messages.at(-1)?.recommendation).toBeUndefined();
 });

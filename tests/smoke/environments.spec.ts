@@ -3,11 +3,11 @@ import { test } from './desktop';
 
 async function ledger(page: Page, concept: string) {
   await page.getByRole('navigation').getByRole('button', { name: 'Progress' }).click();
-  await page.getByText(/^Inspect .* evidence records$/).click();
+  await page.getByText(/^Inspect .* learning records$/).click();
   return page.getByRole('listitem').filter({ hasText: concept }).filter({ hasText: 'environment' });
 }
 
-test('records a dispatch decision and uses it to recommend the next lesson', async ({ desktop: { page } }) => {
+test('records a dispatch decision for practice without advancing the lesson', async ({ desktop: { page } }) => {
   await page.getByRole('button', { name: 'Open lesson →' }).click();
   const lab = page.frameLocator('.instrument-frame');
   for (let tick = 1; tick <= 3; tick++) {
@@ -16,7 +16,7 @@ test('records a dispatch decision and uses it to recommend the next lesson', asy
   }
   await lab.getByRole('button', { name: 'Accept A’s write' }).click();
   await expect(page.getByRole('log')).toContainText('You accepted generation 7 while generation 8 was active.');
-  await expect(page.getByRole('complementary').getByRole('button', { name: 'Open Write fencing →' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Next lesson:/ })).toHaveCount(0);
   await page.getByRole('textbox', { name: 'Ask the demo tutor' }).fill('What should I practice next?');
   await page.getByRole('button', { name: 'Ask question' }).click();
   await expect(page.getByRole('log').getByRole('heading', { name: 'From your last run' })).toBeVisible();
@@ -44,7 +44,7 @@ test('revises exposure evidence when the learner compensates for a fast shutter'
   await lab.getByRole('button', { name: 'Capture' }).click();
   await expect(page.getByRole('log')).toContainText('Captured at 1/500 s and ISO 800.');
   const record = await ledger(await desktop.restart(), 'Moving subjects');
-  await expect(record).toContainText('medium · demonstrated');
+  await expect(record).toContainText('medium · partial');
   await expect(record).toContainText('Captured at 1/500 s and ISO 800.');
 });
 

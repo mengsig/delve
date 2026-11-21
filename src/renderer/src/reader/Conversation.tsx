@@ -1,22 +1,18 @@
 import { useContext, useEffect, useRef, useState, type FormEvent } from 'react';
 import type { LessonBlock, ReaderMessage } from '../../../shared/reader';
 import { EnvironmentActivity } from '../lab/EnvironmentActivity';
-import { Check, TeachingBlock } from './Blocks';
+import { TeachingBlock } from './Blocks';
 import type { useTutor } from './Tutor';
 
-export function LessonBlocks({ blocks, pending, onAnswer, onPreview, animate }: {
-  blocks: LessonBlock[]; pending: boolean; animate: boolean; onAnswer: (answer: number | string) => void;
-  onPreview?: (answer: number | string) => void;
-}) {
+export function LessonBlocks({ blocks, animate }: { blocks: LessonBlock[]; animate: boolean }) {
   const [visible, setVisible] = useState(() => !animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches ? blocks.length : 1);
   useEffect(() => {
     if (visible >= blocks.length) return;
     const timer = window.setTimeout(() => setVisible(count => count + 1), 100);
     return () => window.clearTimeout(timer);
   }, [blocks.length, visible]);
-  return <div className="lesson-blocks">{blocks.slice(0, visible).map((block, index) => block.type === 'check'
-    ? <Check key={index} block={block} pending={pending} onAnswer={onAnswer} onPreview={onPreview} />
-    : <TeachingBlock key={index} block={block} blockIndex={index} />)}</div>;
+  return <div className="lesson-blocks">{blocks.slice(0, visible).map((block, index) => block.type !== 'check'
+    && <TeachingBlock key={index} block={block} blockIndex={index} />)}</div>;
 }
 
 function Message({ message }: { message: ReaderMessage }) {
@@ -26,9 +22,7 @@ function Message({ message }: { message: ReaderMessage }) {
     {message.text && <p>{message.text}</p>}
     {message.blocks && <div className="lesson-blocks">{message.blocks.map((block, index) =>
       block.type !== 'check' && <TeachingBlock key={index} block={block} blockIndex={index} messageId={message.id} />)}</div>}
-    {message.observation && <p className="reader-observation"><strong>Observation</strong> · {message.observation}</p>}
-    {message.recommendation && <div className="note reader-recommendation"><span className="plate">Suggested next step</span>
-      <h4>{message.recommendation.action}</h4><p>{message.recommendation.reason}</p></div>}
+    {message.observation && <p className="reader-observation">{message.observation}</p>}
   </div>;
 }
 

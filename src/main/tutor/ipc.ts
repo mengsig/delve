@@ -11,6 +11,7 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const answer = z.union([z.int().min(0).max(11), z.string().trim().min(1).max(CHECK_ANSWER_LIMIT)]);
 const request = address.extend({ provider: z.enum([...PROVIDER_IDS, 'demo']), intent: z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('teach') }),
+  z.strictObject({ kind: z.literal('review'), revision: digest }),
   z.strictObject({ kind: z.literal('ask'), text: z.string().trim().min(1).max(4000) }),
   z.strictObject({ kind: z.literal('answer'), revision: digest, answer }),
 ]) });

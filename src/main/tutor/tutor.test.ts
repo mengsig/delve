@@ -23,6 +23,9 @@ let request: TutorRequest;
 let session: TutorSession;
 const explanation = { type: 'prose' as const, heading: 'Routing', text: 'The longest matching prefix wins.' };
 const check = { type: 'check' as const, kind: 'short-answer' as const, prompt: 'Why use the longer match?', expected: ['It is more specific.'] };
+const applied = { ...check, prompt: 'Which route wins for 10.2.3.4, and why?' };
+const intermediate: TutorReply = { lesson: { schema: 'delve.lesson/1', blocks: [explanation, applied] }, assessment: true,
+  observation: 'The learner identified specificity.', recommendation: null };
 const opening: TutorReply = {
   lesson: { schema: 'delve.lesson/1', blocks: [explanation, check] }, assessment: null, recommendation: null, observation: null,
 };
@@ -91,15 +94,13 @@ it('previews a new topic before creating its workspace and matches the first tok
 it('previews the exact UTF-8 prompt, chosen depth, known prerequisites and most recent answer', async () => {
   const known = upsertConcept(db, { key: 'ip', title: 'IP addresses', workspaceId: request.workspaceId, portable: true });
   addPrerequisite(db, request.conceptId, known.id);
-  recordEvidence(db, { ...request, conceptId: known.id, source: 'check', status: 'demonstrated' });
+  recordEvidence(db, { ...request, conceptId: known.id, source: 'check', status: 'demonstrated', masteryVerified: true });
   recordEvidence(db, { ...request, source: 'environment', status: 'partial', note: 'Chose the default route despite a subnet match.' });
   const calls: string[] = [];
   const generate: Generate = async turn => {
     calls.push(turn.preview.prompt);
     if (!turn.response) return opening;
-    return { lesson: { schema: 'delve.lesson/1', blocks: [explanation] }, assessment: true,
-      observation: 'The learner correctly identified specificity.', recommendation: { action: 'Try two overlapping networks',
-        reason: 'You can now choose between two specific routes.', targetId: null } };
+    return intermediate;
   };
   session = new TutorSession(db, generate);
   const preview = prepareTurn(db, request).preview;
@@ -111,9 +112,10 @@ it('previews the exact UTF-8 prompt, chosen depth, known prerequisites and most 
   expect(calls[0]).toBe(preview.prompt);
   expect(Buffer.byteLength(calls[0]!)).toBe(preview.bytes);
   expect(lesson.blocks[1]).not.toHaveProperty('expected');
-  const answer = await run({ kind: 'answer', revision: lesson.revision!, answer: 'A narrower prefix identifies a smaller network.' });
+  const answer = await run({ kind: 'answer', revision: lesson.mastery.revision!, answer: 'A narrower prefix identifies a smaller network.' });
   expect(answer.messages).toMatchObject([{ role: 'learner' }, { role: 'tutor', observation: expect.stringContaining('specificity') }]);
-  expect(answer.reused).toBe(true);
+  expect(answer.mastery).toMatchObject({ stage: 'checking', correctAnswers: 1 });
+  expect(listEvidence(db, request.conceptId)).toMatchObject([{ status: 'partial' }]);
   const follow = prepareTurn(db, { ...request, intent: { kind: 'ask', text: 'What about IPv6?' } });
   expect(follow.preview.prompt).toContain('smaller network');
   expect(follow.preview.prompt).toContain('identified specificity');
@@ -123,7 +125,7 @@ it('previews the exact UTF-8 prompt, chosen depth, known prerequisites and most 
 it('reuses only a demonstrated canonical concept at the selected depth, preserving transferred origins', async () => {
   const origin = addWorkspace(db, { kind: 'topic', title: 'IP' });
   upsertConcept(db, { key: 'routing', title: 'Routing', portable: true, workspaceId: origin.id });
-  recordEvidence(db, { ...request, workspaceId: origin.id, status: 'demonstrated', source: 'check' });
+  recordEvidence(db, { ...request, workspaceId: origin.id, status: 'demonstrated', source: 'check', masteryVerified: true });
   const generate = vi.fn<Generate>(async () => opening);
   session = new TutorSession(db, generate);
   expect(await run(request.intent)).toMatchObject({ reused: true, blocks: [], messages: [] });
@@ -187,7 +189,7 @@ it.each([
 it('preserves a valid lesson and transcript on invalid output and rejects stale or mismatched requests', async () => {
   const previous = await run(request.intent);
   session = new TutorSession(db, async () => opening);
-  await expect(run({ kind: 'ask', text: 'Why?' })).rejects.toThrow(/outside the end/);
+  await expect(run({ kind: 'ask', text: 'Why?' })).rejects.toThrow(/outside the active lesson sequence/);
   expect(readLesson(db, request)).toEqual(previous);
   const old = prepareTurn(db, request).preview;
   bindSnapshot(db, request.workspaceId, 'abcd001');
@@ -234,7 +236,7 @@ it('discards late output after cancellation or a change to the previewed context
   expect(readLesson(db, request).blocks).toEqual([]);
 });
 
-it('the offline provider teaches, answers, adapts the graph path and revises one local check', async () => {
+it('the offline provider reteaches a miss, offers fresh applied checks and recommends a path after understanding', async () => {
   seedDemoWorkspaces(db);
   session = new TutorSession(db);
   const workspaceId = 'de100000-0000-4000-8000-000000000001';
@@ -242,27 +244,39 @@ it('the offline provider teaches, answers, adapts the graph path and revises one
   const lease = graph.concepts.find(c => c.title === 'Worker leases')!;
   request = { ...request, workspaceId, conceptId: lease.id, provider: 'demo' };
   const lesson = readLesson(db, request);
-  expect(lesson.blocks[0]?.type).toBe('prose');
-  expect(lesson.blocks.at(-1)?.type).toBe('check');
+  expect(lesson.mastery.activeCheck?.kind).toBe('recognition');
   const asked = await run({ kind: 'ask', text: 'Draw a system trace' });
-  expect(asked.messages[1]?.blocks?.some(b => b.type === 'trace')).toBe(true);
-  const wrong = await run({ kind: 'answer', revision: lesson.revision!, answer: 0 });
-  expect(wrong.messages.at(-1)).toMatchObject({ observation: expect.stringContaining('first to report'),
-    recommendation: { action: 'Explore Write fencing', reason: expect.any(String) } });
-  expect(readWorkspaceGraph(db, workspaceId).suggestions?.medium?.conceptId).toBe(graph.concepts.find(c => c.title === 'Write fencing')?.id);
+  expect(asked.messages[1]?.blocks?.some(b => b.type === 'diagram')).toBe(true);
+  expect(asked.mastery).toEqual(lesson.mastery);
+  const wrong = await run({ kind: 'answer', revision: lesson.mastery.revision!, answer: 0 });
+  expect(wrong.messages.at(-1)).toMatchObject({ text: expect.stringContaining('incorrect'),
+    observation: expect.stringContaining('first to report') });
+  expect(wrong.messages.at(-1)?.recommendation).toBeUndefined();
+  expect(readWorkspaceGraph(db, workspaceId).suggestions).toBeUndefined();
+  const correct = await run({ kind: 'answer', revision: wrong.mastery.revision!, answer: 'Reject the stale generation.' });
+  expect(correct.mastery).toMatchObject({ correctAnswers: 1, activeCheck: { kind: 'applied' } });
+  expect(correct.mastery.activeCheck?.prompt).not.toBe(wrong.mastery.activeCheck?.prompt);
   expect(listEvidence(db, lease.id)).toMatchObject([{ status: 'partial' }]);
-  await run({ kind: 'answer', revision: lesson.revision!, answer: 1 });
-  expect(listEvidence(db, lease.id)).toMatchObject([{ revision: 2, status: 'demonstrated' }]);
+  const understood = await run({ kind: 'answer', revision: correct.mastery.revision!, answer: 'Compare the active generation.' });
+  expect(understood.mastery).toMatchObject({ stage: 'understood', activeCheck: null });
+  expect(understood.messages.at(-1)?.recommendation?.action).toBe('Explore Recovery');
+  expect(readWorkspaceGraph(db, workspaceId).suggestions?.medium?.conceptId).toBe(graph.concepts.find(c => c.title === 'Recovery')?.id);
+  expect(listEvidence(db, lease.id)).toMatchObject([{ status: 'demonstrated' }]);
+  const review = await run({ kind: 'review', revision: understood.mastery.revision! });
+  expect(review.mastery).toMatchObject({ stage: 'checking', attempts: 0, correctAnswers: 0, activeCheck: { kind: 'applied' } });
+  expect(review.messages.at(-1)?.blocks?.some(block => block.type === 'check')).toBe(false);
+  expect(readWorkspaceGraph(db, workspaceId).suggestions).toBeUndefined();
+  expect(listEvidence(db, lease.id)).toMatchObject([{ status: 'demonstrated' }]);
   resetEvidence(db, lease.id, { depth: 'medium', workspaceId });
-  expect(readLesson(db, request).reused).toBe(false);
-  expect(readLesson(db, request).messages).toHaveLength(6);
+  expect(readLesson(db, request).mastery).toMatchObject({ stage: 'checking', attempts: 0, activeCheck: { kind: 'recognition' } });
+  expect(() => run({ kind: 'answer', revision: lesson.mastery.revision!, answer: 1 })).toThrow(/current check/);
+  expect(listEvidence(db, lease.id)).toEqual([]);
 });
 
 it('refuses stale answers and rolls back evidence with the exchange if a message cannot be saved', async () => {
   const lesson = await run(request.intent);
-  const intent = { kind: 'answer' as const, revision: lesson.revision!, answer: 'Specific routing.' };
-  session = new TutorSession(db, async () => ({ lesson: { schema: 'delve.lesson/1', blocks: [explanation] },
-    observation: 'Understands specificity', assessment: true, recommendation: { action: 'Try a route', reason: 'Apply specificity', targetId: null } }));
+  const intent = { kind: 'answer' as const, revision: lesson.mastery.revision!, answer: 'Specific routing.' };
+  session = new TutorSession(db, async () => intermediate);
   db.exec(`CREATE TRIGGER reject_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'write refused'); END`);
   await expect(run(intent)).rejects.toThrow(/write refused/);
   expect(listEvidence(db, request.conceptId)).toEqual([]);
@@ -281,6 +295,110 @@ it('regenerates an invalid latest opening and preserves the fallback if the retr
   session = new TutorSession(db, async () => { throw new Error('Provider unavailable'); });
   await expect(run(request.intent)).rejects.toThrow('Provider unavailable');
   expect(readLesson(db, request)).toMatchObject({ invalidLatest: true, revision: previous.revision });
-  session = new TutorSession(db, async () => ({ ...opening, lesson: { ...opening.lesson, blocks: [{ ...explanation, heading: 'Revised explanation' }] } }));
-  expect(await run(request.intent)).toMatchObject({ invalidLatest: false, blocks: [{ heading: 'Revised explanation' }] });
+  session = new TutorSession(db, async () => ({ ...opening, lesson: { ...opening.lesson, blocks: [{ ...explanation, heading: 'Revised explanation' }, check] } }));
+  expect(await run(request.intent)).toMatchObject({ invalidLatest: false, blocks: [{ heading: 'Revised explanation' }, { type: 'check' }] });
+});
+
+it('runs an opening, a miss and two applied passes through the fake CLI', async () => {
+  const responseFile = join(await makeTempDir('mastery-cli'), 'response.json');
+  const { runner } = await setupRunner(await makeShimDir(), { FAKE_PROVIDER_RESPONSE_FILE: responseFile });
+  session = new TutorSession(db, createGenerator(runner));
+  const send = async (intent: TutorIntent, reply: TutorReply) => {
+    await writeFile(responseFile, JSON.stringify({ ...reply, lesson: { ...reply.lesson, source: null } }));
+    return run(intent);
+  };
+  const choice = { type: 'check' as const, kind: 'choice' as const, prompt: 'Which prefix wins?', options: ['/8', '/24'], expected: 1 };
+  const lesson = await send(request.intent, { ...opening, lesson: { ...opening.lesson, blocks: [explanation, choice] } });
+  const miss = await send({ kind: 'answer', revision: lesson.mastery.revision!, answer: 0 }, {
+    ...intermediate, assessment: false, observation: 'The /8 covers a broader range.',
+  });
+  expect(miss.mastery).toMatchObject({ stage: 'checking', attempts: 1, correctAnswers: 0 });
+  const first = await send({ kind: 'answer', revision: miss.mastery.revision!, answer: 'The destination matches the narrower CIDR.' }, {
+    ...intermediate, lesson: { ...opening.lesson, blocks: [explanation, { ...applied,
+      prompt: 'If the /24 is withdrawn, explain which of the remaining prefixes carries the packet.' }] },
+  });
+  expect(first.mastery).toMatchObject({ stage: 'checking', attempts: 2, correctAnswers: 1 });
+  expect(readWorkspaceGraph(db, request.workspaceId).evidence[0]?.status).toBe('partial');
+  const complete = await send({ kind: 'answer', revision: first.mastery.revision!, answer: 'The /8 is the longest surviving match.' }, {
+    ...intermediate, lesson: { ...opening.lesson, blocks: [explanation] },
+    recommendation: { action: 'Try another case', reason: 'You chose the best remaining match.', targetId: null },
+  });
+  expect(complete.mastery).toMatchObject({ stage: 'understood', attempts: 3, correctAnswers: 2, activeCheck: null });
+  expect(listEvidence(db, request.conceptId)).toMatchObject([{ status: 'demonstrated', masteryVerified: true }]);
+});
+
+it('persists the low-depth cycle and budget across restarts, then supports review and skip', async () => {
+  session.close();
+  db.close();
+  const file = join(await makeTempDir('mastery-db'), 'delve.sqlite');
+  db = openDatabase(file);
+  seedDemoWorkspaces(db);
+  const workspaceId = 'de100000-0000-4000-8000-000000000001';
+  const lease = readWorkspaceGraph(db, workspaceId).concepts.find(c => c.title === 'Worker leases')!;
+  request = { ...request, workspaceId, conceptId: lease.id, depth: 'low', provider: 'demo' };
+  session = new TutorSession(db);
+  const opening = readLesson(db, request);
+  expect(opening.mastery).toMatchObject({ requiredCorrectAnswers: 3, maxAttempts: 6 });
+  let lesson = await run({ kind: 'answer', revision: opening.mastery.revision!, answer: 0 });
+  expect(lesson.mastery).toMatchObject({ attempts: 1, correctAnswers: 1, activeCheck: { kind: 'applied' } });
+  session.close();
+  db.close();
+  db = openDatabase(file);
+  session = new TutorSession(db);
+  expect(readLesson(db, request)).toEqual(lesson);
+  expect(() => run({ kind: 'answer', revision: opening.mastery.revision!, answer: 0 })).toThrow(/current check/);
+  const prompts = new Set([opening.mastery.activeCheck!.prompt]);
+  while (lesson.mastery.stage === 'checking') {
+    const { prompt } = lesson.mastery.activeCheck!;
+    expect(prompts.has(prompt)).toBe(false);
+    prompts.add(prompt);
+    lesson = await run({ kind: 'answer', revision: lesson.mastery.revision!, answer: 'The first writer always wins.' });
+  }
+  expect(lesson.mastery).toMatchObject({ stage: 'review', attempts: 6, correctAnswers: 0, activeCheck: null });
+  expect(readWorkspaceGraph(db, workspaceId).evidence.find(e => e.conceptId === lease.id)?.status).toBe('partial');
+  const review = await run({ kind: 'review', revision: lesson.mastery.revision! });
+  expect(review.mastery).toMatchObject({ stage: 'checking', attempts: 0, correctAnswers: 0, activeCheck: { kind: 'applied' } });
+  expect(prompts.has(review.mastery.activeCheck!.prompt)).toBe(false);
+  const skipped = readerHandlers(db)['reader:skip']({ ...request, revision: review.mastery.revision! });
+  expect(skipped.mastery).toMatchObject({ stage: 'skipped', activeCheck: null });
+  session.close();
+  db.close();
+  db = openDatabase(file);
+  session = new TutorSession(db);
+  expect(readLesson(db, request).mastery).toEqual(skipped.mastery);
+  expect(listEvidence(db, lease.id)).toMatchObject([{ status: 'partial', masteryVerified: false }]);
+});
+
+it('rejects repeated checks, early recommendations and trace-only visual replies without changing the active check', async () => {
+  recordEvidence(db, { ...request, status: 'demonstrated', source: 'check' });
+  const opened = await run(request.intent);
+  const answer = { kind: 'answer' as const, revision: opened.mastery.revision!, answer: 'It is more specific.' };
+  expect(opened.mastery.stage).toBe('checking');
+  expect(readWorkspaceGraph(db, request.workspaceId).evidence[0]?.status).toBe('revisit');
+  session = new TutorSession(db, async () => ({
+    ...intermediate, lesson: { ...opening.lesson, blocks: [explanation, { ...check, prompt: 'WHY use the longer match!' }] },
+  }));
+  await expect(run(answer)).rejects.toThrow(/fresh written applied check/);
+  session = new TutorSession(db, async () => ({
+    ...intermediate, recommendation: { targetId: null, action: 'Move on', reason: 'The answer was correct.' },
+  }));
+  await expect(run(answer)).rejects.toThrow(/before the lesson was understood or skipped/);
+  session = new TutorSession(db, async () => ({
+    ...opening, lesson: { ...opening.lesson, blocks: [{ type: 'trace', steps: ['Before', 'After'] }] },
+  }));
+  await expect(run({ kind: 'ask', text: 'Draw a diagram' })).rejects.toThrow(/diagram with connected nodes/);
+  expect(readLesson(db, request)).toEqual(opened);
+});
+
+it('rejects a pending answer after the learner skips the lesson', async () => {
+  const opened = await run(request.intent);
+  let resolve!: (reply: TutorReply) => void;
+  session = new TutorSession(db, () => new Promise(done => { resolve = done; }));
+  const revision = opened.mastery.revision!;
+  const pending = run({ kind: 'answer', revision, answer: 'Specificity.' });
+  const skipped = readerHandlers(db)['reader:skip']({ ...request, revision });
+  resolve(intermediate);
+  await expect(pending).rejects.toThrow(/current check/);
+  expect(readLesson(db, request)).toEqual(skipped);
+  expect(listEvidence(db, request.conceptId)).toEqual([]);
 });

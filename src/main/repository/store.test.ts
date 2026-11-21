@@ -39,7 +39,7 @@ describe('atomic repository generation', () => {
   it('preserves canonical portable knowledge at its demonstrated depth and binds both concepts to the approved commit', () => {
     const prior = addWorkspace(db, { kind: 'topic', title: 'Reverse proxies' });
     const portable = upsertConcept(db, { workspaceId: prior.id, portable: true, key: 'nginx/proxy', title: 'NGINX reverse proxy', summary: 'Original definition' });
-    recordEvidence(db, { workspaceId: prior.id, conceptId: portable.id, depth: 'medium', status: 'demonstrated', source: 'check' });
+    recordEvidence(db, { workspaceId: prior.id, conceptId: portable.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
     const selected = source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline);
     persistGeneration(db, selected, mapped);
     expect(persistGeneration(db, selected, mapped)).toEqual({ kind: 'baseline' });

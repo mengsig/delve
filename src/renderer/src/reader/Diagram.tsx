@@ -7,7 +7,7 @@ export function Diagram({ nodes, edges }: { nodes: string[]; edges?: DiagramEdge
   const layout = layoutDiagram(nodes, edges);
   const columns = ['minmax(10rem, 16rem)', ...layout.lanes.map(lane => lane.labeled ? 'var(--diagram-label-lane)' : '1.75rem')];
   return <figure className="chapter lesson-diagram">
-    <figcaption id={caption} className="plate">System trace</figcaption>
+    <figcaption id={caption} className="plate">Diagram</figcaption>
     <div className="lesson-diagram-scroll" role="region" aria-labelledby={caption} tabIndex={0}>
       <div className="lesson-diagram-grid" style={{ gridTemplateColumns: columns.join(' ') }} aria-hidden="true">
         {layout.order.map((node, row) => {

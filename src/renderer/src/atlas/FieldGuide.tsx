@@ -26,7 +26,7 @@ function reasonFor(target: AtlasConcept, workspaceId: string): string {
   if (isLearned(target)) return 'This depth is covered. Revisit only if you want to.';
   const evidence = target.evidence;
   if (evidence) {
-    const why = evidence.status === 'partial' ? 'Your evidence shows partial understanding at this depth.' : 'You marked this concept for another look.';
+    const why = evidence.status === 'partial' ? 'You have started practising this concept at this depth.' : 'You marked this concept for another look.';
     return evidence.note ? why + ' ' + evidence.note : why;
   }
   const missing = target.prerequisites.filter(concept => !isLearned(concept));

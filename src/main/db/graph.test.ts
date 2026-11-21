@@ -72,15 +72,17 @@ describe('prerequisite edges', () => {
 describe('evidence and reuse', () => {
   it('reuses a portable concept demonstrated in another workspace, at that depth or shallower', () => {
     const proxy = upsertConcept(db, { key: 'nginx/reverse-proxy', title: 'Proxy', portable: true, workspaceId: wsA });
-    recordEvidence(db, { conceptId: proxy.id, depth: 'medium', status: 'demonstrated', source: 'check', workspaceId: wsA });
+    recordEvidence(db, { conceptId: proxy.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true, workspaceId: wsA });
     expect(isConceptKnown(db, { conceptKey: proxy.key, depth: 'medium', workspaceId: wsB })).toMatchObject({ known: true, viaDepth: 'medium' });
     expect(isConceptKnown(db, { conceptKey: proxy.key, depth: 'high', workspaceId: wsB }).known).toBe(true);
     expect(isConceptKnown(db, { conceptKey: proxy.key, depth: 'low', workspaceId: wsB }).known).toBe(false);
   });
 
-  it('never reuses a local concept outside its workspace, nor partial evidence', () => {
+  it('never reuses unverified evidence or a local concept outside its workspace', () => {
     const local = upsertConcept(db, { key: 'lease', title: 'Lease', portable: false, workspaceId: wsA });
     recordEvidence(db, { conceptId: local.id, depth: 'low', status: 'demonstrated', source: 'environment' });
+    expect(isConceptKnown(db, { conceptKey: local.key, depth: 'high', workspaceId: wsA }).known).toBe(false);
+    recordEvidence(db, { conceptId: local.id, depth: 'low', status: 'demonstrated', source: 'check', masteryVerified: true });
     expect(isConceptKnown(db, { conceptKey: local.key, depth: 'high', workspaceId: wsA }).known).toBe(true);
     expect(isConceptKnown(db, { conceptKey: local.key, depth: 'high', workspaceId: wsB }).known).toBe(false);
     const tls = upsertConcept(db, { key: 'tls', title: 'TLS', portable: true });

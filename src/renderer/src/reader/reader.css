@@ -2,6 +2,29 @@
   margin-top: 18px;
   overflow-wrap: anywhere;
 }
+.lesson-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin-bottom: 18px;
+  padding: 10px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--soft);
+  color: var(--ink);
+  font-size: .9rem;
+}
+.lesson-progress strong { margin-inline-start: auto; color: var(--green); }
+.lesson-stages { flex-basis: 100%; color: var(--dim); font-size: .82rem; }
+.reader-thread .lesson-completion, .reader-thread .lesson-pause {
+  padding: 18px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--soft);
+}
+.lesson-completion p { margin-block: 8px 12px; }
+.lesson-completion .actions { flex-wrap: wrap; }
 .reader-layout pre {
   overflow-x: auto;
   white-space: pre;

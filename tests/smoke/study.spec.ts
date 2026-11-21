@@ -79,11 +79,19 @@ test('lesson depth, local conversations and linked change concepts work offline'
   await expect(page.getByRole('log')).toContainText('How does the result writer check ownership?');
   await expect(page.getByRole('log').getByRole('heading', { name: 'Follow the late result' })).toBeVisible();
   await page.getByRole('button', { name: 'Task ID and worker start time' }).click();
-  await expect(page.getByRole('log')).toContainText('partial evidence');
-  await expect(page.getByRole('complementary').getByRole('button', { name: 'Open Write fencing →' })).toBeVisible();
+  await expect(page.getByRole('log')).toContainText('That answer was incorrect');
+  await expect(page.getByRole('button', { name: /Next lesson:/ })).toHaveCount(0);
   await expect(page.getByRole('log')).toContainText('Let’s look at the decision again');
-  await page.getByRole('button', { name: 'Task ID and active generation' }).click();
-  await expect(page.getByText(/Connection learned\./).first()).toBeVisible();
+  for (const [question, answer] of [
+    ['The active claim is generation 21', 'Reject the stale generation'],
+    ['A result and a reassignment', 'Compare the active generation'],
+    ['A is replaced by B', 'A has a stale generation'],
+  ]) {
+    await expect(page.locator('#checkpoint')).toContainText(question);
+    await page.locator('#checkpoint textarea').fill(answer);
+    await page.getByRole('button', { name: 'Submit answer' }).click();
+  }
+  await expect(page.getByRole('region', { name: 'Lesson complete' })).toContainText('You understand this concept');
   await page.getByRole('button', { name: '← Back to atlas' }).click();
   await page.getByRole('button', { name: 'Open lesson →' }).click();
   await expect(page.getByRole('log')).toContainText('How does the result writer check ownership?');
@@ -98,20 +106,20 @@ test('shows evidence provenance and resets only the selected depth at its origin
   const table = page.getByRole('table');
   const archon = table.getByRole('row').filter({ hasText: 'Archon' });
   await expect(archon).toContainText('2 / 6');
-  await page.getByText(/^Inspect .* evidence records$/).click();
+  await page.getByText(/^Inspect .* learning records$/).click();
   const entry = page.getByRole('listitem').filter({ hasText: 'Durable queue' }).filter({ hasText: 'medium' });
   await entry.getByRole('button', { name: /Manage in Relay/ }).click();
-  await expect(page.getByText(/Evidence ledger \/ Relay/)).toBeVisible();
-  await page.getByText(/^Inspect .* evidence records$/).click();
-  await entry.getByRole('button', { name: 'Reset evidence' }).click();
+  await expect(page.getByText(/Learning record \/ Relay/)).toBeVisible();
+  await page.getByText(/^Inspect .* learning records$/).click();
+  await entry.getByRole('button', { name: 'Reset record' }).click();
   await expect(entry).toContainText('every atlas that shares it');
-  await entry.getByRole('button', { name: 'Keep evidence' }).click();
-  await entry.getByRole('button', { name: 'Reset evidence' }).click();
+  await entry.getByRole('button', { name: 'Keep record' }).click();
+  await entry.getByRole('button', { name: 'Reset record' }).click();
   await entry.getByRole('button', { name: 'Confirm reset' }).click();
   await expect(entry).toHaveCount(0);
   await expect(archon).toContainText('1 / 6');
   await archon.getByRole('button').click();
-  await expect(page.getByText(/Evidence ledger \/ Archon/)).toBeVisible();
+  await expect(page.getByText(/Learning record \/ Archon/)).toBeVisible();
   await expect(entry).toHaveCount(0);
 });
 
