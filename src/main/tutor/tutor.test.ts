@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { TutorIntent, TutorRequest } from '../../shared/reader';
@@ -27,12 +28,44 @@ const opening: TutorReply = {
 };
 
 beforeEach(() => {
+  vi.stubEnv('CODEX_HOME', join(tmpdir(), `delve-missing-${randomUUID()}`));
   db = openDatabase(':memory:');
   const workspaceId = addWorkspace(db, { kind: 'topic', title: 'Networking' }).id;
   const concept = upsertConcept(db, { key: 'routing', title: 'Routing', workspaceId, portable: true });
   request = { workspaceId, conceptId: concept.id, depth: 'medium', provider: 'codex', intent: { kind: 'teach' } };
   session = new TutorSession(db, async () => opening);
 });
+
+it('uses the Codex config model unless an explicit override wins, and binds the preview to its source', async () => {
+  const home = await makeTempDir('codex-config');
+  vi.stubEnv('CODEX_HOME', home);
+  vi.stubEnv('DELVE_CODEX_MODEL', undefined);
+  const defaults = prepareTurn(db, request);
+  expect(defaults.preview).toMatchObject({ model: null, modelSource: 'default' });
+  await writeFile(join(home, 'config.toml'), 'model = "gpt-6.1-terra"\n[mcp_servers.bad]\ncommand = "ignored"\n');
+  const configured = prepareTurn(db, request);
+  expect(configured.preview).toMatchObject({ model: 'gpt-6.1-terra', modelSource: 'codex-config' });
+  expect(configured.preview.token).not.toBe(defaults.preview.token);
+  const record = join(home, 'record.json');
+  const { runner } = await setupRunner(await makeShimDir(), { FAKE_PROVIDER_RECORD: record,
+    FAKE_PROVIDER_PAYLOAD: JSON.stringify({ ...opening, lesson: { ...opening.lesson, source: null } }) });
+  await createGenerator(runner)(configured, new AbortController().signal);
+  const argv: string[] = JSON.parse(await readFile(record, 'utf8')).argv;
+  expect(argv.slice(argv.indexOf('--model'), argv.indexOf('--model') + 2)).toEqual(['--model', 'gpt-6.1-terra']);
+  expect(argv).toContain('--ignore-user-config');
+  vi.stubEnv('DELVE_CODEX_MODEL', 'gpt-override');
+  expect(prepareTurn(db, request).preview).toMatchObject({ model: 'gpt-override', modelSource: 'override' });
+});
+
+it.each(['model = "--bad"', 'model = 123', '[profile]\nmodel = "nested"', 'model = ['])(
+  'falls back to the Codex default for invalid or absent top-level model: %s', async contents => {
+    const home = await makeTempDir('codex-invalid');
+    vi.stubEnv('CODEX_HOME', home);
+    vi.stubEnv('DELVE_CODEX_MODEL', undefined);
+    await writeFile(join(home, 'config.toml'), contents);
+    expect(prepareTurn(db, request).preview).toMatchObject({ model: null, modelSource: 'default' });
+  },
+);
 afterEach(() => { session.close(); db.close(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 function run(intent: TutorIntent, base = request) {

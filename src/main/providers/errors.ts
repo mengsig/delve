@@ -81,7 +81,7 @@ export function classifyText(p: ProviderId, text: string, model?: string): Provi
     const variable = MODEL_OVERRIDE_ENV[p];
     const message = model === undefined
       ? `Update ${DISPLAY_NAME[p]} or set ${variable} to a model available to your subscription, then relaunch Delve.`
-      : `Clear ${variable} to use the provider default, or set it to a model available to your subscription, then relaunch Delve.`;
+      : `Set ${variable} to a model available to your subscription${p === 'codex' ? ', or update the model in Codex config' : ''}, then relaunch Delve.`;
     const requested = model === undefined ? 'its default model' : `the requested model ${model}`;
     return new ProviderError('PROVIDER_MODEL', p, `${DISPLAY_NAME[p]} rejected ${requested}. ${message}`);
   }

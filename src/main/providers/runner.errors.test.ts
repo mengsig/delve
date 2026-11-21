@@ -70,8 +70,8 @@ describe('ProviderRunner failures', () => {
 });
 
 it.each([
-  { provider: 'codex', mode: 'model-rejected', model: 'gpt-test', hint: 'Clear DELVE_CODEX_MODEL' },
-  { provider: 'claude', mode: 'model-rejected', model: 'claude-test', hint: 'Clear DELVE_CLAUDE_MODEL' },
+  { provider: 'codex', mode: 'model-rejected', model: 'gpt-test', hint: 'update the model in Codex config' },
+  { provider: 'claude', mode: 'model-rejected', model: 'claude-test', hint: 'Set DELVE_CLAUDE_MODEL' },
   { provider: 'claude', mode: 'model-rejected-zero-exit', model: undefined, hint: 'set DELVE_CLAUDE_MODEL' },
 ] as const)('reports $provider $mode in a single attempt', async ({ provider, mode, model, hint }) => {
   const counter = await counterIn();

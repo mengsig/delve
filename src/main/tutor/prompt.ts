@@ -5,8 +5,7 @@ import type { TutorPreview, TutorRequest } from '../../shared/reader';
 import type { Db } from '../db/connection';
 import { readWorkspaceGraph } from '../db/graph';
 import { lessonCacheKey } from '../db/lessons';
-import { validateModel } from '../providers/argv';
-import { MODEL_OVERRIDE_ENV } from '../providers/env';
+import { selectTutorModel } from '../providers/model';
 import { readHistory } from '../reader/conversation';
 import { publicBlocks } from '../reader/document';
 import { lessonContext, storedLesson } from '../reader/stored-lesson';
@@ -17,12 +16,6 @@ const depthGuide = {
   medium: 'Explain how the parts interact, at the module or technique level.',
   low: 'Work through protocol, implementation details or exact technique and boundary conditions.',
 };
-
-function modelFor(provider: TutorRequest['provider']): string | null {
-  if (provider === 'demo') return 'field-tutor-v1';
-  const name = process.env[MODEL_OVERRIDE_ENV[provider]];
-  return name === undefined ? null : validateModel(name);
-}
 
 const instructions = [
   'You are Delve, a conversational tutor. Return a delve.lesson/1 document inside the requested response.',
@@ -44,7 +37,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const selected = storedLesson(db, context);
   const response = request.intent.kind === 'answer' ? checkResponse(selected, request.intent) : null;
   const history = readHistory(db, context).messages.slice(-12);
-  const model = modelFor(request.provider);
+  const { model, modelSource } = selectTutorModel(request.provider);
   // The default cache entry is distinct from every valid explicit model ID.
   const cacheModel = model ?? '(provider default)';
   const cacheKey = lessonCacheKey({ provider: request.provider, model: cacheModel, schemaVersion: 'delve.lesson/1', conceptKey: context.key,
@@ -64,8 +57,8 @@ export function prepareTurn(db: Db, request: TutorRequest) {
     intent: request.intent.kind, question: request.intent.kind === 'ask' ? request.intent.text : undefined, check: response,
   };
   const prompt = instructions + '\n' + depthGuide[context.depth] + '\n' + JSON.stringify(payload, null, 2);
-  const token = createHash('sha256').update(JSON.stringify([cacheKey, selected.revision, selected.invalidLatest, history.at(-1)?.id, prompt])).digest('hex');
-  const preview: TutorPreview = { prompt, model, bytes: Buffer.byteLength(prompt), token, files: [] };
+  const token = createHash('sha256').update(JSON.stringify([cacheKey, modelSource, selected.revision, selected.invalidLatest, history.at(-1)?.id, prompt])).digest('hex');
+  const preview: TutorPreview = { prompt, model, modelSource, bytes: Buffer.byteLength(prompt), token, files: [] };
   assert.ok(preview.bytes >= prompt.length && preview.bytes > 0);
   assert.equal(context.depth, request.depth);
   return { context, selected, response, reused, cacheKey, cacheModel, preview, request, nextConcepts };

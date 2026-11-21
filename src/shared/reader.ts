@@ -53,6 +53,7 @@ export interface TutorPreview {
   files: string[];
   /** Model Delve requests explicitly, or null when the CLI chooses it. */
   model: string | null;
+  modelSource: 'demo' | 'override' | 'codex-config' | 'default';
   token: string;
 }
 

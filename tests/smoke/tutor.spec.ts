@@ -1,9 +1,24 @@
 import { expect } from '@playwright/test';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from './desktop';
 
 test.use({ tutorCli: true });
+
+test('previews the configured Codex model before sending it', async ({ desktop: { page, directory } }) => {
+  const home = join(directory, 'codex-home');
+  mkdirSync(home);
+  writeFileSync(join(home, 'config.toml'), 'model = "gpt-6.1-terra"\n');
+  await page.getByRole('button', { name: '+ Add', exact: true }).click();
+  await page.getByRole('button', { name: 'Any topic', exact: true }).click();
+  await page.getByLabel('Any topic', { exact: true }).fill('Routing');
+  await page.getByRole('button', { name: 'Add to atlas →' }).click();
+  await page.getByRole('button', { name: 'Start a topic lesson →' }).click();
+  await page.getByRole('button', { name: 'Start lesson', exact: true }).click();
+  const preview = page.getByRole('dialog', { name: 'Review what will be sent' });
+  const override = process.env.DELVE_CODEX_MODEL;
+  await expect(preview).toContainText(override === undefined ? 'gpt-6.1-terra · from Codex config' : `Requested model: ${override}`);
+});
 
 test('previews a real topic request, cancels it, then teaches and assesses through the installed CLI interface', async ({ desktop }) => {
   test.setTimeout(25_000);
@@ -27,7 +42,7 @@ test('previews a real topic request, cancels it, then teaches and assesses throu
   expect(prompt).toContain('IP routing');
   expect(prompt).toContain('"depth": "medium"');
   const model = process.env.DELVE_CODEX_MODEL;
-  await expect(preview).toContainText(model === undefined ? 'Provider default' : `Requested model: ${model}`);
+  await expect(preview).toContainText(model === undefined ? 'Codex default' : `Requested model: ${model}`);
   await expect(preview).toContainText(Buffer.byteLength(prompt).toLocaleString('en-US') + ' bytes');
   await expect(preview).toContainText('No files attached');
   expect(existsSync(receipt)).toBe(false);

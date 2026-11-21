@@ -96,7 +96,8 @@ function RequestPreview({ preview, approve, close }: { preview: Preview; approve
   }, []);
   const { data, request } = preview;
   const offline = request.provider === 'demo';
-  const model = offline ? data.model : data.model === null ? 'Provider default' : `Requested model: ${data.model}`;
+  const model = offline ? data.model : data.modelSource === 'codex-config' ? `${data.model} · from Codex config` :
+    data.model === null ? `${request.provider === 'codex' ? 'Codex' : 'Claude'} default` : `Requested model: ${data.model}`;
   return <dialog ref={dialog} className="reader-preview" aria-labelledby="preview-title" onCancel={close}>
     <span className="eyebrow">Provider request / {request.provider}</span>
     <h3 id="preview-title">{offline ? 'Review local tutor input' : 'Review what will be sent'}</h3>
