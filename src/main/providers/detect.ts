@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import { execFile } from 'node:child_process';
 import type { ProviderId, ProviderStatus } from '../../shared/domain';
+import { buildChildEnv } from './env';
 import { findExecutable } from './which';
 
 export interface DetectOptions {
@@ -40,7 +41,9 @@ export function parseClaudeAuth(res: ExecResult): AuthState {
     const info = parsed as { loggedIn?: unknown; authMethod?: unknown };
     if (info.loggedIn === true) {
       const method = typeof info.authMethod === 'string' ? info.authMethod : 'unknown method';
-      return { state: 'signed-in', detail: `signed in (${method})` };
+      // Only a claude.ai login is a subscription; any other method may bill per use.
+      if (method === 'claude.ai') return { state: 'signed-in', detail: 'signed in (claude.ai)' };
+      return { state: 'api-key', detail: `signed in with ${method}, not a subscription; Delve will not use it` };
     }
     if (info.loggedIn === false) return { state: 'signed-out', detail: 'not signed in' };
     return { state: 'unknown', detail: 'sign-in check returned no loggedIn field' };
@@ -53,7 +56,8 @@ export function parseCodexAuth(res: ExecResult): AuthState {
   if (res.failure) return { state: 'unknown', detail: `sign-in check failed: ${res.failure}` };
   const text = `${res.stdout}\n${res.stderr}`;
   if (/not logged in/i.test(text) || res.code !== 0) return { state: 'signed-out', detail: 'not signed in' };
-  if (/logged in/i.test(text)) return { state: 'signed-in', detail: 'signed in' };
+  if (/logged in using chatgpt/i.test(text)) return { state: 'signed-in', detail: 'signed in (ChatGPT)' };
+  if (/api key/i.test(text)) return { state: 'api-key', detail: 'signed in with an API key, not a subscription; Delve will not use it' };
   return { state: 'unknown', detail: 'unrecognised sign-in output' };
 }
 
@@ -77,7 +81,7 @@ async function detectOne(id: ProviderId, env: NodeJS.ProcessEnv, timeoutMs: numb
 }
 
 export async function detectProviders(options: DetectOptions = {}): Promise<ProviderStatus[]> {
-  const env = options.env ?? process.env;
+  const env = buildChildEnv(options.env ?? process.env);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   assert(timeoutMs > 0, 'timeoutMs must be positive');
   const statuses = await Promise.all(PROVIDER_ORDER.map((id) => detectOne(id, env, timeoutMs)));

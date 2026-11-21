@@ -48,7 +48,9 @@ describe.skipIf(process.platform === 'win32')('ProviderRunner', () => {
   });
 
   it('reports PROVIDER_NOT_FOUND when the CLI is missing', async () => {
-    const runner = new ProviderRunner({ resolveExecutable: async () => null });
+    const runner = new ProviderRunner({
+      resolveProvider: async (id) => ({ id, state: 'not-found', path: null, version: null, detail: 'not found on PATH' }),
+    });
     await expect(runner.run(request())).rejects.toMatchObject({ code: 'PROVIDER_NOT_FOUND' });
   });
 
@@ -57,8 +59,7 @@ describe.skipIf(process.platform === 'win32')('ProviderRunner', () => {
     const { runner } = await setup({ FAKE_PROVIDER_COUNTER: counter });
     const a = runner.run(request());
     const b = runner.run(request());
-    expect(b).toBe(a);
-    await a;
+    await expect(Promise.all([a, b])).resolves.toHaveLength(2);
     expect(await readFile(counter, 'utf8')).toBe('1');
   });
 });

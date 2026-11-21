@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { DEPTHS, type Depth } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
 import { nowIso, transaction, type Db } from './connection';
+import { resolveScope } from './scope';
 
 const SCHEMA_VERSION = /^delve\.lesson\/\d+$/;
 const COMMIT_SHA = /^[0-9a-f]{7,64}$/i;
@@ -102,6 +103,7 @@ export function saveLesson(db: Db, input: LessonInput): StoredLesson {
   const body = JSON.stringify(input.body);
   assert.ok(typeof body === 'string' && body.length > 0, 'lesson body must serialize to JSON');
   return transaction(db, () => {
+    const scope = resolveScope(db, input.conceptId, input.workspaceId, input.snapshotId);
     db.prepare(
       `INSERT INTO lessons (cache_key, schema_version, concept_id, workspace_id, snapshot_id, depth, provider, model, body, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -110,8 +112,8 @@ export function saveLesson(db: Db, input: LessonInput): StoredLesson {
       input.cacheKey,
       input.schemaVersion,
       input.conceptId,
-      input.workspaceId ?? null,
-      input.snapshotId ?? null,
+      scope.workspaceId,
+      scope.snapshotId,
       input.depth,
       input.provider,
       input.model,

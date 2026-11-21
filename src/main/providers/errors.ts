@@ -36,6 +36,18 @@ export function authError(p: ProviderId): ProviderError {
   return new ProviderError('PROVIDER_AUTH', p, `${DISPLAY_NAME[p]} is not signed in: run ${LOGIN_HINT[p]} and log in`);
 }
 
+export function apiKeyAuthError(p: ProviderId): ProviderError {
+  return new ProviderError(
+    'PROVIDER_AUTH',
+    p,
+    `${DISPLAY_NAME[p]} is signed in with an API key, which bills per use. Delve only runs on a subscription login: run ${LOGIN_HINT[p]} and sign in with your subscription`,
+  );
+}
+
+export function unknownAuthError(p: ProviderId, detail: string): ProviderError {
+  return new ProviderError('PROVIDER_AUTH', p, `Delve could not confirm that ${DISPLAY_NAME[p]} uses a subscription login (${detail}), so it did not run it`);
+}
+
 export function quotaError(p: ProviderId): ProviderError {
   return new ProviderError('PROVIDER_QUOTA', p, `Usage limit reached for ${p}; Delve stopped and will not retry`);
 }

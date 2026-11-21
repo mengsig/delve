@@ -3,14 +3,16 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { z } from 'zod';
-import type { ProviderId } from '../../shared/domain';
+import { PROVIDER_IDS, type ProviderId, type ProviderStatus } from '../../shared/domain';
 import { buildClaudeArgv, buildCodexArgv, validateModel } from './argv';
-import { cancelledError, failedError, notFoundError } from './errors';
+import { apiKeyAuthError, authError, cancelledError, failedError, notFoundError, unknownAuthError } from './errors';
+import { buildChildEnv } from './env';
 import { checkExit, extractClaudePayload, extractCodexPayload, isProviderError, validatePayload } from './output';
 import { runCaptured } from './process';
 
 export interface RunnerDeps {
-  resolveExecutable: (id: ProviderId) => Promise<string | null>;
+  /** Current status of a provider; the runner only proceeds for a subscription sign-in. */
+  resolveProvider: (id: ProviderId) => Promise<ProviderStatus>;
   env?: NodeJS.ProcessEnv;
   tempRoot?: string;
   killGraceMs?: number;
@@ -26,6 +28,7 @@ export interface RunRequest<T> {
   model?: string;
   timeoutMs?: number;
   maxRetries?: number;
+  /** Cancels this caller only; the shared run stops when its last caller cancels. */
   signal?: AbortSignal;
 }
 
@@ -40,14 +43,6 @@ const DEFAULT_TIMEOUT_MS = 180_000;
 const DEFAULT_RETRIES = 1;
 const MAX_RETRIES = 3;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
-const STRIPPED_ENV = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY'];
-
-export function buildChildEnv(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const env = { ...parent };
-  for (const key of STRIPPED_ENV) delete env[key];
-  assert(STRIPPED_ENV.every((k) => !(k in env)), 'API keys must never reach the child');
-  return env;
-}
 
 interface Attempt {
   bin: string;
@@ -56,43 +51,106 @@ interface Attempt {
   ioDir: string;
 }
 
+interface InFlight {
+  promise: Promise<RunResult<unknown>>;
+  controller: AbortController;
+  subscribers: number;
+}
+
+/** Returns the executable path, or throws why this provider must not run. */
+export function requireSubscription(status: ProviderStatus): string {
+  assert(PROVIDER_IDS.includes(status.id), `unknown provider ${status.id}`);
+  switch (status.state) {
+    case 'not-found':
+      throw notFoundError(status.id);
+    case 'signed-out':
+      throw authError(status.id);
+    case 'api-key':
+      throw apiKeyAuthError(status.id);
+    case 'unknown':
+      throw unknownAuthError(status.id, status.detail);
+    case 'signed-in':
+      assert(status.path !== null && status.path.length > 0, 'a signed-in provider has an executable path');
+      return status.path;
+  }
+}
+
 export class ProviderRunner {
-  private readonly inFlight = new Map<string, { promise: Promise<unknown>; controller: AbortController }>();
+  private readonly inFlight = new Map<string, InFlight>();
 
   constructor(private readonly deps: RunnerDeps) {}
 
   run<T>(req: RunRequest<T>): Promise<RunResult<T>> {
     assert(req.cacheKey.length > 0, 'cacheKey required');
     assert(req.prompt.length > 0, 'prompt required');
-    const existing = this.inFlight.get(req.cacheKey);
-    if (existing) return existing.promise as Promise<RunResult<T>>;
-
-    const controller = new AbortController();
-    const forward = (): void => controller.abort();
-    req.signal?.addEventListener('abort', forward, { once: true });
-    if (req.signal?.aborted) controller.abort();
-
-    const promise = this.runWithRetries(req, controller.signal).finally(() => {
-      req.signal?.removeEventListener('abort', forward);
-      this.inFlight.delete(req.cacheKey);
-    });
-    this.inFlight.set(req.cacheKey, { promise, controller });
-    return promise;
+    const entry = this.inFlight.get(req.cacheKey) ?? this.start(req);
+    return this.subscribe(entry, req);
   }
 
+  /** Cancels the shared run for every caller waiting on `cacheKey`. */
   cancel(cacheKey: string): boolean {
     const entry = this.inFlight.get(cacheKey);
     if (!entry) return false;
+    this.inFlight.delete(cacheKey);
     entry.controller.abort();
     return true;
+  }
+
+  private start<T>(req: RunRequest<T>): InFlight {
+    const controller = new AbortController();
+    const promise: Promise<RunResult<unknown>> = this.runWithRetries(req, controller.signal).finally(() => {
+      if (this.inFlight.get(req.cacheKey)?.promise === promise) this.inFlight.delete(req.cacheKey);
+    });
+    const entry: InFlight = { controller, subscribers: 0, promise };
+    this.inFlight.set(req.cacheKey, entry);
+    assert(this.inFlight.get(req.cacheKey) === entry, 'new run must be registered');
+    return entry;
+  }
+
+  // Each caller gets its own promise so its signal cancels only its own wait.
+  private subscribe<T>(entry: InFlight, req: RunRequest<T>): Promise<RunResult<T>> {
+    entry.subscribers += 1;
+    return new Promise<RunResult<T>>((resolve, reject) => {
+      let left = false;
+      const leave = (): boolean => {
+        if (left) return false;
+        left = true;
+        req.signal?.removeEventListener('abort', onAbort);
+        entry.subscribers -= 1;
+        assert(entry.subscribers >= 0, 'subscriber count cannot go negative');
+        return true;
+      };
+      const onAbort = (): void => {
+        if (!leave()) return;
+        if (entry.subscribers === 0) this.abandon(req.cacheKey, entry);
+        reject(cancelledError(req.provider));
+      };
+      entry.promise.then(
+        (value) => {
+          if (leave()) resolve(value as RunResult<T>);
+        },
+        (error: unknown) => {
+          if (leave()) reject(error);
+        },
+      );
+      if (req.signal?.aborted) onAbort();
+      else req.signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  private abandon(cacheKey: string, entry: InFlight): void {
+    if (this.inFlight.get(cacheKey) === entry) this.inFlight.delete(cacheKey);
+    entry.controller.abort();
   }
 
   private async runWithRetries<T>(req: RunRequest<T>, signal: AbortSignal): Promise<RunResult<T>> {
     const retries = Math.min(Math.max(req.maxRetries ?? DEFAULT_RETRIES, 0), MAX_RETRIES);
     const model = req.model === undefined ? null : validateModel(req.model);
+    const bin = requireSubscription(await this.deps.resolveProvider(req.provider));
     for (let attempt = 1; ; attempt++) {
+      if (signal.aborted) throw cancelledError(req.provider);
       try {
-        const value = await this.runOnce(req, signal);
+        const value = await this.runOnce(req, bin, signal);
         return { value, provider: req.provider, model, attempts: attempt };
       } catch (e) {
         if (!isProviderError(e) || !e.retryable || attempt > retries) throw e;
@@ -117,9 +175,7 @@ export class ProviderRunner {
     });
   }
 
-  private async runOnce<T>(req: RunRequest<T>, signal: AbortSignal): Promise<T> {
-    const bin = await this.deps.resolveExecutable(req.provider);
-    if (bin === null) throw notFoundError(req.provider);
+  private async runOnce<T>(req: RunRequest<T>, bin: string, signal: AbortSignal): Promise<T> {
     const root = await mkdtemp(path.join(this.deps.tempRoot ?? tmpdir(), 'delve-run-'));
     const attempt: Attempt = { bin, root, workDir: path.join(root, 'work'), ioDir: path.join(root, 'io') };
     let outcome: { ok: true; value: T } | { ok: false; error: unknown };

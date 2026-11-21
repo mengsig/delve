@@ -4,7 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import type { ProviderId } from '../../shared/domain';
 import { ProviderRunner, type RunRequest } from './runner';
-import { findExecutable } from './which';
+import { detectProviders } from './detect';
 
 export const FAKE_SCRIPT = path.resolve(__dirname, '../../../tests/fixtures/fake-cli/fake-provider.mjs');
 export const answerSchema = z.object({ answer: z.string() });
@@ -36,7 +36,11 @@ export async function setupRunner(binDir: string, env: NodeJS.ProcessEnv = {}): 
   const tempRoot = await makeTempDir('root');
   const childEnv = { PATH: `${binDir}:${process.env.PATH ?? ''}`, ...env };
   const runner = new ProviderRunner({
-    resolveExecutable: (id: ProviderId) => findExecutable(id, childEnv),
+    resolveProvider: async (id: ProviderId) => {
+      const status = (await detectProviders({ env: childEnv })).find((s) => s.id === id);
+      if (!status) throw new Error(`no status for ${id}`);
+      return status;
+    },
     env: childEnv, tempRoot, killGraceMs: 200, retryBackoffMs: 10,
   });
   return { runner, tempRoot };

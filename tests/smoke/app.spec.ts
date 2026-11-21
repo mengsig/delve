@@ -52,6 +52,16 @@ test('window loads hardened, adds and switches workspaces that persist', async (
 
   await window.getByRole('button', { name: 'Switch to Photography' }).click();
   await expect(window.getByTestId('active-workspace')).toHaveText('Active: Photography');
+
+  // R3: the shortcut focuses the workspace switcher, which then switches workspace.
+  await window.locator('body').click();
+  await window.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
+  const switcher = window.getByLabel('Switch workspace');
+  await expect(switcher).toBeFocused();
+  await switcher.selectOption({ label: 'octo/site' });
+  await expect(window.getByTestId('active-workspace')).toHaveText('Active: octo/site');
+  await window.getByRole('button', { name: 'Switch to Photography' }).click();
+  await expect(window.getByTestId('active-workspace')).toHaveText('Active: Photography');
   await app.close();
 
   const reopened = await launch();

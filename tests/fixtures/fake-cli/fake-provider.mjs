@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Fake claude/codex CLI. Behaviour: FAKE_PROVIDER_MODE; recording: FAKE_PROVIDER_RECORD; counter: FAKE_PROVIDER_COUNTER.
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 
 const argv = process.argv.slice(2);
@@ -24,11 +25,13 @@ function readStdin() {
 
 function handleStatus() {
   const loggedIn = mode !== 'signed-out';
+  const apiKey = mode === 'api-key';
   if (invokedAs === 'claude') {
-    console.log(JSON.stringify({ loggedIn, authMethod: loggedIn ? 'claude.ai' : 'none' }));
+    console.log(JSON.stringify({ loggedIn, authMethod: apiKey ? 'api_key' : loggedIn ? 'claude.ai' : 'none' }));
     return;
   }
-  if (loggedIn) console.log('Logged in using ChatGPT');
+  if (apiKey) console.log('Logged in using an API key - sk-proj-***');
+  else if (loggedIn) console.log('Logged in using ChatGPT');
   else {
     console.error('Not logged in');
     process.exitCode = 1;
@@ -46,6 +49,20 @@ function succeed() {
   console.log('done');
 }
 
+// A grandchild that inherits stdout/stderr, like a CLI helper process left behind.
+function spawnDescendant() {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] });
+  fs.writeFileSync(process.env.FAKE_PROVIDER_CHILD_PID, String(child.pid));
+  child.unref();
+}
+
+function flood() {
+  process.on('SIGTERM', () => undefined);
+  const chunk = 'x'.repeat(64 * 1024);
+  const write = () => process.stdout.write(chunk, write);
+  write();
+}
+
 async function main() {
   if (argv[0] === '--version') return console.log(`fake-${invokedAs} 1.0.0`);
   if (argv[0] === 'auth' || argv[0] === 'login') return handleStatus();
@@ -58,6 +75,11 @@ async function main() {
   if (process.env.FAKE_PROVIDER_COUNTER) bump(process.env.FAKE_PROVIDER_COUNTER);
 
   if (mode === 'hang') return setInterval(() => undefined, 1000);
+  if (mode === 'flood') return flood();
+  if (mode === 'orphan' || mode === 'orphan-hang') spawnDescendant();
+  if (mode === 'orphan-hang') return setInterval(() => undefined, 1000);
+  const delay = Number(process.env.FAKE_PROVIDER_DELAY_MS ?? 0);
+  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
   if (mode === 'auth') {
     console.error('Error: Not logged in. Please run /login');
     process.exitCode = 1;

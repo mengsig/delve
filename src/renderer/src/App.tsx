@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ProviderStatus, WorkspaceList } from '../../shared/domain';
 import { call } from './api';
 import { AddWorkspaceForm } from './AddWorkspaceForm';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 const KIND_LABELS = { git: 'Local Git repository', github: 'GitHub repository', topic: 'Topic' } as const;
 const STATE_LABELS: Record<ProviderStatus['state'], string> = {
   'not-found': 'not found',
   'signed-out': 'not signed in',
   'signed-in': 'signed in',
+  'api-key': 'API key login (not used)',
   unknown: 'sign-in state unknown',
 };
 
@@ -68,15 +70,17 @@ export function App() {
     call('providers:detect', null).then(setProviders, report);
   }, []);
 
+  const switchTo = (id: string) => void run(async () => setList(await call('workspaces:switch', { id })));
   const active = list.workspaces.find((w) => w.id === list.activeId);
   return (
     <main>
       <h1>Delve</h1>
+      <WorkspaceSwitcher list={list} onSwitch={switchTo} />
       <p data-testid="active-workspace">{active ? `Active: ${active.name}` : 'No active workspace'}</p>
       {error && <p role="alert" className="error">{error}</p>}
       <section aria-labelledby="workspaces-heading">
         <h2 id="workspaces-heading">Workspaces</h2>
-        <Workspaces list={list} onSwitch={(id) => void run(async () => setList(await call('workspaces:switch', { id })))} />
+        <Workspaces list={list} onSwitch={switchTo} />
         <AddWorkspaceForm onAdded={() => run(async () => setList(await call('workspaces:list', null)))} onError={setError} />
       </section>
       <section aria-labelledby="providers-heading">

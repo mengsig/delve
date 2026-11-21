@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { DEPTHS, type Depth } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
-import { getConcept, getConceptByKey } from './concepts';
+import { getConceptByKey } from './concepts';
 import { nowIso, transaction, type Db } from './connection';
+import { resolveScope } from './scope';
 
 export const EVIDENCE_STATUSES = ['demonstrated', 'partial', 'revisit'] as const;
 export type EvidenceStatus = (typeof EVIDENCE_STATUSES)[number];
@@ -76,7 +77,7 @@ function assertInput(input: EvidenceInput): void {
 export function recordEvidence(db: Db, input: EvidenceInput): Evidence {
   assertInput(input);
   return transaction(db, () => {
-    if (!getConcept(db, input.conceptId)) throw new DomainError('CONCEPT_NOT_FOUND', `Concept ${input.conceptId} does not exist.`);
+    const scope = resolveScope(db, input.conceptId, input.workspaceId, input.snapshotId);
     db.prepare(
       `INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
@@ -84,7 +85,7 @@ export function recordEvidence(db: Db, input: EvidenceInput): Evidence {
          status = excluded.status, source = excluded.source, note = excluded.note,
          workspace_id = excluded.workspace_id, snapshot_id = excluded.snapshot_id,
          revision = evidence.revision + 1, recorded_at = excluded.recorded_at`,
-    ).run(input.conceptId, input.depth, input.status, input.source, input.note ?? '', input.workspaceId ?? null, input.snapshotId ?? null, nowIso());
+    ).run(input.conceptId, input.depth, input.status, input.source, input.note ?? '', scope.workspaceId, scope.snapshotId, nowIso());
     const saved = listEvidence(db, input.conceptId).find((e) => e.depth === input.depth);
     assert.ok(saved && saved.status === input.status, 'recorded evidence must be readable');
     return saved;

@@ -17,7 +17,11 @@ Linux, a `.dmg` for macOS, or an NSIS installer for Windows. Packages are not ye
 To generate lessons, Delve uses a CLI you already have and are signed in to:
 [Claude Code](https://code.claude.com/docs/en/headless) (`claude`) or
 [Codex](https://developers.openai.com/codex/noninteractive/) (`codex`). Delve never calls a paid API
-itself and never copies your credentials. If neither CLI is on your `PATH`, Delve shows "not found".
+itself and never copies your credentials. It only runs a CLI signed in with a subscription
+(claude.ai or ChatGPT); a CLI signed in with an API key is shown and refused, because it bills per
+use. If neither CLI is on your `PATH`, Delve shows "not found".
+
+Switch workspaces from the switcher at the top; Ctrl+K (⌘K on macOS) focuses it.
 
 ## Develop
 
@@ -64,7 +68,8 @@ The renderer is sandboxed and context-isolated, without Node integration, and lo
 permission requests are refused. Main validates every IPC request and ignores frames from other
 origins. Packaged builds disable `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and inspector flags via
 Electron fuses. Provider CLIs run with fixed arguments, no shell, no write tools or project plugins, in an empty
-temporary directory, and without API-key environment variables.
+temporary directory, and without API-key environment variables; timeouts and cancellation stop the
+CLI's whole process tree.
 
 ## License
 

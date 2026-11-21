@@ -102,6 +102,21 @@ describe('evidence and reuse', () => {
     expect(listEvidence(db, c.id)).toEqual([]);
   });
 
+  it('rejects evidence attributed to the wrong workspace or snapshot', () => {
+    const local = upsertConcept(db, { key: 'lease', title: 'Lease', portable: false, workspaceId: wsA });
+    const snapA = bindSnapshot(db, wsA, 'aaaaaaa1');
+    const snapB = bindSnapshot(db, wsB, 'bbbbbbb1');
+    const base = { conceptId: local.id, depth: 'medium', status: 'demonstrated', source: 'check' } as const;
+    expect(() => recordEvidence(db, { ...base, workspaceId: wsB })).toThrow(/another workspace/);
+    expect(() => recordEvidence(db, { ...base, snapshotId: snapB })).toThrow(/different workspace/);
+    expect(() => recordEvidence(db, { ...base, snapshotId: 999 })).toThrow(/does not exist/);
+    expect(isConceptKnown(db, { conceptKey: local.key, depth: 'medium', workspaceId: wsA }).known).toBe(false);
+    expect(recordEvidence(db, { ...base, snapshotId: snapA })).toMatchObject({ workspaceId: wsA, snapshotId: snapA });
+    const portable = upsertConcept(db, { key: 'tls', title: 'TLS', portable: true });
+    expect(() => recordEvidence(db, { ...base, conceptId: portable.id, workspaceId: wsA, snapshotId: snapB })).toThrow(/different workspace/);
+    expect(() => recordEvidence(db, { ...base, conceptId: portable.id, snapshotId: snapA })).toThrow(/different workspace/);
+  });
+
   it('rejects evidence for unknown concepts or values', () => {
     expect(() => recordEvidence(db, { conceptId: 404, depth: 'high', status: 'demonstrated', source: 'check' })).toThrow(/does not exist/);
     const c = upsertConcept(db, { key: 'x', title: 'X', portable: true });
@@ -133,5 +148,7 @@ describe('lessons and snapshots', () => {
     expect(replaced.body).toEqual({ blocks: [2] });
     expect(getLessonByCacheKey(db, cacheKey)?.snapshotId).toBe(snap);
     expect(() => saveLesson(db, { ...parts, schemaVersion: 'v1', cacheKey: 'k', conceptId: concept.id, body: {} })).toThrow(/Unknown lesson schema/);
+    const snapB = bindSnapshot(db, wsB, 'bbbbbbb1');
+    expect(() => saveLesson(db, { ...parts, cacheKey: 'k2', conceptId: concept.id, workspaceId: wsA, snapshotId: snapB, body: {} })).toThrow(/different workspace/);
   });
 });
