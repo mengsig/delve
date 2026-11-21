@@ -6,6 +6,7 @@ import type { Db } from '../db/connection';
 import { readWorkspaceGraph } from '../db/graph';
 import { lessonCacheKey } from '../db/lessons';
 import { validateModel } from '../providers/argv';
+import { MODEL_OVERRIDE_ENV } from '../providers/env';
 import { readHistory } from '../reader/conversation';
 import { publicBlocks } from '../reader/document';
 import { lessonContext, storedLesson } from '../reader/stored-lesson';
@@ -17,11 +18,10 @@ const depthGuide = {
   low: 'Work through protocol, implementation details or exact technique and boundary conditions.',
 };
 
-function modelFor(provider: TutorRequest['provider']): string {
+function modelFor(provider: TutorRequest['provider']): string | null {
   if (provider === 'demo') return 'field-tutor-v1';
-  const name = provider === 'codex' ? process.env.DELVE_CODEX_MODEL ?? 'gpt-5.4'
-    : process.env.DELVE_CLAUDE_MODEL ?? 'claude-sonnet-4-6';
-  return validateModel(name);
+  const name = process.env[MODEL_OVERRIDE_ENV[provider]];
+  return name === undefined ? null : validateModel(name);
 }
 
 const instructions = [
@@ -45,7 +45,9 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const response = request.intent.kind === 'answer' ? checkResponse(selected, request.intent) : null;
   const history = readHistory(db, context).messages.slice(-12);
   const model = modelFor(request.provider);
-  const cacheKey = lessonCacheKey({ provider: request.provider, model, schemaVersion: 'delve.lesson/1', conceptKey: context.key,
+  // The default cache entry is distinct from every valid explicit model ID.
+  const cacheModel = model ?? '(provider default)';
+  const cacheKey = lessonCacheKey({ provider: request.provider, model: cacheModel, schemaVersion: 'delve.lesson/1', conceptKey: context.key,
     depth: context.depth, sourceRef: context.workspaceId + '/' + (context.snapshot ?? 'concept') });
   const prerequisites = new Set(graph.edges.filter(e => e.conceptId === context.conceptId).map(e => e.prerequisiteId));
   const nextConcepts = graph.concepts.filter(c => !demonstrated.has(c.id) && c.id !== context.conceptId).slice(0, 80);
@@ -66,7 +68,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const preview: TutorPreview = { prompt, model, bytes: Buffer.byteLength(prompt), token, files: [] };
   assert.ok(preview.bytes >= prompt.length && preview.bytes > 0);
   assert.equal(context.depth, request.depth);
-  return { context, selected, response, reused, cacheKey, preview, request, nextConcepts };
+  return { context, selected, response, reused, cacheKey, cacheModel, preview, request, nextConcepts };
 }
 
 export type PreparedTurn = ReturnType<typeof prepareTurn>;

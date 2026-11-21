@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { TutorIntent, TutorRequest } from '../../shared/reader';
 import { addPrerequisite, upsertConcept } from '../db/concepts';
@@ -8,10 +10,11 @@ import { listEvidence, recordEvidence, resetEvidence } from '../db/evidence';
 import { readWorkspaceGraph } from '../db/graph';
 import { bindSnapshot, saveLesson } from '../db/lessons';
 import { addWorkspace } from '../db/workspaces';
+import { makeShimDir, makeTempDir, setupRunner } from '../providers/test-helpers';
 import { readLesson } from '../reader/ipc';
 import { tutorSchemas } from './ipc';
 import { prepareTurn } from './prompt';
-import type { Generate, TutorReply } from './provider';
+import { createGenerator, type Generate, type TutorReply } from './provider';
 import { TutorSession } from './session';
 
 let db: Db;
@@ -86,6 +89,8 @@ it('reuses only a demonstrated canonical concept at the selected depth, preservi
 });
 
 it('uses the cache only for matching model, provider, depth and snapshot', async () => {
+  vi.stubEnv('DELVE_CODEX_MODEL', undefined);
+  vi.stubEnv('DELVE_CLAUDE_MODEL', undefined);
   const generate = vi.fn<Generate>(async () => opening);
   session = new TutorSession(db, generate);
   await run(request.intent);
@@ -98,6 +103,38 @@ it('uses the cache only for matching model, provider, depth and snapshot', async
   bindSnapshot(db, request.workspaceId, 'abcd001');
   await run(request.intent);
   expect(generate).toHaveBeenCalledTimes(5);
+});
+
+it.each([
+  { provider: 'codex', variable: 'DELVE_CODEX_MODEL', model: 'gpt-5.4' },
+  { provider: 'claude', variable: 'DELVE_CLAUDE_MODEL', model: 'claude-sonnet-4-6' },
+] as const)('previews the $provider default and sends the consented model selection', async ({ provider, variable, model }) => {
+  const record = join(await makeTempDir('tutor-model'), 'request.json');
+  const { runner } = await setupRunner(await makeShimDir(), {
+    FAKE_PROVIDER_RECORD: record,
+    FAKE_PROVIDER_PAYLOAD: JSON.stringify({ ...opening, lesson: { ...opening.lesson, source: null } }),
+  });
+  const generate = createGenerator(runner);
+  const { signal } = new AbortController();
+  vi.stubEnv(variable, undefined);
+  const input = { ...request, provider };
+  const defaults = prepareTurn(db, input);
+  expect(defaults.preview.model).toBeNull();
+  await generate(defaults, signal);
+  const defaultCall = JSON.parse(await readFile(record, 'utf8'));
+  expect(defaultCall.argv).not.toContain('--model');
+  expect(defaultCall.stdin).toBe(defaults.preview.prompt);
+
+  vi.stubEnv(variable, model);
+  const override = prepareTurn(db, input);
+  expect(override.preview.model).toBe(model);
+  expect(override.cacheKey).not.toBe(defaults.cacheKey);
+  expect(() => session.run({ ...input, requestId: randomUUID(), token: defaults.preview.token })).toThrow(/changed/);
+  await generate(override, signal);
+  const overrideCall = JSON.parse(await readFile(record, 'utf8'));
+  const modelFlag = overrideCall.argv.indexOf('--model');
+  expect(overrideCall.argv.slice(modelFlag, modelFlag + 2)).toEqual(['--model', model]);
+  expect(overrideCall.stdin).toBe(override.preview.prompt);
 });
 
 it('preserves a valid lesson and transcript on invalid output and rejects stale or mismatched requests', async () => {

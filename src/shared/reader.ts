@@ -51,7 +51,8 @@ export interface TutorPreview {
   prompt: string;
   bytes: number;
   files: string[];
-  model: string;
+  /** Model Delve requests explicitly, or null when the CLI chooses it. */
+  model: string | null;
   token: string;
 }
 

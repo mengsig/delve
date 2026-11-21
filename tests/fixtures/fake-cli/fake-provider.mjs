@@ -71,18 +71,29 @@ function flood() {
   write();
 }
 
+function rejectModel() {
+  const flag = argv.indexOf('--model');
+  const model = flag < 0 ? 'default-model' : argv[flag + 1];
+  if (invokedAs === 'codex') {
+    console.error(`ERROR: {"detail":"The '${model}' model is not supported when using Codex with a ChatGPT account."}`);
+  } else {
+    const result = `There's an issue with the selected model (${model}). It may not exist or you may not have access to it.`;
+    console.log(JSON.stringify({ type: 'result', is_error: true, result }));
+  }
+  process.exitCode = mode === 'model-rejected' ? 1 : 0;
+}
+
 async function main() {
   if (argv[0] === '--version') return console.log(`fake-${invokedAs} 1.0.0`);
   if (argv[0] === 'auth' || argv[0] === 'login') return handleStatus();
 
+  if (process.env.FAKE_PROVIDER_COUNTER) bump(process.env.FAKE_PROVIDER_COUNTER);
   if (process.env.FAKE_PROVIDER_SELF_PID) fs.writeFileSync(process.env.FAKE_PROVIDER_SELF_PID, String(process.pid));
   const stdin = await readStdin();
   if (process.env.FAKE_PROVIDER_RECORD) {
     const record = { argv, cwd: process.cwd(), cwdEntries: fs.readdirSync(process.cwd()), envKeys: Object.keys(process.env), stdin };
     fs.writeFileSync(process.env.FAKE_PROVIDER_RECORD, JSON.stringify(record));
   }
-  if (process.env.FAKE_PROVIDER_COUNTER) bump(process.env.FAKE_PROVIDER_COUNTER);
-
   if (mode === 'hang') return setInterval(() => undefined, 1000);
   if (mode === 'flood') return flood();
   if (mode === 'orphan' || mode === 'orphan-hang') spawnDescendant(false);
@@ -110,6 +121,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  if (mode === 'model-rejected' || mode === 'model-rejected-zero-exit') return rejectModel();
   if (mode === 'fail-once' && bump(`${process.env.FAKE_PROVIDER_COUNTER}.once`) === 1) {
     console.error('transient glitch');
     process.exitCode = 1;

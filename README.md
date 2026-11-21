@@ -32,8 +32,10 @@ To generate lessons, Delve uses a CLI you already have and are signed in to:
 itself and never copies your credentials. It only runs a CLI signed in with a subscription
 (claude.ai or ChatGPT); a CLI signed in with an API key is shown and refused, because it bills per
 use. If neither CLI is on your `PATH`, Delve shows "not found".
-Live tutor requests use `gpt-5.4` or `claude-sonnet-4-6`. Set `DELVE_CODEX_MODEL` or
-`DELVE_CLAUDE_MODEL` before launching to use another model available to your subscription.
+Live tutor requests let the provider CLI select its default model. Delve runs each CLI with
+its existing isolation flags, so Codex skips its user config file and Claude Code skips loading
+user and project settings. Set `DELVE_CODEX_MODEL` or `DELVE_CLAUDE_MODEL` before launching
+Delve to request a specific model available to your subscription.
 
 Ctrl+K (⌘K on macOS) or the "Switch workspace" button opens the workspace switcher: type to filter,
 use the arrow keys, press Enter to switch and Escape to close.
