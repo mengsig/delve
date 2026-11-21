@@ -47,6 +47,8 @@ const CHANNEL_FLAGS: Record<IpcChannel, true> = {
   'repo:generate': true,
   'repo:cancel': true,
   'repo:changes': true,
+  'repo:history': true,
+  'repo:detail': true,
   'repo:saved': true,
   'learn:pending': true,
   'learn:resolve': true,

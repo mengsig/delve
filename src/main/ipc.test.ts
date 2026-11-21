@@ -33,7 +33,7 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
     'lab:input': () => { throw new Error('Unexpected activity input'); },
     'lab:close': () => false,
     'repo:stage': unexpected, 'repo:attach': unexpected, 'repo:files': unexpected, 'repo:preview': unexpected, 'repo:generate': unexpected, 'repo:cancel': unexpected,
-    'repo:changes': unexpected, 'repo:saved': unexpected, 'learn:pending': unexpected, 'learn:resolve': unexpected,
+    'repo:changes': unexpected, 'repo:history': unexpected, 'repo:detail': unexpected, 'repo:saved': unexpected, 'learn:pending': unexpected, 'learn:resolve': unexpected,
     ...overrides,
   };
 }
@@ -61,6 +61,26 @@ describe('dispatch', () => {
     expect(JSON.stringify(result)).not.toContain('secret');
     expect(log).toHaveBeenCalledOnce();
     log.mockRestore();
+  });
+});
+
+describe('explorer IPC', () => {
+  it('rejects malformed history filters, cursors and detail refs', async () => {
+    const history = vi.fn<IpcHandlers['repo:history']>();
+    const detail = vi.fn<IpcHandlers['repo:detail']>();
+    const h = handlers({ 'repo:history': history, 'repo:detail': detail });
+    const workspaceId = workspace.id;
+    const invalid = { ok: false, error: { code: 'INVALID_REQUEST' } };
+    for (const cursor of [-1, 1.5, '0', Number.MAX_SAFE_INTEGER + 1]) {
+      expect(await dispatch(h, 'repo:history', { workspaceId, cursor })).toMatchObject(invalid);
+    }
+    expect(await dispatch(h, 'repo:history', { workspaceId, cursor: 0, branch: 'main\0other' })).toMatchObject(invalid);
+    expect(await dispatch(h, 'repo:history', { workspaceId, cursor: 0, kind: 'anything' })).toMatchObject(invalid);
+    expect(await dispatch(h, 'repo:history', { workspaceId, cursor: 0, search: '   ' })).toMatchObject(invalid);
+    expect(await dispatch(h, 'repo:detail', { workspaceId, kind: 'commit', ref: 'HEAD~1' })).toMatchObject(invalid);
+    expect(await dispatch(h, 'repo:detail', { workspaceId, kind: 'pr', ref: '0' })).toMatchObject(invalid);
+    expect(history).not.toHaveBeenCalled();
+    expect(detail).not.toHaveBeenCalled();
   });
 });
 

@@ -1,10 +1,11 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace } from '../../shared/domain';
-import { listChanges, readChange, repositoryPath } from './source';
+import { listChanges, readChange, readChangeDetail, repositorySnapshotPath, repositoryPath } from './source';
 import { listPullRequests } from './github';
+import { openRepositoryHistory } from './history';
 import { gitSource, sourceCommand } from './source-process';
 
 vi.mock('./source-process', async importOriginal => ({
@@ -21,6 +22,9 @@ const gh = vi.mocked(sourceCommand);
 const git = vi.mocked(gitSource);
 const OK = { status: 0, diagnostic: '', truncated: false };
 const PR = { body: 'Keep the new module in sync.', number: 42, title: 'Update module', head: { sha: HEAD }, base: { sha: BASE }, changed_files: 1 };
+const PULL = { ...PR, created_at: '2024-01-02T00:00:00Z', updated_at: '2025-01-01T00:00:00Z', state: 'closed',
+  merged_at: '2024-01-03T00:00:00Z', closed_at: '2024-01-03T00:00:00Z', user: { login: 'octocat' },
+  head: { ...PR.head, ref: 'topic' }, base: { ...PR.base, ref: 'main' }, additions: 8, deletions: 2 };
 const FILE = { filename: 'src/module.ts', status: 'modified', additions: 1, deletions: 1, patch: '@@ -1 +1 @@\n-old\n+new' };
 
 function jsonText(value: string) { return { ...OK, output: Buffer.from(value) }; }
@@ -82,6 +86,99 @@ describe('GitHub pull requests', () => {
   it('rejects a pull request that moves during the read', async () => {
     gh.mockResolvedValueOnce(json(PR)).mockResolvedValueOnce(json([FILE])).mockResolvedValueOnce(json({ ...PR, head: { sha: BASE } }));
     await expect(readChange('unused', workspace, 'pr', '42')).rejects.toMatchObject({ code: 'GITHUB_PULL_REQUEST_MOVED' });
+  });
+});
+
+describe('GitHub explorer', () => {
+  it('reads later pull request pages and uses created dates and a head link', async () => {
+    gh.mockResolvedValueOnce(json(Array.from({ length: 25 }, (_, i) => ({ ...PULL, number: i + 1 }))))
+      .mockResolvedValueOnce(json([PULL]));
+    const history = await openRepositoryHistory(workspace, '/cache', { workspaceId: workspace.id, kind: 'pr', cursor: 0, search: '#42' }, []);
+    expect(await history.advance(() => 1)).toMatchObject({ nodes: [], next: 1, warning: null, pullStatus: 'available' });
+    expect(gh).toHaveBeenCalledTimes(1);
+    const second = await history.advance(() => 2);
+    expect(second).toMatchObject({ next: null, warning: null, pullStatus: 'available' });
+    expect(second.nodes.at(-1)).toMatchObject({ ref: '42', author: 'octocat', date: PULL.created_at, head: HEAD,
+      parents: [HEAD], branches: ['main', 'topic'], baseBranch: 'main', headBranch: 'topic', state: 'merged' });
+    expect(gh.mock.calls[1]?.[1].at(-1)).toContain('sort=created&direction=desc&per_page=25&page=2');
+  });
+
+  it('distinguishes auth failures from empty pulls and skips GitHub reads for commit-only history', async () => {
+    const request = { workspaceId: workspace.id, kind: 'pr' as const, cursor: 0 };
+    gh.mockResolvedValueOnce({ ...OK, status: 1, diagnostic: 'gh: Bad credentials (HTTP 401)', output: Buffer.alloc(0) });
+    gh.mockResolvedValueOnce(json([]));
+    const denied = await openRepositoryHistory(workspace, '/cache', request, []);
+    expect(await denied.advance(() => 1)).toMatchObject({ nodes: [], next: null, pullStatus: 'unavailable',
+      warning: 'Run gh auth login to read GitHub pull requests.' });
+    const empty = await openRepositoryHistory(workspace, '/cache', request, []);
+    expect(await empty.advance(() => 1)).toMatchObject({ nodes: [], next: null, warning: null, pullStatus: 'empty' });
+
+    const repo = await mkdtemp(join(tmpdir(), 'delve-history-origin-'));
+    try {
+      await mkdir(join(repo, '.git'));
+      git.mockResolvedValueOnce(jsonText('git@github.com:Octo/Project.git\n'))
+        .mockResolvedValueOnce(jsonText(`${HEAD}\tmain\t\n`))
+        .mockResolvedValueOnce(jsonText(HEAD + '\n'))
+        .mockResolvedValueOnce(jsonText('false\n'))
+        .mockResolvedValueOnce(jsonText([HEAD, '', 'Octocat', '2024-01-01T00:00:00Z', 'Commit', ''].join('\0')));
+      const commits = await openRepositoryHistory({ ...workspace, source: repo, kind: 'git' }, '/cache',
+        { ...request, kind: 'commit' }, []);
+      expect(await commits.advance(() => 1)).toMatchObject({ nodes: [{ ref: HEAD }], next: null, pullStatus: 'unchecked' });
+      expect(git.mock.calls.at(-1)?.[0]).toEqual(expect.arrayContaining(['--skip=0', '--max-count=33', HEAD]));
+      expect(gh).toHaveBeenCalledTimes(2);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+});
+
+describe('GitHub explorer source and detail', () => {
+  it('initializes a missing object store for an accepted commit link and reuses it offline', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'delve-linked-commit-'));
+    try {
+      git.mockResolvedValueOnce(jsonText(''));
+      const path = await repositorySnapshotPath(workspace, root);
+      expect(git.mock.calls[0]?.[0]).toContain('clone');
+      expect(await repositorySnapshotPath(workspace, root)).toBe(path);
+      expect(git).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the existing local snapshot without fetching for commit-only GitHub history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'delve-history-github-cache-'));
+    try {
+      git.mockResolvedValueOnce(jsonText(''));
+      await repositoryPath(workspace, root);
+      git.mockClear();
+      git.mockResolvedValueOnce(jsonText(`${HEAD}\tmain\t\n`))
+        .mockResolvedValueOnce(jsonText(HEAD + '\n'))
+        .mockResolvedValueOnce(jsonText('true\n'))
+        .mockResolvedValueOnce(jsonText([HEAD, '', 'Octocat', '2024-01-01T00:00:00Z', 'Commit', ''].join('\0')));
+      const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+      expect(await history.advance(() => 1)).toMatchObject({
+        nodes: [{ ref: HEAD }], next: null, pullStatus: 'unchecked', warning: expect.stringContaining('shallow snapshot'),
+      });
+      expect(git.mock.calls.map(([args]) => args[3])).toEqual(['for-each-ref', 'rev-parse', 'rev-parse', 'log']);
+      expect(gh).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps GitHub totals and dates when available patches are incomplete', async () => {
+    gh.mockResolvedValueOnce(json({ ...PULL, changed_files: 3 }))
+      .mockResolvedValueOnce(json([FILE, { ...FILE, filename: 'photo.png', patch: null }]))
+      .mockResolvedValueOnce(json({ ...PULL, changed_files: 3 }));
+    const detail = await readChangeDetail(null, workspace, 'pr', '42');
+    expect(detail).toMatchObject({ base: BASE, node: { state: 'merged' }, mergedAt: PULL.merged_at, closedAt: PULL.closed_at,
+      fileCount: 3, additions: 8, deletions: 2, partial: true });
+    expect(detail.statsCoverage).toBeUndefined();
+    expect(detail.files).toEqual([
+      { path: FILE.filename, patch: expect.stringContaining('@@ -1 +1 @@') }, { path: 'photo.png', patch: null },
+    ]);
   });
 });
 

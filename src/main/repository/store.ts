@@ -7,6 +7,8 @@ import { nowIso, transaction, type Db } from '../db/connection';
 import { bindSnapshot, saveLessonInTransaction } from '../db/lessons';
 import { documentSchema } from '../reader/document';
 import { modelFor } from '../tutor/prompt';
+import type { HistoryNode } from '../../shared/explorer';
+import { bindConceptSpans } from './concept-spans';
 import { baselineReply, type ChangeReply, type GraphProposal } from './schemas';
 
 export interface ApprovedSource {
@@ -15,6 +17,7 @@ export interface ApprovedSource {
   cacheKey: string;
   revision: string;
   diff?: string;
+  patches?: { path: string; patch: string }[];
 }
 
 export function digest(value: unknown): string {
@@ -91,15 +94,18 @@ function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: Ch
   ] });
   saveLessonInTransaction(db, { workspaceId: request.workspaceId, snapshotId, conceptId: change.id, cacheKey,
     depth: request.depth, model: preview.model, provider: request.provider, schemaVersion: document.schema, body: document });
+  const touchedIds = new Map<string, number>();
   const touched = [...new Set(reply.touched)].map(key => {
     const concept = concepts.get(key);
     if (!concept) invalid('The change footprint refers to an unknown concept.');
+    touchedIds.set(key, concept.id);
     return { id: concept.id, title: concept.title };
   });
+  const spans = bindConceptSpans(reply.spans, source.patches ?? [], touchedIds);
   const target = reply.recommendation.key === null ? change : concepts.get(reply.recommendation.key);
   if (!target) invalid('The change recommendation refers to an unknown concept.');
   return { conceptId: change.id, title: preview.title, summary: reply.summary, what: reply.what, why: reply.why,
-    before: reply.before, after: reply.after, base: preview.base, commit: preview.commit, files: preview.files, partial: preview.partial, mechanics, boundary, coverageNote: preview.coverageNote, touched, trace, excerpt,
+    before: reply.before, after: reply.after, base: preview.base, commit: preview.commit, files: preview.files, spans, partial: preview.partial, mechanics, boundary, coverageNote: preview.coverageNote, touched, trace, excerpt,
     recommendation: { conceptId: target.id, title: target.title, reason: reply.recommendation.reason } };
 }
 
@@ -127,14 +133,20 @@ export function useCachedGeneration(db: Db, source: ApprovedSource): GenerationR
   });
 }
 
-export function savedChanges(db: Db, workspaceId: string): (ChangeRef & { title: string })[] {
-  const rows = db.prepare(`SELECT kind, ref, json_extract(result, '$.brief.title') AS title FROM repository_generations
+export function savedHistory(db: Db, workspaceId: string): HistoryNode[] {
+  const rows = db.prepare(`SELECT kind, ref, json_extract(result, '$.brief.title') AS title,
+    json_extract(result, '$.brief.commit') AS head FROM repository_generations
     WHERE workspace_id = ? AND kind <> 'baseline' GROUP BY kind, ref ORDER BY max(last_used) DESC LIMIT 100`).all(workspaceId);
   return rows.map(row => {
     assert.ok(row.kind === 'commit' || row.kind === 'pr');
-    assert.ok(typeof row.ref === 'string' && typeof row.title === 'string');
-    return { kind: row.kind, ref: row.ref, title: row.title };
+    assert.ok(typeof row.ref === 'string' && typeof row.title === 'string' && typeof row.head === 'string');
+    return { kind: row.kind, ref: row.ref, title: row.title, head: row.head, date: '', author: '',
+      branches: [], parents: row.kind === 'pr' ? [row.head] : [] };
   });
+}
+
+export function savedChanges(db: Db, workspaceId: string): (ChangeRef & { title: string })[] {
+  return savedHistory(db, workspaceId).map(({ kind, ref, title }) => ({ kind, ref, title }));
 }
 
 export function latestBrief(db: Db, request: SavedRequest): ChangeBrief | null {

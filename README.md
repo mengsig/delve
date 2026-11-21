@@ -30,11 +30,16 @@ The progress panel stays visible as you explore another workspace. Use **Open ma
 concepts, prerequisites and suggested first step are ready. Demonstrated portable concepts carry their evidence across repositories. You can add another
 slice from the Atlas. Each slice contains at most 128 text files, 128 KiB per file and 1 MiB total.
 
-In **Changes**, choose a recent commit or pull request and preview its diff before approving a brief.
-GitHub workspaces and local repositories with a GitHub origin list pull requests. Local commit briefs
-compare against the first parent. The footprint links to the affected concepts. Unmerged PRs keep their own definitions apart from the reviewed map. The brief opens
-as a tutor conversation. A partial coverage notice identifies missing or omitted diff material.
-Saved briefs remain available offline. **Refresh diff preview** checks for an updated revision.
+In **Changes**, select a commit or pull request from the branch timeline. Search by title or
+reference, narrow the list by branch, author or change type, or switch to **Folio** for its list
+equivalent. Use the arrow keys to move, Enter to open and Esc to return to history.
+
+**Files changed** shows the first-parent diff for a commit or the GitHub diff for a pull request.
+Partial coverage identifies unavailable patches. **Teach me this change** opens the saved lesson
+or prepares a source review for a new one. **Explanation** includes the recommendation and its
+reason. Follow a linked line or a **Concepts** entry to the Atlas. A concept introduced by an
+unmerged PR can be viewed there temporarily while the reviewed map stays separate.
+Saved briefs remain available offline. **Refresh history** checks the source again.
 
 Installed packages accept learn links such as
 `delve://learn?workspace=octo/site&pr=184`. Use an existing repository workspace UUID or a GitHub
@@ -45,7 +50,7 @@ or preparing a request requires a separate decision from sending material to the
 The demo tutor runs entirely offline. The Archon demo includes an illustrative brief for PR #184.
 
 - Product direction: [`docs/product.md`](docs/product.md)
-- Binding requirements (R1–R17): [`docs/requirements.md`](docs/requirements.md)
+- Binding requirements (R1–R18): [`docs/requirements.md`](docs/requirements.md)
 - Approved design: [`docs/design/proposal-v1.html`](docs/design/proposal-v1.html) (open in a browser)
 
 ## Interactive lessons

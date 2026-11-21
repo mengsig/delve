@@ -3,8 +3,13 @@ import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { openDatabase } from '../db/connection';
+import { addWorkspace } from '../db/workspaces';
+import { ProviderRunner } from '../providers/runner';
+import { RepositoryLearning } from './service';
 import type { Workspace } from '../../shared/domain';
-import { listChanges, listFiles, readChange, readFiles, repositoryPath } from './source';
+import { openRepositoryHistory } from './history';
+import { listChanges, listFiles, readChange, readChangeDetail, readChangeWithPatches, readFiles, repositoryPath } from './source';
 
 let root: string;
 let repo: string;
@@ -14,9 +19,9 @@ function git(...args: string[]): string {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-function commit(title: string): string {
+function commit(title: string, ...args: string[]): string {
   git('add', '--all');
-  git('-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', title);
+  git('-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', title, ...args);
   return git('rev-parse', 'HEAD');
 }
 
@@ -139,13 +144,16 @@ describe('Git change read boundaries', () => {
 
   it('returns partial coverage at a shallow history boundary', async () => {
     await writeFile(join(repo, 'main.ts'), 'old\n');
-    commit('Baseline');
+    const base = commit('Baseline');
     await writeFile(join(repo, 'main.ts'), 'new\n');
     const head = commit('Change');
     const shallow = join(root, 'shallow.git');
     git('clone', '--bare', '--depth=1', '--no-local', repo, shallow);
     expect(await readChange(shallow, workspace, 'commit', head)).toMatchObject({
       commit: head, title: 'Change', diff: '', files: [], partial: true,
+    });
+    expect(await readChangeDetail(shallow, workspace, 'commit', head)).toMatchObject({
+      node: { ref: head, parents: [base] }, base, partial: true, statsCoverage: 'unavailable', files: [],
     });
   });
 
@@ -168,5 +176,94 @@ describe('Git change read boundaries', () => {
     git('reset', '--hard', head);
     await expect(readChange(repo, workspace, 'commit', 'HEAD~1')).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
     await expect(readChange(repo, workspace, 'commit', dangling)).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
+  });
+});
+
+describe('repository explorer', () => {
+  it('uses full non-HEAD branch ancestry and filters rows before paging', async () => {
+    await writeFile(join(repo, 'shared.txt'), 'shared\n');
+    const base = commit('Shared ancestor', '--date=2020-03-01T10:11:12+04:00');
+    git('switch', '-c', 'feature');
+    const oldFeature = commit('Earlier feature', '--allow-empty', '--date=2020-03-02T10:11:12+04:00');
+    for (let i = 0; i < 32; i++) {
+      commit(`Feature step ${i}`, '--allow-empty', '--date=2020-03-03T10:11:12+04:00');
+    }
+    const featureTip = git('rev-parse', 'HEAD');
+    git('switch', 'main');
+    const mainTip = commit('Main only', '--allow-empty', '--date=2020-03-04T10:11:12+04:00');
+    const request = { workspaceId: workspace.id, cursor: 0, branch: 'feature', author: 'fixture user' };
+    const history = await openRepositoryHistory(workspace, root, request, []);
+    const first = await history.advance(() => 30);
+    expect(first).toMatchObject({ branches: ['feature', 'main'], next: 30, warning: null, pullStatus: 'local' });
+    expect(first.nodes[0]).toMatchObject({ ref: featureTip, branches: ['feature'] });
+    const second = await history.advance(() => 60);
+    expect(second.next).toBeNull();
+    expect(second.nodes.map(node => node.ref)).toContain(oldFeature);
+    expect(second.nodes.map(node => node.ref)).not.toContain(mainTip);
+    expect(second.nodes.at(-1)).toMatchObject({ ref: base, title: 'Shared ancestor', date: '2020-03-01T10:11:12+04:00',
+      author: 'Fixture User', parents: [], branches: [] });
+    const search = await openRepositoryHistory(workspace, root, { ...request, author: 'fixture', search: 'Earlier feature' }, []);
+    expect(await search.advance(() => 1)).toMatchObject({ nodes: [], next: 1 });
+    expect(await search.advance(() => 2)).toMatchObject({ nodes: [{ ref: oldFeature }], next: null });
+  });
+
+  it('pins refs across lazy pages and makes each continuation idempotent and query-scoped', async () => {
+    const old = commit('Root', '--allow-empty');
+    for (let i = 0; i < 35; i++) commit(`Step ${i}`, '--allow-empty');
+    const pinned = git('log', '--format=%H').split('\n');
+    const db = openDatabase(':memory:');
+    const runner = new ProviderRunner({ resolveProvider: async () => { throw new Error('Unexpected provider call'); } });
+    const learning = new RepositoryLearning(db, root, runner);
+    try {
+      const { id } = addWorkspace(db, { kind: 'git', path: repo });
+      const request = { workspaceId: id, cursor: 0, branch: 'main' };
+      const first = await learning.history(request);
+      expect(first.nodes.map(node => node.ref)).toEqual(pinned.slice(0, 30));
+      git('reset', '--hard', old);
+      const newTip = commit('Fresh branch history', '--allow-empty');
+      const refreshed = await learning.history(request);
+      expect(refreshed.nodes.map(node => node.ref)).toEqual([newTip, old]);
+      const continuation = { ...request, cursor: first.next! };
+      await expect(learning.history({ ...continuation, search: 'other' })).rejects.toMatchObject({ code: 'STALE_HISTORY' });
+      const [second, retried] = await Promise.all([learning.history(continuation), learning.history(continuation)]);
+      expect(second).toEqual(retried);
+      expect(second.nodes.map(node => node.ref)).toEqual(pinned.slice(30));
+      expect(second.next).toBeNull();
+    } finally {
+      await learning.close();
+      db.close();
+    }
+  });
+
+});
+
+describe('explorer detail and offline history', () => {
+  it('keeps exact change totals and exposes unavailable patches without private paths', async () => {
+    await writeFile(join(repo, 'main.txt'), 'before\n');
+    const base = commit('Base');
+    await writeFile(join(repo, 'main.txt'), 'after\nextra\n');
+    await writeFile(join(repo, '.env'), 'PRIVATE=sentinel\n');
+    await writeFile(join(repo, 'binary.png'), Buffer.from([0, 255]));
+    const ref = commit('Change');
+    const details = await readChangeDetail(repo, workspace, 'commit', ref.slice(0, 8));
+    expect(details).toMatchObject({ node: { ref, head: ref, parents: [base], branches: ['main'] },
+      base, fileCount: 3, additions: 3, deletions: 1, partial: true });
+    expect(details.statsCoverage).toBeUndefined();
+    expect(details.files).toEqual([
+      { path: 'binary.png', patch: null }, { path: 'main.txt', patch: expect.stringContaining('-before\n+after\n+extra') },
+    ]);
+    const approved = await readChangeWithPatches(repo, workspace, 'commit', ref);
+    expect(approved.patches).toEqual([details.files[1]]);
+    expect(approved.diff).toEqual(approved.patches[0]?.patch);
+  });
+
+  it('preserves saved changes and reports the Git read failure while offline', async () => {
+    const offlineWorkspace = { ...workspace, source: join(root, 'missing') };
+    const head = 'a'.repeat(40);
+    const saved = { kind: 'commit' as const, ref: head, head, title: 'Saved item', author: '', date: '', parents: [], branches: [] };
+    const history = await openRepositoryHistory(offlineWorkspace, root, { workspaceId: offlineWorkspace.id, cursor: 0 }, [saved]);
+    const result = await history.advance(() => 1);
+    expect(result.nodes).toEqual([saved]);
+    expect(result.warning).toContain('Previously saved changes');
   });
 });

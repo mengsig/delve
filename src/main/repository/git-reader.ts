@@ -15,6 +15,11 @@ export interface GitChange {
   title: string;
 }
 
+export interface ChangePatch {
+  path: string;
+  patch: string;
+}
+
 export interface ChangeSnapshot {
   commit: string;
   title: string;
@@ -25,6 +30,13 @@ export interface ChangeSnapshot {
   repository?: string;
   partial: boolean;
   files: string[];
+}
+
+export function withoutChangePatches(change: ChangeSnapshot & { patches: ChangePatch[] }): ChangeSnapshot {
+  const { patches, ...snapshot } = change;
+  assert.equal(snapshot.files.length, patches.length);
+  assert.equal(snapshot.diff.length === 0, patches.length === 0);
+  return snapshot;
 }
 
 interface SourceFile {

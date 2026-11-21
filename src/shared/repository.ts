@@ -1,4 +1,7 @@
+import type { ConceptSpan } from './change-diff';
 import type { AddWorkspaceInput, Depth, ProviderId, Workspace } from './domain';
+
+import type { ChangeDetail, DetailRequest, HistoryPage, HistoryRequest } from './explorer';
 
 export interface ChangeRef {
   kind: 'commit' | 'pr';
@@ -39,6 +42,7 @@ export interface RepoPreview {
 }
 
 export interface ChangeBrief {
+  spans?: ConceptSpan[];
   conceptId: number;
   title: string;
   summary: string;
@@ -81,6 +85,8 @@ export interface RepositoryContract {
   'repo:generate': { request: { token: string; requestId: string }; response: GenerationResult };
   'repo:cancel': { request: { requestId: string }; response: boolean };
   'repo:changes': { request: { workspaceId: string }; response: { changes: (ChangeRef & { title: string })[]; warning: string | null } };
+  'repo:history': { request: HistoryRequest; response: HistoryPage };
+  'repo:detail': { request: DetailRequest; response: ChangeDetail };
   'repo:saved': { request: SavedRequest; response: ChangeBrief | null };
   'learn:pending': { request: null; response: LearnIntent | null };
   'learn:resolve': { request: { id: string; accept: boolean }; response: Workspace | null };

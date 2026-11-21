@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { devNull } from 'node:os';
+import type { ChangeDetail } from '../../shared/explorer';
+import { gitHistoryNode } from './git-history';
 import { DomainError } from '../../shared/errors';
 import { changeTitle, gitReader, nulRecords, readBlob, requireReachable, resolveCommit,
-  type ChangeSnapshot, type GitReader } from './git-reader';
+  withoutChangePatches, type ChangeSnapshot, type ChangePatch, type GitReader } from './git-reader';
 import { completedOutput } from './source-process';
 import { isSourcePath, MAX_DIFF_BYTES, MAX_DIFF_FILES, MAX_PATCH_BYTES, OBJECT_ID, sourceText } from './source-policy';
 
@@ -64,34 +66,98 @@ async function textPatch(reader: GitReader, revisions: string[], file: ChangedFi
   return sourceText(completedOutput(patch, 'Could not read a patch for that Git commit.')) || null;
 }
 
-export async function readGitChange(path: string, ref: string): Promise<ChangeSnapshot> {
+async function openGitChange(path: string, ref: string) {
   if (!/^[a-fA-F0-9]{7,64}$/.test(ref)) throw new DomainError('INVALID_COMMIT', 'Choose a hexadecimal Git commit ID.');
   const reader = await gitReader(path);
   const commit = await resolveCommit(reader, ref);
   await requireReachable(reader, commit);
   const { title, parent, description } = await commitInfo(reader, commit);
   const snapshot: ChangeSnapshot = { commit, base: parent, title, description, diff: '', partial: false, files: [] };
+  const revisions = parent ? [parent, commit] : [commit];
   if (parent) {
     const check = await reader.run(['cat-file', '-t', parent], 1024);
-    if (check.status !== 0) return { ...snapshot, partial: true };
+    if (check.status !== 0) return { reader, snapshot, revisions: null };
     assert.equal(completedOutput(check, 'Could not read the parent of that commit.').toString('utf8').trim(), 'commit');
   }
-  const revisions = parent ? [parent, commit] : [commit];
+  assert.ok(revisions.every(revision => OBJECT_ID.test(revision)));
+  assert.equal(revisions.at(-1), snapshot.commit);
+  return { reader, snapshot, revisions };
+}
+
+async function collectGitPatches(reader: GitReader, revisions: string[]) {
   const changes = await changedFiles(reader, revisions);
-  snapshot.partial = changes.partial;
+  const files: ChangeDetail['files'] = [];
+  let partial = changes.partial;
   let bytes = 0;
   for (const file of changes.files) {
     const patch = await textPatch(reader, revisions, file);
     const patchBytes = patch ? Buffer.byteLength(patch) : 0;
-    if (!patch || bytes + patchBytes > MAX_DIFF_BYTES) {
-      snapshot.partial = true;
-      continue;
-    }
-    bytes += patchBytes;
-    snapshot.diff += patch;
-    snapshot.files.push(file.path);
+    const readable = patch !== null && bytes + patchBytes <= MAX_DIFF_BYTES;
+    if (!readable) partial = true;
+    if (isSourcePath(file.path)) files.push({ path: file.path, patch: readable ? patch : null });
+    if (readable) bytes += patchBytes;
   }
   assert.ok(bytes <= MAX_DIFF_BYTES);
-  assert.ok(snapshot.files.length <= MAX_DIFF_FILES);
-  return snapshot;
+  assert.ok(files.length <= MAX_DIFF_FILES);
+  return { files, partial };
+}
+
+export async function readGitChange(path: string, ref: string): Promise<ChangeSnapshot> {
+  return withoutChangePatches(await readGitChangeWithPatches(path, ref));
+}
+
+export async function readGitChangeWithPatches(path: string, ref: string): Promise<ChangeSnapshot & { patches: ChangePatch[] }> {
+  const { reader, snapshot, revisions } = await openGitChange(path, ref);
+  if (!revisions) return { ...snapshot, partial: true, patches: [] };
+  const { files, partial } = await collectGitPatches(reader, revisions);
+  const patches = files.flatMap(file => file.patch === null ? [] : [{ path: file.path, patch: file.patch }]);
+  assert.ok(patches.length <= files.length);
+  assert.ok(patches.every(file => isSourcePath(file.path)));
+  return { ...snapshot, partial, patches, files: patches.map(file => file.path), diff: patches.map(file => file.patch).join('') };
+}
+
+async function gitStats(reader: GitReader, revisions: string[]) {
+  assert.ok(revisions.length === 1 || revisions.length === 2);
+  assert.ok(revisions.every(revision => OBJECT_ID.test(revision)));
+  const result = await reader.run([...DIFF_TREE_ARGS, '--numstat', '-z', ...revisions, '--'], 512 * 1024);
+  if (!result.truncated) completedOutput(result, 'Could not count the files and lines changed by that Git commit.');
+  const records = nulRecords(result.output);
+  let additions = 0;
+  let deletions = 0;
+  for (const entry of records) {
+    const fields = /^(\d+|-)\t(\d+|-)\t[\s\S]+$/.exec(entry);
+    if (!fields) throw new DomainError('SOURCE_READ_FAILED', 'Git returned malformed change statistics.');
+    if (fields[1] === '-' && fields[2] === '-') continue;
+    additions += Number(fields[1]);
+    deletions += Number(fields[2]);
+  }
+  assert.ok(Number.isSafeInteger(additions) && additions >= 0);
+  assert.ok(Number.isSafeInteger(deletions) && deletions >= 0);
+  return { fileCount: records.length, additions, deletions, limited: result.truncated };
+}
+
+export async function readGitDetail(path: string, ref: string): Promise<ChangeDetail> {
+  const { reader, snapshot, revisions } = await openGitChange(path, ref);
+  const node = await gitHistoryNode(reader, snapshot.commit);
+  const base = snapshot.base;
+  if (base && !node.parents.includes(base)) node.parents.unshift(base);
+  const common = { node, base, description: snapshot.description };
+  if (!revisions) {
+    return { ...common, files: [], fileCount: 0, additions: 0, deletions: 0, partial: true, statsCoverage: 'unavailable',
+      coverageNote: 'The parent is missing from the local snapshot. File and line totals are unavailable.' };
+  }
+  const [changes, stats] = await Promise.allSettled([collectGitPatches(reader, revisions), gitStats(reader, revisions)]);
+  if (changes.status === 'rejected') throw changes.reason;
+  const { files, partial } = changes.value;
+  if (stats.status === 'rejected') {
+    if (!(stats.reason instanceof DomainError)) throw stats.reason;
+    return { ...common, files, fileCount: 0, additions: 0, deletions: 0, partial: true, statsCoverage: 'unavailable',
+      coverageNote: stats.reason.message + ' File and line totals are unavailable.' };
+  }
+  const { limited, ...totals } = stats.value;
+  assert.equal(node.head, snapshot.commit);
+  assert.ok(limited || files.length <= totals.fileCount);
+  return { ...common, ...totals, files, partial: partial || limited, statsCoverage: limited ? 'lower-bound' : undefined,
+    coverageNote: limited ? 'Some files or patches are unavailable. File and line totals are lower bounds.'
+      : partial ? 'Some file patches are unavailable. Totals cover the whole change.' : undefined };
 }

@@ -107,10 +107,10 @@ test('maps approved files, teaches one commit at two depths and previews an inco
   await capture(page, info, 'first-run');
   await addAndMap(page, directory, repo, info);
   await page.getByRole('button', { name: 'Changes', exact: true }).click();
-  await page.getByRole('button', { name: /Retry a failed dispatch/ }).click();
+  await page.getByRole('option', { name: /Retry a failed dispatch/ }).click();
   await generateBrief(page, directory, 'medium');
   await capture(page, info, 'medium-change');
-  await page.getByRole('button', { name: /Low · Protocol detail/ }).click();
+  await page.getByLabel('Reading depth').selectOption('low');
   await generateBrief(page, directory, 'low');
   await expect(page.locator('.lesson-code')).toContainText('+export const attempts = 3;');
   const id = await page.evaluate(async () => {
@@ -124,7 +124,7 @@ test('maps approved files, teaches one commit at two depths and previews an inco
   await expect(again.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
   await incoming.getByRole('button', { name: 'Accept and open' }).click();
   await expect(again.getByText('Saved brief · available offline')).toBeVisible();
-  await again.getByRole('button', { name: 'Ask about this change →' }).click();
+  await again.getByRole('button', { name: 'Teach me this change' }).click();
   await expect(again.getByRole('heading', { name: 'What changed' })).toBeVisible();
   await askTutor(again, directory);
 });
