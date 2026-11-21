@@ -28,3 +28,11 @@ else
   printf 'Failed: desktop smoke requires Xvfb or DISPLAY\n' >&2
   exit 1
 fi
+
+if [[ -n "${DELVE_PACKAGE_EXECUTABLE:-}" ]]; then
+  if command -v xvfb-run >/dev/null 2>&1; then
+    run_check 'packaged Linux smoke' xvfb-run --auto-servernum -- npm run test:linux-package -- "$DELVE_PACKAGE_EXECUTABLE"
+  else
+    run_check 'packaged Linux smoke' npm run test:linux-package -- "$DELVE_PACKAGE_EXECUTABLE"
+  fi
+fi
