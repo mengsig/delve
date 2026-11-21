@@ -53,11 +53,12 @@ export function EvidenceLedger({ graph, workspaceName, onSelect, onReset }: Ledg
   return <section className="note">
     <span className="eyebrow">Evidence ledger / {workspaceName}</span><h3>Knowledge travels with you.</h3>
     <p>Each record belongs to one concept at one depth. Portable concepts carry their evidence into every workspace that uses them.</p>
-    {graph.evidence.length ? <ul className="evidence-list">{graph.evidence.map(evidence => {
+    {graph.evidence.length ? <details><summary>Inspect {graph.evidence.length} evidence records</summary>
+      <ul className="evidence-list">{graph.evidence.map(evidence => {
       const concept = concepts.get(evidence.conceptId);
       if (!concept) throw new Error('Evidence refers to a concept outside this atlas.');
       return <EvidenceEntry key={`${concept.id}:${evidence.depth}`} concept={concept} evidence={evidence}
         workspaceId={graph.workspaceId} onReset={onReset} onSelect={onSelect} />;
-    })}</ul> : <p className="impact">No evidence recorded for this workspace yet.</p>}
+    })}</ul></details> : <p className="impact">No evidence recorded for this workspace yet.</p>}
   </section>;
 }

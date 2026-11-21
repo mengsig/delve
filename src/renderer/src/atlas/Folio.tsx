@@ -10,11 +10,12 @@ interface FolioProps extends Selection {
   model: AtlasModel;
   workspaceId: string;
   changedId?: number;
+  recommendedId?: number;
 }
 
 const headings = ['Foundations', 'Mechanisms', 'Applications'];
 
-export function Folio({ model, selected, changedId, workspaceId, onSelect }: FolioProps) {
+export function Folio({ model, selected, changedId, recommendedId, workspaceId, onSelect }: FolioProps) {
   const groups = [model.layers[0] ?? [], model.layers[1] ?? [], model.layers.slice(2).flat()];
   return <section className="ledger" aria-label="Folio dependency ledger">
     <span className="eyebrow">Folio / dependency ledger</span><h3>From foundations to practice</h3>
@@ -23,7 +24,7 @@ export function Folio({ model, selected, changedId, workspaceId, onSelect }: Fol
       <ul>{concepts.map(concept => <li key={concept.id}>
         <button aria-pressed={selected.id === concept.id} onClick={() => onSelect(concept.id)}>
           <strong>{concept.title}</strong>
-          <span className="sub">{statusText(concept, workspaceId, concept.id === changedId)}</span>
+          <span className="sub">{statusText(concept, workspaceId, concept.id === changedId)}{concept.id === recommendedId && ' · Next'}</span>
           {concept.prerequisites.length > 0 && <span className="atlas-folio-prior">
             Requires {concept.prerequisites.map(prior => prior.title).join(' + ')}
           </span>}

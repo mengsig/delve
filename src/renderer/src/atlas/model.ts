@@ -28,7 +28,7 @@ function dependencyLayers(concepts: Map<number, AtlasConcept>): AtlasConcept[][]
   const layers: AtlasConcept[][] = [];
   let visited = 0;
   while (next.length) {
-    const current = next;
+    const current = next.sort((a, b) => a.id - b.id);
     next = [];
     for (const concept of current) {
       concept.layer = layers.length;

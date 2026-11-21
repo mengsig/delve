@@ -1,4 +1,4 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { ProviderRunner } from './runner';
@@ -35,9 +35,11 @@ describe('ProviderRunner', () => {
     }
   });
 
-  it('runs codex with schema and last-message files', async () => {
+  it('runs codex with schema and last-message files from a symlinked temporary root', async () => {
     const record = path.join(await makeTempDir('rec'), 'rec.json');
-    const { runner } = await setup({ FAKE_PROVIDER_RECORD: record });
+    const alias = path.join(await makeTempDir('alias'), 'temporary');
+    await symlink(await makeTempDir('actual'), alias, 'junction');
+    const { runner } = await setupRunner(binDir, { FAKE_PROVIDER_RECORD: record }, alias);
     const res = await runner.run(request({ provider: 'codex' }));
     expect(res.value).toEqual({ answer: '42' });
     const rec = JSON.parse(await readFile(record, 'utf8'));

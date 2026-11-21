@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, useViewport,
-  type Edge, type Node, type NodeProps, type ReactFlowInstance,
+  BaseEdge, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, useViewport,
+  type Edge, type EdgeProps, type Node, type NodeProps, type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
 import type { Depth } from '../../../shared/domain';
@@ -19,16 +19,22 @@ interface MapProps {
   name: string;
   depth: Depth;
   selected: AtlasConcept;
+  recommendedId?: number;
   onSelect: (id: number) => void;
 }
 
 type ConceptNode = Node<{
   concept: AtlasConcept;
   active: boolean;
+  recommended: boolean;
   changed: boolean;
   status: string;
   onSelect: (id: number) => void;
 }, 'concept'>;
+
+function motionDuration() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200;
+}
 
 function revealNode(button: HTMLButtonElement, id: number, flow: ReactFlowInstance<ConceptNode>) {
   const canvas = button.closest('.atlas-canvas')?.getBoundingClientRect();
@@ -36,19 +42,19 @@ function revealNode(button: HTMLButtonElement, id: number, flow: ReactFlowInstan
   if (!canvas || !node) return;
   const rect = button.getBoundingClientRect();
   if (rect.left >= canvas.left && rect.right <= canvas.right && rect.top >= canvas.top && rect.bottom <= canvas.bottom) return;
-  void flow.setCenter(node.position.x, node.position.y, { zoom: flow.getZoom() });
+  void flow.setCenter(node.position.x, node.position.y, { zoom: flow.getZoom(), duration: motionDuration() });
 }
 
 function ConceptMarker({ data }: NodeProps<ConceptNode>) {
   const flow = useReactFlow<ConceptNode>();
-  const { concept, active, changed, status, onSelect } = data;
+  const { concept, active, changed, status, recommended, onSelect } = data;
   const known = isLearned(concept);
   const state = known ? 'known' : changed ? 'changed' : 'missing';
   const symbol = known ? '✓' : changed ? '∆' : active ? '◎' : '·';
   return <>
     <Handle type="target" position={Position.Left} isConnectable={false} />
-    <button type="button" className={'node nodrag nopan ' + state + (active ? ' selected' : '')}
-      aria-label={concept.title + ', ' + status} aria-pressed={active}
+    <button type="button" className={'node nodrag nopan ' + state + (active ? ' selected' : '') + (recommended && !active ? ' next' : '')}
+      aria-label={concept.title + ', ' + status + (recommended ? ', Recommended next' : '')} aria-pressed={active}
       onFocus={event => revealNode(event.currentTarget, concept.id, flow)} onClick={() => onSelect(concept.id)}>
       <i aria-hidden="true">{symbol}</i><span>{concept.title}</span>
     </button>
@@ -56,6 +62,13 @@ function ConceptMarker({ data }: NodeProps<ConceptNode>) {
   </>;
 }
 
+function DependencyEdge({ sourceX, sourceY, targetX, targetY }: EdgeProps) {
+  const distance = targetX - sourceX;
+  const path = `M${sourceX} ${sourceY} C${sourceX + distance * .45} ${sourceY}, ${targetX - distance * .3} ${targetY}, ${targetX} ${targetY}`;
+  return <BaseEdge path={path} />;
+}
+
+const edgeTypes = { dependency: DependencyEdge };
 const nodeTypes = { concept: ConceptMarker };
 const minZoom = .1;
 const maxZoom = 2.5;
@@ -64,9 +77,9 @@ function MapControls() {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const { zoom } = useViewport();
   return <div className="atlas-map-tools" role="group" aria-label="Map controls">
-    <button aria-label="Zoom out" title="Zoom out" disabled={zoom <= minZoom} onClick={() => void zoomOut()}>−</button>
-    <button aria-label="Zoom in" title="Zoom in" disabled={zoom >= maxZoom} onClick={() => void zoomIn()}>+</button>
-    <button aria-label="Fit map" title="Fit map" onClick={() => void fitView({ padding: .23, maxZoom: 1 })}>Fit</button>
+    <button aria-label="Zoom out" title="Zoom out" disabled={zoom <= minZoom} onClick={() => void zoomOut({ duration: motionDuration() })}>−</button>
+    <button aria-label="Zoom in" title="Zoom in" disabled={zoom >= maxZoom} onClick={() => void zoomIn({ duration: motionDuration() })}>+</button>
+    <button aria-label="Fit map" title="Fit map" onClick={() => void fitView({ padding: .23, maxZoom: 1, duration: motionDuration() })}>Fit</button>
   </div>;
 }
 
@@ -78,14 +91,14 @@ function flowEdges(model: AtlasModel, selected: number): Edge[] {
       edges.push({
         id: prior.id + '-' + concept.id, source: String(prior.id), target: String(concept.id),
         ariaLabel: prior.title + ' is a prerequisite for ' + concept.title,
-        type: 'simplebezier', className: active ? 'atlas-edge-active' : 'atlas-edge',
+        type: 'dependency', className: active ? 'atlas-edge-active' : 'atlas-edge',
       });
     }
   }
   return edges;
 }
 
-function FlowCanvas({ model, demo, workspaceId, selected, onSelect }: MapProps) {
+function FlowCanvas({ model, demo, workspaceId, selected, recommendedId, onSelect }: MapProps) {
   const container = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   useEffect(() => {
@@ -108,12 +121,12 @@ function FlowCanvas({ model, demo, workspaceId, selected, onSelect }: MapProps) 
     const changed = concept.id === demo?.changed?.id;
     return {
       id: String(id), type: 'concept', position, width: 30, height: 30,
-      data: { concept, active: id === selected.id, changed, status: statusText(concept, workspaceId, changed), onSelect },
+      data: { concept, active: id === selected.id, changed, recommended: id === recommendedId, status: statusText(concept, workspaceId, changed), onSelect },
     };
-  }), [points, model, selected.id, onSelect, demo, workspaceId]);
+  }), [points, model, selected.id, recommendedId, onSelect, demo, workspaceId]);
   const edges = useMemo(() => flowEdges(model, selected.id), [model, selected.id]);
   return <div className="atlas-canvas" ref={container}>
-    {points && <ReactFlow<ConceptNode> nodes={nodes} edges={edges} nodeTypes={nodeTypes}
+    {points && <ReactFlow<ConceptNode> nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
       nodeOrigin={[.5, .5]} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false}
       nodesFocusable={false} edgesFocusable={false} deleteKeyCode={null} selectionKeyCode={null}
       fitView={!demo} fitViewOptions={{ padding: .23, maxZoom: 1 }} minZoom={minZoom} maxZoom={maxZoom}

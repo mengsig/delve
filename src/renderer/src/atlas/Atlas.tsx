@@ -5,7 +5,7 @@ import { ContourMap } from './ContourMap';
 import { demoPlate } from './demoAtlas';
 import { FieldGuide } from './FieldGuide';
 import { Folio, Inspector } from './Folio';
-import { buildAtlas, nextConcept, statusText, type AtlasModel } from './model';
+import { buildAtlas, isLearned, nextConcept, statusText, type AtlasModel } from './model';
 
 export type AtlasView = 'contour' | 'folio';
 
@@ -61,6 +61,7 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
   const target = useMemo(() => nextConcept(model, demo?.primary), [model, demo]);
   const [selection, setSelection] = useState(props.initialConceptId ?? demo?.primary.id ?? target?.id);
   const selected = (selection === undefined ? undefined : model.byId.get(selection)) ?? target;
+  const recommendedId = target && !isLearned(target) ? target.id : undefined;
   const name = graph.demo ? workspace.name.replace(/ \(demo\)$/, '') : workspace.name;
   const blurb = demo?.blurb ?? (workspace.kind === 'topic'
     ? 'Explore the ideas in ' + name + ' and the connections between them.'
@@ -69,9 +70,9 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
     <Topline workspace={workspace} name={name} blurb={blurb} onSwitch={onSwitch} />
     {selected && target ? <div className="split"><div>
       {view === 'contour'
-        ? <ContourMap model={model} selected={selected} workspaceId={workspace.id} depth={depth}
+        ? <ContourMap model={model} selected={selected} recommendedId={recommendedId} workspaceId={workspace.id} depth={depth}
           name={name} demo={demo} onSelect={setSelection} />
-        : <Folio model={model} selected={selected} workspaceId={workspace.id} changedId={demo?.changed?.id} onSelect={setSelection} />}
+        : <Folio model={model} selected={selected} recommendedId={recommendedId} workspaceId={workspace.id} changedId={demo?.changed?.id} onSelect={setSelection} />}
       <Inspector selected={selected} status={statusText(selected, workspace.id, selected.id === demo?.changed?.id)}
         onSelect={setSelection} onLesson={onLesson} />
     </div><FieldGuide model={model} target={target} workspace={workspace} demo={demo} onLesson={onLesson} onChanges={onChanges} /></div>

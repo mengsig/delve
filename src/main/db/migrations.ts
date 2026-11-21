@@ -114,9 +114,12 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'initial schema', sql: INITIAL_SCHEMA },
   {
     version: 2,
-    name: 'scope reader conversations by depth',
+    name: 'scope reader conversations and link evidence origins',
     sql: `ALTER TABLE conversations ADD COLUMN depth TEXT CHECK (depth IN ('high', 'medium', 'low'));
-          CREATE UNIQUE INDEX conversations_by_depth ON conversations (workspace_id, concept_id, depth);`,
+          CREATE UNIQUE INDEX conversations_by_depth ON conversations (workspace_id, concept_id, depth);
+          INSERT OR IGNORE INTO workspace_concepts (workspace_id, concept_id)
+          SELECT e.workspace_id, e.concept_id FROM evidence e JOIN concepts c ON c.id = e.concept_id
+          WHERE e.workspace_id IS NOT NULL AND c.portable = 1;`,
   },
 ];
 

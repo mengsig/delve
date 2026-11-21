@@ -54,8 +54,8 @@ export const request = (over: Partial<RunRequest<Answer>> = {}): RunRequest<Answ
   cacheKey: 'k1', ...over,
 });
 
-export async function setupRunner(binDir: string, env: NodeJS.ProcessEnv = {}): Promise<{ runner: ProviderRunner; tempRoot: string }> {
-  const tempRoot = await makeTempDir('root');
+export async function setupRunner(binDir: string, env: NodeJS.ProcessEnv = {}, root?: string): Promise<{ runner: ProviderRunner; tempRoot: string }> {
+  const tempRoot = root ?? await makeTempDir('root');
   const childEnv = shimEnv(binDir, env);
   const runner = new ProviderRunner({
     resolveProvider: async (id: ProviderId) => {

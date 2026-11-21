@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { DEPTHS, type Depth } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
 import type { GraphEvidence } from '../../shared/graph';
-import { getConcept, getConceptByKey, type Concept } from './concepts';
+import { getConceptByKey } from './concepts';
 import { nowIso, transaction, type Db } from './connection';
 import { resolveScope } from './scope';
 import { getWorkspace } from './workspaces';
@@ -79,6 +79,9 @@ export function recordEvidence(db: Db, input: EvidenceInput): Evidence {
   assertInput(input);
   return transaction(db, () => {
     const scope = resolveScope(db, input.conceptId, input.workspaceId, input.snapshotId);
+    if (scope.workspaceId !== null) {
+      db.prepare('INSERT OR IGNORE INTO workspace_concepts (workspace_id, concept_id) VALUES (?, ?)').run(scope.workspaceId, input.conceptId);
+    }
     db.prepare(
       `INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
@@ -121,14 +124,11 @@ export function listWorkspaceEvidence(db: Db, workspaceId: string): GraphEvidenc
   });
 }
 
-function assertResetScope(db: Db, workspaceId: string, concept: Concept, depth?: Depth): void {
+function assertResetOrigin(db: Db, workspaceId: string, conceptId: number, depth?: Depth): void {
   if (!getWorkspace(db, workspaceId)) throw new DomainError('WORKSPACE_NOT_FOUND', 'That workspace no longer exists.');
-  if (!concept.portable && concept.workspaceId !== workspaceId) {
-    throw new DomainError('SCOPE_MISMATCH', 'That concept belongs to another workspace.');
-  }
   const membership = db.prepare('SELECT 1 FROM workspace_concepts WHERE workspace_id = ? AND concept_id = ?');
-  if (!membership.get(workspaceId, concept.id)) throw new DomainError('SCOPE_MISMATCH', 'That concept is not linked to this workspace.');
-  const target = listEvidence(db, concept.id).filter((e) => depth === undefined || e.depth === depth);
+  if (!membership.get(workspaceId, conceptId)) throw new DomainError('SCOPE_MISMATCH', 'That concept is not linked to this workspace.');
+  const target = listEvidence(db, conceptId).filter((e) => depth === undefined || e.depth === depth);
   if (target.some((e) => e.workspaceId !== null && e.workspaceId !== workspaceId)) {
     throw new DomainError('SCOPE_MISMATCH', 'Reset this evidence from the workspace where it was recorded.');
   }
@@ -141,9 +141,8 @@ export function resetEvidence(db: Db, conceptId: number, options: { depth?: Dept
     throw new DomainError('INVALID_EVIDENCE', `Unknown depth "${depth}".`);
   }
   return transaction(db, () => {
-    const concept = getConcept(db, conceptId);
-    if (!concept) throw new DomainError('CONCEPT_NOT_FOUND', `Concept ${conceptId} does not exist.`);
-    if (workspaceId !== undefined) assertResetScope(db, workspaceId, concept, depth);
+    resolveScope(db, conceptId, workspaceId);
+    if (workspaceId !== undefined) assertResetOrigin(db, workspaceId, conceptId, depth);
     const result =
       depth === undefined
         ? db.prepare('DELETE FROM evidence WHERE concept_id = ?').run(conceptId)

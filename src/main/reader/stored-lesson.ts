@@ -11,7 +11,7 @@ export function lessonContext(db: Db, address: LessonAddress): LessonContext {
   const { workspaceId, conceptId } = address;
   const row = db.prepare(`SELECT c.key, c.title, c.summary, w.kind FROM workspace_concepts wc
     JOIN concepts c ON c.id = wc.concept_id JOIN workspaces w ON w.id = wc.workspace_id
-    WHERE wc.workspace_id = ? AND wc.concept_id = ?`).get(workspaceId, conceptId);
+    WHERE wc.workspace_id = ? AND wc.concept_id = ? AND (c.portable = 1 OR c.workspace_id = w.id)`).get(workspaceId, conceptId);
   if (!row) throw new DomainError('CONCEPT_NOT_FOUND', 'This workspace does not contain the selected concept.');
   const snapshot = db.prepare(`SELECT id, commit_sha FROM snapshots
     WHERE workspace_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`).get(workspaceId);

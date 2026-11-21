@@ -94,3 +94,12 @@ describe('portable evidence reset', () => {
     expect(readWorkspaceGraph(db, first).evidence).toEqual([]);
   });
 });
+
+it('links a portable record to its origin so it can be inspected and reset there', () => {
+  const shared = upsertConcept(db, { portable: true, key: 'field-of-view', title: 'Field of view' });
+  recordEvidence(db, { workspaceId: first, conceptId: shared.id, depth: 'medium', status: 'partial', source: 'self-report' });
+  const graph = readWorkspaceGraph(db, first);
+  expect(graph.evidence).toMatchObject([{ conceptId: shared.id, workspaceId: first }]);
+  expect(graph.concepts).toMatchObject([{ id: shared.id, portable: true }]);
+  expect(resetEvidence(db, shared.id, { workspaceId: first, depth: 'medium' })).toBe(1);
+});

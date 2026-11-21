@@ -7,7 +7,7 @@ test('navigates the same graph by keyboard on the terrain and in Folio', async (
   const inspector = page.getByRole('region', { name: 'Selected concept' });
   await expect(inspector).toContainText('Worker leases');
   const viewport = page.locator('.react-flow__viewport');
-  const transform = () => viewport.evaluate(element => (element as HTMLElement).style.transform);
+  const transform = () => viewport.getAttribute('style');
   const start = await transform();
   await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
   await expect.poll(transform).not.toBe(start);
@@ -16,6 +16,7 @@ test('navigates the same graph by keyboard on the terrain and in Folio', async (
   await journal.focus();
   await journal.press('Enter');
   await expect(inspector).toContainText('Event journal');
+  await expect(nodes.getByRole('button', { name: /Worker leases,.*Recommended next/ })).toHaveClass(/next/);
   await page.getByRole('button', { name: 'Ledger', exact: true }).click();
   const ledger = page.getByRole('region', { name: 'Folio dependency ledger' });
   await expect(ledger).toContainText('Durable queue');
@@ -52,8 +53,11 @@ test('shows evidence provenance and resets only the selected depth at its origin
   const table = page.getByRole('table');
   const archon = table.getByRole('row').filter({ hasText: 'Archon' });
   await expect(archon).toContainText('2 / 6');
+  await page.getByText(/^Inspect .* evidence records$/).click();
   const entry = page.getByRole('listitem').filter({ hasText: 'Durable queue' }).filter({ hasText: 'medium' });
   await entry.getByRole('button', { name: /Manage in Relay/ }).click();
+  await expect(page.getByText(/Evidence ledger \/ Relay/)).toBeVisible();
+  await page.getByText(/^Inspect .* evidence records$/).click();
   await entry.getByRole('button', { name: 'Reset evidence' }).click();
   await expect(entry).toContainText('every atlas that shares it');
   await entry.getByRole('button', { name: 'Keep evidence' }).click();

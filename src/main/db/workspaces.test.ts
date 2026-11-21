@@ -1,5 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase, type Db } from './connection';
@@ -22,6 +23,21 @@ describe('migrations', () => {
     const db = memoryDb();
     expect(schemaVersion(db)).toBe(MIGRATIONS.length);
     expect(migrate(db)).toBe(MIGRATIONS.length);
+  });
+
+  it('links existing portable evidence to its recording workspace on upgrade', () => {
+    const db = new DatabaseSync(':memory:');
+    open.push(db);
+    migrate(db, MIGRATIONS.slice(0, 1));
+    const workspace = addWorkspace(db, { kind: 'topic', title: 'Photography' });
+    db.prepare(`INSERT INTO concepts (id, key, title, portable, created_at, updated_at)
+      VALUES (1, 'focus', 'Focus', 1, 'then', 'then')`).run();
+    db.prepare(`INSERT INTO evidence (concept_id, depth, status, source, recorded_at, workspace_id)
+      VALUES (1, 'medium', 'partial', 'self-report', 'then', ?)`).run(workspace.id);
+    migrate(db);
+    expect(db.prepare('SELECT workspace_id, concept_id FROM workspace_concepts').all())
+      .toEqual([{ workspace_id: workspace.id, concept_id: 1 }]);
+    expect(db.prepare('SELECT status, revision FROM evidence').get()).toEqual({ status: 'partial', revision: 1 });
   });
 
   it('refuses a database from a newer build', () => {
