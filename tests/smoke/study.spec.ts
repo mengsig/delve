@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test';
 import { test } from './desktop';
+import { withinBudget } from './action-budget';
 
 for (const [workspace, marker, label] of [
   ['Archon', 'Write fencing', 'Event journal'],
@@ -97,8 +98,10 @@ test('lesson depth, local conversations and linked change concepts work offline'
   await expect(page.getByRole('log')).toContainText('How does the result writer check ownership?');
   await page.getByRole('navigation', { name: 'Application' }).getByRole('button', { name: 'Changes' }).click();
   await expect(page.getByRole('heading', { name: 'Reject late worker results.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Teach me this change' }).click();
-  await expect(page.getByRole('heading', { name: 'Write fencing', level: 1 })).toBeVisible();
+  await withinBudget(page, 'Explore the change footprint concept', 1, async () => {
+    await page.getByRole('complementary').getByRole('button', { name: 'Explore this concept →' }).click();
+    await expect(page.getByRole('heading', { name: 'Write fencing', level: 1 })).toBeVisible();
+  });
 });
 
 test('shows evidence provenance and resets only the selected depth at its origin', async ({ desktop: { page } }) => {

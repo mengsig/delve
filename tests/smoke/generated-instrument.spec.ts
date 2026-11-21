@@ -49,20 +49,16 @@ test('a pointer can move the token while scrolling past the composer', async ({ 
   await createTopic(page);
   const button = page.frameLocator('.instrument-frame').getByRole('button', { name: 'Move token' });
   await expect(button).toBeVisible();
-  const buttonBox = await button.boundingBox();
-  const composerBox = await page.locator('.reader-composer').boundingBox();
-  expect(buttonBox).not.toBeNull();
-  expect(composerBox).not.toBeNull();
-  await page.evaluate(delta => {
-    const browser = globalThis as unknown as { document: {
-      querySelector: (selector: string) => { scrollBy: (options: object) => void } | null;
-      scrollingElement: { scrollBy: (options: object) => void } | null;
-    } };
-    const scroller = browser.document.querySelector('.reader-scroll') ?? browser.document.scrollingElement;
-    if (!scroller) throw new Error('Lesson has no scroll container');
-    scroller.scrollBy({ top: delta, behavior: 'instant' });
-  }, buttonBox!.y + buttonBox!.height / 2 - composerBox!.y - composerBox!.height / 2);
-  await page.locator('#instrument').scrollIntoViewIfNeeded();
+  await expect(page.frameLocator('.instrument-frame').getByRole('status')).toHaveText('Token at square 2');
+  await page.locator('.reader-composer').scrollIntoViewIfNeeded();
+  const scrollPastInstrument = await page.evaluate(() => window.scrollY);
+  expect(scrollPastInstrument).toBeGreaterThan(0);
+  const offscreenButton = await button.boundingBox();
+  expect(offscreenButton).not.toBeNull();
+  await page.evaluate(y => window.scrollBy({ top: y - window.innerHeight / 2, behavior: 'instant' }),
+    offscreenButton!.y + offscreenButton!.height / 2);
+  await expect(button).toBeInViewport({ ratio: 1 });
+  expect(await page.evaluate(() => window.scrollY)).toBeLessThan(scrollPastInstrument);
   const visibleButton = await button.boundingBox();
   expect(visibleButton).not.toBeNull();
   if (process.env['DELVE_POINTER_EVIDENCE']) await page.screenshot({ path: process.env['DELVE_POINTER_EVIDENCE'] });
