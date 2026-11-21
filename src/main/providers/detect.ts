@@ -1,13 +1,15 @@
 import assert from 'node:assert';
-import { execFile } from 'node:child_process';
 import type { ProviderId, ProviderStatus } from '../../shared/domain';
 import { resolveCommand } from './command';
 import { buildChildEnv } from './env';
+import { ProviderError } from './errors';
+import { runCaptured } from './process';
 import { findExecutable } from './which';
 
 export interface DetectOptions {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface ExecResult {
@@ -22,16 +24,16 @@ type AuthState = Pick<ProviderStatus, 'state' | 'detail'>;
 const PROVIDER_ORDER: ProviderId[] = ['claude', 'codex'];
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-function runProbe(bin: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<ExecResult> {
-  return new Promise((resolve) => {
-    execFile(bin, args, { env, timeout: timeoutMs, windowsHide: true, shell: false, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
-      if (!err) return resolve({ code: 0, stdout, stderr, failure: null });
-      const e = err as NodeJS.ErrnoException & { killed?: boolean; code?: number | string };
-      if (e.killed) return resolve({ code: null, stdout, stderr, failure: 'timed out' });
-      if (typeof e.code === 'number') return resolve({ code: e.code, stdout, stderr, failure: null });
-      resolve({ code: null, stdout, stderr, failure: e.message });
-    });
-  });
+async function runProbe(provider: ProviderId, bin: string, args: string[], env: NodeJS.ProcessEnv,
+  timeoutMs: number, signal: AbortSignal): Promise<ExecResult> {
+  try {
+    const result = await runCaptured({ provider, bin, args, env, timeoutMs, signal, cwd: process.cwd(),
+      stdin: '', maxBytes: 1024 * 1024 });
+    return { ...result, failure: result.code === null ? 'process terminated by a signal' : null };
+  } catch (error) {
+    if (!(error instanceof ProviderError)) throw error;
+    return { code: null, stdout: '', stderr: '', failure: error.code === 'PROVIDER_TIMEOUT' ? 'timed out' : error.message };
+  }
 }
 
 const NO_SUBSCRIPTION = 'not signed in with a subscription';
@@ -94,7 +96,7 @@ const PROBES: Record<ProviderId, { authArgs: string[]; parse: (r: ExecResult) =>
   codex: { authArgs: ['login', 'status'], parse: parseCodexAuth },
 };
 
-async function detectOne(id: ProviderId, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<ProviderStatus> {
+async function detectOne(id: ProviderId, env: NodeJS.ProcessEnv, timeoutMs: number, signal: AbortSignal): Promise<ProviderStatus> {
   const binPath = await findExecutable(id, env);
   if (binPath === null) return { id, state: 'not-found', path: null, version: null, detail: 'not found on PATH' };
   const resolution = await resolveCommand(binPath, env);
@@ -102,8 +104,8 @@ async function detectOne(id: ProviderId, env: NodeJS.ProcessEnv, timeoutMs: numb
   const { file, prefixArgs } = resolution.command;
   const probe = PROBES[id];
   const [versionRes, authRes] = await Promise.all([
-    runProbe(file, [...prefixArgs, '--version'], env, timeoutMs),
-    runProbe(file, [...prefixArgs, ...probe.authArgs], env, timeoutMs),
+    runProbe(id, file, [...prefixArgs, '--version'], env, timeoutMs, signal),
+    runProbe(id, file, [...prefixArgs, ...probe.authArgs], env, timeoutMs, signal),
   ]);
   const version = versionRes.failure === null && versionRes.code === 0 ? versionRes.stdout.trim().split('\n')[0] ?? null : null;
   const auth = probe.parse(authRes);
@@ -115,7 +117,8 @@ export async function detectProviders(options: DetectOptions = {}): Promise<Prov
   const env = buildChildEnv(options.env ?? process.env);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   assert(timeoutMs > 0, 'timeoutMs must be positive');
-  const statuses = await Promise.all(PROVIDER_ORDER.map((id) => detectOne(id, env, timeoutMs)));
+  const signal = options.signal ?? new AbortController().signal;
+  const statuses = await Promise.all(PROVIDER_ORDER.map((id) => detectOne(id, env, timeoutMs, signal)));
   assert(statuses.length === PROVIDER_ORDER.length, 'one status per provider');
   return statuses;
 }

@@ -24,6 +24,7 @@
     "test": "vitest run",
     "test:providers": "vitest run src/main/providers",
     "test:smoke": "npm run build && playwright test",
+    "test:linux-package": "node scripts/smoke-linux-package.mjs",
     "package": "npm run build && electron-builder",
     "package:linux": "npm run build && electron-builder --linux",
     "package:mac": "npm run build && electron-builder --mac",
@@ -32,6 +33,7 @@
     "prebuild": "vite build --config vite.instrument.config.ts"
   },
   "devDependencies": {
+    "@electron/fuses": "^1.8.0",
     "@eslint/js": "^10.0.1",
     "@jitl/quickjs-singlefile-browser-release-sync": "0.32.0",
     "@playwright/test": "1.65",

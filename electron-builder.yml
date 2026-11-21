@@ -12,19 +12,14 @@ extraResources:
   - from: node_modules/@jitl/quickjs-singlefile-browser-release-sync/LICENSE
     to: licenses/quickjs.txt
 asar: true
-electronFuses:
-  runAsNode: false
-  enableCookieEncryption: true
-  enableNodeOptionsEnvironmentVariable: false
-  enableNodeCliInspectArguments: false
-  enableEmbeddedAsarIntegrityValidation: true
-  onlyLoadAppFromAsar: true
+afterPack: ./scripts/after-pack.mjs
 linux:
   icon: icon.png
   target:
     - AppImage
     - deb
   category: Education
+  syncDesktopName: true
   maintainer: mengsig <https://github.com/mengsig>
   artifactName: ${productName}-${version}-${arch}.${ext}
 mac:

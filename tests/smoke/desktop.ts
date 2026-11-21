@@ -16,6 +16,7 @@ interface Desktop {
 async function launch(userData: string, firstRun: boolean, fakeBin?: string, link?: string, providerMode?: string): Promise<ElectronApplication> {
   const providerEnv = fakeBin ? shimEnv(fakeBin, { FAKE_PROVIDER_RESPONSE_FILE: join(userData, 'reply.json'),
     FAKE_PROVIDER_GATE: join(userData, 'gate'), FAKE_PROVIDER_RECORD: join(userData, 'request.json'),
+    FAKE_PROVIDER_SELF_PID: join(userData, 'provider.pid'), FAKE_PROVIDER_CHILD_PID: join(userData, 'provider-child.pid'),
     ...(providerMode ? { FAKE_PROVIDER_MODE: providerMode } : {}) }) : { PATH: '/nonexistent' };
   if (firstRun && fakeBin) {
     const git = await findExecutable('git', process.env);

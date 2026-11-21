@@ -28,9 +28,9 @@ const json = z.toJSONSchema(metadata, { target: 'draft-7', override: ({ jsonSche
 const replyJsonSchema = { type: 'object', additionalProperties: false,
   required: [...json.required!, 'lesson'], properties: { ...json.properties, lesson: documentJsonSchema } };
 
-export function createTutorRunner(): ProviderRunner {
+export function createTutorRunner(detect: () => ReturnType<typeof detectProviders> = detectProviders): ProviderRunner {
   return new ProviderRunner({ resolveProvider: async id => {
-    const match = (await detectProviders()).find(status => status.id === id);
+    const match = (await detect()).find(status => status.id === id);
     assert.ok(match, 'each installed provider must have a detection result');
     return match;
   } });

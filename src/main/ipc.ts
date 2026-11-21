@@ -59,13 +59,16 @@ export interface IpcRegistrar {
 }
 
 /** Registers one handler per channel; requests from frames outside the app are refused. */
-export function registerIpc(ipc: IpcRegistrar, handlers: IpcHandlers, isTrustedUrl: (url: string) => boolean): void {
+export function registerIpc(ipc: IpcRegistrar, handlers: IpcHandlers, isTrustedUrl: (url: string) => boolean, signal?: AbortSignal): void {
   assert.equal(Object.keys(handlers).length, IPC_CHANNELS.length, 'every channel needs exactly one handler');
   for (const channel of IPC_CHANNELS) {
     ipc.handle(channel, async (event, raw) => {
       const url = event.senderFrame?.url ?? '';
       if (event.senderFrame?.parent !== null || !isTrustedUrl(url)) {
         return { ok: false, error: { code: 'FORBIDDEN', message: 'Request from an untrusted frame.' } } satisfies IpcResult<never>;
+      }
+      if (signal?.aborted) {
+        return { ok: false, error: { code: 'APP_CLOSING', message: 'Delve is closing.' } } satisfies IpcResult<never>;
       }
       return dispatch(handlers, channel, raw);
     });
