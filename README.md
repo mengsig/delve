@@ -72,7 +72,7 @@ To generate lessons, Delve uses a CLI you already have and are signed in to:
 itself and never copies your credentials. It only runs a CLI signed in with a subscription
 (claude.ai or ChatGPT); a CLI signed in with an API key is shown and refused, because it bills per
 use. If neither CLI is on your `PATH`, Delve shows "not found".
-Live tutor requests use the top-level model in Codex's config, if present and valid, or the CLI's
+Tutor and repository requests use the top-level model in Codex's config, if present and valid, or the CLI's
 default model. Claude uses its CLI default. Set `DELVE_CODEX_MODEL` or `DELVE_CLAUDE_MODEL`
 before launching Delve to request a specific model; this takes precedence over Codex's config.
 Delve reads only the Codex model as data and runs both CLIs with isolation flags, so they do not

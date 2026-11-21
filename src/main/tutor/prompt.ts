@@ -5,8 +5,7 @@ import type { TutorPreview, TutorRequest } from '../../shared/reader';
 import type { Db } from '../db/connection';
 import { readWorkspaceGraph } from '../db/graph';
 import { lessonCacheKey } from '../db/lessons';
-import { selectTutorModel } from '../providers/model';
-import { validateModel } from '../providers/argv';
+import { cacheModel as modelCacheKey, selectModel } from '../providers/model';
 import { readHistory } from '../reader/conversation';
 import { publicBlocks } from '../reader/document';
 import { lessonContext, storedLesson } from '../reader/stored-lesson';
@@ -17,13 +16,6 @@ export const depthGuide = {
   medium: 'Explain how the parts interact, at the module or technique level.',
   low: 'Work through protocol, implementation details or exact technique and boundary conditions.',
 };
-
-export function modelFor(provider: TutorRequest['provider']): string {
-  if (provider === 'demo') return 'field-tutor-v1';
-  const name = provider === 'codex' ? process.env.DELVE_CODEX_MODEL ?? 'gpt-5.4'
-    : process.env.DELVE_CLAUDE_MODEL ?? 'claude-sonnet-4-6';
-  return validateModel(name);
-}
 
 const instructions = [
   'You are Delve, a conversational tutor. Return a delve.lesson/1 document inside the requested response.',
@@ -49,9 +41,9 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const selected = storedLesson(db, context);
   const response = request.intent.kind === 'answer' ? checkResponse(selected, request.intent) : null;
   const history = readHistory(db, context).messages.slice(-12);
-  const { model, modelSource } = selectTutorModel(request.provider);
+  const { model, modelSource } = selectModel(request.provider);
   // The default cache entry is distinct from every valid explicit model ID.
-  const cacheModel = model ?? '(provider default)';
+  const cacheModel = modelCacheKey(model);
   const cacheKey = lessonCacheKey({ provider: request.provider, model: cacheModel, schemaVersion: 'delve.lesson/1', conceptKey: context.key,
     depth: context.depth, sourceRef: context.workspaceId + '/' + (context.snapshot ?? 'concept') });
   const prerequisites = new Set(graph.edges.filter(e => e.conceptId === context.conceptId).map(e => e.prerequisiteId));

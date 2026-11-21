@@ -1,3 +1,4 @@
+import type { TutorPreview } from './reader';
 import type { AddWorkspaceInput, Depth, ProviderId, Workspace } from './domain';
 
 export interface ChangeRef {
@@ -27,7 +28,8 @@ export interface RepoRequest {
 
 export interface RepoPreview {
   token: string;
-  model: string;
+  model: TutorPreview['model'];
+  modelSource: TutorPreview['modelSource'];
   prompt: string;
   bytes: number;
   files: string[];
