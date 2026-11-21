@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ProviderStatus } from '../../../shared/domain';
 import type { LessonAddress, ReaderLesson, TutorIntent, TutorPreview, TutorRequest } from '../../../shared/reader';
 import { call } from '../api';
+import { preferredProvider } from '../preferences';
 import { errorMessage } from '../useRead';
 
 type Provider = TutorRequest['provider'];
@@ -75,7 +76,7 @@ function useGeneration(onLesson: (lesson: ReaderLesson, intent: TutorIntent) => 
 }
 
 export function useTutor(address: LessonAddress, demo: boolean, onLesson: (lesson: ReaderLesson, intent: TutorIntent) => void) {
-  const [provider, choose] = useState<Provider>(demo ? 'demo' : localStorage.getItem('delve.provider') === 'claude' ? 'claude' : 'codex');
+  const [provider, choose] = useState<Provider>(demo ? 'demo' : preferredProvider());
   const [lastIntent, setLastIntent] = useState<TutorIntent>();
   const generation = useGeneration(onLesson);
   const detection = useProviderStatuses(demo);

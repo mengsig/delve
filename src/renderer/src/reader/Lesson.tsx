@@ -11,6 +11,8 @@ import './reader.css';
 interface LessonProps extends ReaderProps {
   conceptId: number;
   onEvidence?: () => void;
+  initialQuestion?: string;
+  onBackToChange?: () => void;
 }
 
 function FieldNotes({ props, body }: { props: LessonProps; body?: ReaderLesson }) {
@@ -38,7 +40,7 @@ function FieldNotes({ props, body }: { props: LessonProps; body?: ReaderLesson }
 function LessonThread({ body, address, props, onLesson }: {
   body: ReaderLesson; address: LessonAddress; props: LessonProps; onLesson: (lesson: ReaderLesson) => void;
 }) {
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(props.initialQuestion ?? '');
   const [review, setReview] = useState(!body.reused);
   const tutor = useTutor(address, props.graph.demo, (lesson, intent) => {
     onLesson(lesson);
@@ -64,7 +66,7 @@ function LessonThread({ body, address, props, onLesson }: {
       <LessonBlocks key={body.revision} blocks={body.blocks} pending={tutor.pending || !body.revision} onAnswer={answer} />
     </section>}
     <Conversation messages={body.messages} earlierMessages={body.earlierMessages} />
-    <Composer tutor={tutor} draft={draft} setDraft={setDraft} />
+    <Composer tutor={tutor} draft={draft} setDraft={setDraft} focusOnOpen={Boolean(props.onBackToChange || props.initialQuestion)} />
     </LessonInstruments>
   </article>;
 }
@@ -86,7 +88,8 @@ function Reader({ props, concept }: { props: LessonProps; concept: GraphConcept 
   }, [workspaceId, conceptId, depth, attempt]);
   return <>
     <ReaderHeader {...props} label={`Field lesson / ${workspace.name} / ${view === 'folio' ? 'Folio' : 'Contour'}`}
-      title={concept.title} summary={concept.summary} />
+      title={concept.title} summary={concept.summary} onBack={props.onBackToChange ?? props.onBack}
+      backLabel={props.onBackToChange ? '← Back to change brief' : undefined} />
     <div className="reader reader-layout">
       {error ? <article className="sheet"><p role="alert">{error}</p><button onClick={retry}>Retry loading lesson</button></article>
         : body ? <LessonThread body={body} props={props} address={{ workspaceId, conceptId, depth }} onLesson={setBody} />

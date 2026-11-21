@@ -1,0 +1,44 @@
+.repository-review {
+  margin-block: 16px;
+  padding: 16px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
+.repository-review p, .repository-ref { margin-block: 8px; overflow-wrap: anywhere; }
+.repository-review pre { max-height: 340px; overflow: auto; }
+.repository-notice {
+  border-inline-start: 3px solid var(--gold);
+  padding: 8px 12px;
+  margin-block: 12px;
+  overflow-wrap: anywhere;
+}
+.repository-list, .repository-files {
+  list-style: none;
+  padding: 0;
+  margin-block: 12px;
+}
+.repository-files { max-height: 340px; overflow: auto; }
+.repository-files li, .repository-list li + li { border-top: 1px solid var(--rule); }
+.repository-files label, .repository-list button {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  align-items: baseline;
+  width: 100%;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+.repository-files label { cursor: pointer; }
+.repository-files code, .repository-list strong { flex: 1; min-width: 0; }
+.repository-files small, .repository-list small { color: var(--dim); }
+.repository-list button { border: 0; background: transparent; }
+.repository-list button:hover, .repository-list button[aria-current] { background: var(--soft); }
+.repository-list button[aria-current] { box-shadow: inset 3px 0 var(--green); }
+.repository-onboarding { max-width: 780px; }
+.repository-onboarding .toolrow { margin-bottom: 16px; }
+.repository-setup-link { margin: 0 0 14px; }
+.repository-brief-title { margin-block: 0 12px; }
+.learn-intent { margin-bottom: 14px; overflow-wrap: anywhere; }
+.learn-intent .actions, .repository-actions { margin-top: 12px; }

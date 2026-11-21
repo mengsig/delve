@@ -20,6 +20,8 @@ export interface AtlasProps {
   onChanges: () => void;
   onProgress: () => void;
   onAdd: () => void;
+  onFirstRun: () => void;
+  onMap: () => void;
   onStartTopic: () => Promise<void>;
   onSwitch: () => void;
 }
@@ -87,6 +89,9 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
     : 'Follow the concepts and dependencies in ' + name + '.');
   return <div className={'atlas ' + view}>
     <Topline workspace={workspace} name={name} blurb={blurb} onSwitch={onSwitch} />
+    {graph.demo && <button className="repository-setup-link" onClick={props.onFirstRun}>Set up your workspace →</button>}
+    {!graph.demo && !graph.baselineCommit && workspace.kind !== 'topic' && selected &&
+      <button className="repository-setup-link" onClick={props.onMap}>Map this repository →</button>}
     {selected && target ? <div className="split"><div>
       {view === 'contour'
         ? <ContourMap model={model} selected={selected} recommendedId={recommendedId} workspaceId={workspace.id} depth={depth}
@@ -97,7 +102,9 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
     </div><FieldGuide model={model} target={target} reason={adaptive && suggestion?.reason} workspace={workspace} demo={demo} onLesson={onLesson} onChanges={onChanges} /></div>
       : <section className="sheet atlas-empty"><h3>No concepts mapped yet</h3>
         <p>This workspace has no saved concepts to explore.</p>
-        <div className="actions">{workspace.kind === 'topic' && <StartTopic start={props.onStartTopic} />}
+        <div className="actions">{workspace.kind === 'topic'
+          ? <StartTopic start={props.onStartTopic} />
+          : <button className="primary-btn" onClick={props.onMap}>Map this repository →</button>}
           <button onClick={onSwitch}>Switch workspace</button>
           <button onClick={props.onAdd}>Add workspace</button></div>
       </section>}

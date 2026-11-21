@@ -28,11 +28,12 @@ function reasonFor(target: AtlasConcept, workspaceId: string): string {
     const why = evidence.status === 'partial' ? 'Your evidence shows partial understanding at this depth.' : 'You marked this concept for another look.';
     return evidence.note ? why + ' ' + evidence.note : why;
   }
-  const prior = target.prerequisites[0];
-  if (prior) {
-    const from = prior.evidence?.workspaceName;
-    if (from && prior.evidence?.workspaceId !== workspaceId) return 'Build on ' + prior.title.toLowerCase() + ', already known from ' + from + '.';
-    return 'Build on ' + target.prerequisites.map(concept => concept.title.toLowerCase()).join(' and ') + ', already learned at this depth.';
+  const missing = target.prerequisites.filter(concept => !isLearned(concept));
+  if (missing.length) return 'This concept builds on ' + missing.map(concept => concept.title).join(' and ') + '.';
+  const prior = target.prerequisites.find(concept => concept.evidence?.workspaceName && concept.evidence.workspaceId !== workspaceId);
+  if (prior) return 'Build on ' + prior.title + ', already known from ' + prior.evidence?.workspaceName + '.';
+  if (target.prerequisites.length) {
+    return 'Build on ' + target.prerequisites.map(concept => concept.title).join(' and ') + ', already learned at this depth.';
   }
   const next = target.dependents[0];
   return next ? 'A foundation for ' + next.title.toLowerCase() + '.' : 'Start here. This concept has no prerequisites.';

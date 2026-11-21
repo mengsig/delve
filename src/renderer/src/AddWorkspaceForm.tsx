@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { DEFAULT_DEPTH, DEPTHS, type Depth, type Workspace, type WorkspaceKind } from '../../shared/domain';
 import { call } from './api';
+import { preferredProvider } from './preferences';
 import { SetupProvider } from './SetupProvider';
 import { Terrain } from './Terrain';
 import { workspaceInput } from './workspaceSource';
@@ -8,7 +9,8 @@ import './setup.css';
 
 interface Props {
   onAdded: (workspace: Workspace, depth: Depth) => void;
-  onCancel: () => void;
+  onCancel?: () => void;
+  firstRun: boolean;
 }
 
 const SOURCES = {
@@ -76,9 +78,10 @@ function SetupArt() {
   );
 }
 
-function WorkspaceEditor({ onAdded, onCancel }: Props) {
+function WorkspaceEditor({ onAdded, onCancel, firstRun }: Props) {
   const [kind, setKind] = useState<WorkspaceKind>('github');
   const [sources, setSources] = useState({ github: '', git: '', topic: '' });
+  const [provider, setProvider] = useState(preferredProvider);
   const [depth, setDepth] = useState<Depth>(DEFAULT_DEPTH);
   const [pending, setPending] = useState<'pick' | 'add' | null>(null);
   const [error, setError] = useState('');
@@ -119,10 +122,10 @@ function WorkspaceEditor({ onAdded, onCancel }: Props) {
           onKind={(next) => { setKind(next); setError(''); }}
           onValue={(value) => { setSources({ ...sources, [kind]: value }); setError(''); }} />
         <StartingDepth depth={depth} onChange={setDepth} />
-        <SetupProvider />
+        <SetupProvider provider={provider} onChange={setProvider} />
         <div className="actions setup-actions">
           <button className="primary-btn" type="submit">{pending === 'add' ? 'Adding…' : 'Add to atlas →'}</button>
-          <button type="button" onClick={onCancel}>Cancel</button>
+          {onCancel && <button type="button" onClick={onCancel}>{firstRun ? 'Explore demo atlas' : 'Cancel'}</button>}
         </div>
         {error && <p role="alert" className="setup-error">{error}</p>}
       </fieldset>
@@ -134,7 +137,7 @@ export function AddWorkspaceForm(props: Props) {
   return (
     <>
       <div className="intro">
-        <span className="eyebrow">First run / Set up a workspace</span>
+        <span className="eyebrow">{props.firstRun ? 'First run / Set up a workspace' : 'Add a workspace'}</span>
         <h1>What will you explore?</h1>
         <p>Start with a codebase or a subject. Choose how close to the details you want to begin.</p>
       </div>

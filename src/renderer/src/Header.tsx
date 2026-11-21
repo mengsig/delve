@@ -1,7 +1,7 @@
 import { Icon } from './Icon';
 import { ThemeButton } from './ThemeButton';
 
-export type Screen = 'atlas' | 'changes' | 'progress' | 'lesson' | 'setup';
+export type Screen = 'atlas' | 'changes' | 'progress' | 'lesson' | 'setup' | 'first-run' | 'baseline';
 
 const links = [
   { screen: 'atlas', icon: 'atlas', label: 'Atlas' },
