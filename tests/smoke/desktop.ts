@@ -8,33 +8,36 @@ import { _electron as electron, test as base, type ElectronApplication, type Pag
 
 interface Desktop {
   page: Page;
+  application: ElectronApplication;
   directory: string;
   restart: (link?: string) => Promise<Page>;
 }
 
-async function launch(userData: string, firstRun: boolean, fakeBin?: string, link?: string): Promise<ElectronApplication> {
+async function launch(userData: string, firstRun: boolean, fakeBin?: string, link?: string, providerMode?: string): Promise<ElectronApplication> {
   const providerEnv = fakeBin ? shimEnv(fakeBin, { FAKE_PROVIDER_RESPONSE_FILE: join(userData, 'reply.json'),
-    FAKE_PROVIDER_GATE: join(userData, 'gate'), FAKE_PROVIDER_RECORD: join(userData, 'request.json') }) : { PATH: '/nonexistent' };
+    FAKE_PROVIDER_GATE: join(userData, 'gate'), FAKE_PROVIDER_RECORD: join(userData, 'request.json'),
+    ...(providerMode ? { FAKE_PROVIDER_MODE: providerMode } : {}) }) : { PATH: '/nonexistent' };
   if (firstRun && fakeBin) {
     const git = await findExecutable('git', process.env);
     if (!git) throw new Error('Repository smoke requires Git.');
     providerEnv.PATH += delimiter + dirname(git);
   }
-  const env = { ...process.env, ...providerEnv, DELVE_USER_DATA_DIR: userData };
+  const env = { ...process.env, ...providerEnv, CODEX_HOME: join(userData, 'codex-home'), DELVE_USER_DATA_DIR: userData };
   delete (env as NodeJS.ProcessEnv).ELECTRON_RENDERER_URL;
   return electron.launch({ args: [resolve(__dirname, '../../out/main/index.js'), ...(link ? [link] : [])], env, timeout: 30_000 });
 }
 
-export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun: boolean; fixtureGitHub: boolean }>({
+export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun: boolean; fixtureGitHub: boolean; providerMode: string | undefined }>({
   tutorCli: [false, { option: true }],
   firstRun: [false, { option: true }],
   fixtureGitHub: [false, { option: true }],
-  desktop: async ({ tutorCli, firstRun, fixtureGitHub }, use) => {
+  providerMode: [undefined, { option: true }],
+  desktop: async ({ tutorCli, firstRun, fixtureGitHub, providerMode }, use) => {
     const directory = mkdtempSync(join(tmpdir(), 'delve-smoke-'));
     let fakeBin: string | undefined;
     let app: ElectronApplication | undefined;
     async function start(link?: string) {
-      app = await launch(directory, firstRun, fakeBin, link);
+      app = await launch(directory, firstRun, fakeBin, link, providerMode);
       const page = await app.firstWindow();
       await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
       return page;
@@ -51,7 +54,7 @@ export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun:
       const page = await start();
       if (!firstRun) await page.getByRole('button', { name: 'Explore demo atlas' }).click();
       await use({
-        directory, page,
+        directory, page, application: app!,
         restart: async link => { await app?.close(); app = undefined; return start(link); },
       });
     } finally {

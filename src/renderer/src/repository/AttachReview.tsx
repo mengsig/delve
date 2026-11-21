@@ -1,3 +1,4 @@
+import { modelLabel } from '../modelLabel';
 import { useState } from 'react';
 import type { Depth, ProviderId } from '../../../shared/domain';
 import type { RepositoryFile, RepoPreview } from '../../../shared/repository';
@@ -48,7 +49,7 @@ function ExactRequest({ preview, provider, depth }: { preview: RepoPreview; prov
   return <section className="repository-review attach-preview" aria-labelledby="attach-preview-title">
     <h3 id="attach-preview-title">Review provider request</h3>
     <p id="attach-preview-summary" role="status">
-      {PROVIDER_LABELS[provider]} · {preview.model} · {depth} depth · {preview.files.length}
+      {PROVIDER_LABELS[provider]} · {modelLabel(provider, preview)} · {depth} depth · {preview.files.length}
       {preview.files.length === 1 ? ' file' : ' files'} · {preview.bytes.toLocaleString()} bytes in request
     </p>
     <p>Commit <code>{preview.commit}</code></p>

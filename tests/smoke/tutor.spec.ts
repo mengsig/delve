@@ -1,9 +1,24 @@
 import { expect } from '@playwright/test';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from './desktop';
 
 test.use({ tutorCli: true });
+
+test('previews the configured Codex model before sending it', async ({ desktop: { page, directory } }) => {
+  const home = join(directory, 'codex-home');
+  mkdirSync(home);
+  writeFileSync(join(home, 'config.toml'), 'model = "gpt-6.1-terra"\n');
+  await page.getByRole('button', { name: '+ Add', exact: true }).click();
+  await page.getByRole('button', { name: 'Any topic', exact: true }).click();
+  await page.getByLabel('Any topic', { exact: true }).fill('Routing');
+  await page.getByRole('button', { name: 'Add to atlas →' }).click();
+  await page.getByRole('button', { name: 'Start a topic lesson →' }).click();
+  await page.getByRole('button', { name: 'Start lesson', exact: true }).click();
+  const preview = page.getByRole('dialog', { name: 'Review what will be sent' });
+  const override = process.env.DELVE_CODEX_MODEL;
+  await expect(preview).toContainText(override === undefined ? 'gpt-6.1-terra · from Codex config' : `Requested model: ${override}`);
+});
 
 test('previews a real topic request, cancels it, then teaches and assesses through the installed CLI interface', async ({ desktop }) => {
   test.setTimeout(25_000);
@@ -26,12 +41,18 @@ test('previews a real topic request, cancels it, then teaches and assesses throu
   const prompt = await preview.locator('pre').innerText();
   expect(prompt).toContain('IP routing');
   expect(prompt).toContain('"depth": "medium"');
+  const model = process.env.DELVE_CODEX_MODEL;
+  await expect(preview).toContainText(model === undefined ? 'Codex default' : `Requested model: ${model}`);
   await expect(preview).toContainText(Buffer.byteLength(prompt).toLocaleString('en-US') + ' bytes');
   await expect(preview).toContainText('No files attached');
   expect(existsSync(receipt)).toBe(false);
   await preview.getByRole('button', { name: 'Allow and continue' }).click();
   await expect.poll(() => existsSync(receipt), { timeout: 3500 }).toBe(true);
-  expect(JSON.parse(readFileSync(receipt, 'utf8')).stdin).toBe(prompt);
+  const invocation = JSON.parse(readFileSync(receipt, 'utf8'));
+  expect(invocation.stdin).toBe(prompt);
+  const modelFlag = invocation.argv.indexOf('--model');
+  if (model === undefined) expect(modelFlag).toBe(-1);
+  else expect(invocation.argv[modelFlag + 1]).toBe(model);
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('cancelled');
   unlinkSync(gate);

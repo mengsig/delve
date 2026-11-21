@@ -229,8 +229,8 @@ export class ProviderRunner {
       timeoutMs: req.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxBytes: MAX_OUTPUT_BYTES,
       signal, killGraceMs: this.deps.killGraceMs,
     });
-    checkExit(req.provider, res);
-    const payload = isCodex ? await extractCodexPayload(lastMessageFile, MAX_OUTPUT_BYTES) : extractClaudePayload(res);
+    checkExit(req.provider, res, req.model);
+    const payload = isCodex ? await extractCodexPayload(lastMessageFile, MAX_OUTPUT_BYTES) : extractClaudePayload(res, req.model);
     return validatePayload(req.provider, req.schema, payload);
   }
 }

@@ -172,7 +172,7 @@ export class RepositoryLearning {
     const controller = new AbortController();
     this.runs.set(requestId, controller);
     try {
-      const base = { provider: source.request.provider, model: source.preview.model, prompt: source.preview.prompt,
+      const base = { provider: source.request.provider, model: source.preview.model ?? undefined, prompt: source.preview.prompt,
         cacheKey: digest([source.cacheKey, source.preview.prompt]), signal: controller.signal };
       const reply = source.request.selection.kind === 'baseline'
         ? await this.runner.run({ ...base, schema: baselineReply, jsonSchema: formats.baseline })

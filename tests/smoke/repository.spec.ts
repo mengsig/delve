@@ -147,3 +147,24 @@ test('accepts a folder dropped into the initial repository field and offers a re
   await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
   expect(existsSync(join(directory, 'request.json'))).toBe(false);
 });
+
+test.describe('model rejection', () => {
+  test.use({ providerMode: 'model-rejected' });
+
+  test('shows the configured model and a useful account error', async ({ desktop }) => {
+    const { page, directory } = desktop;
+    const { repo } = createRepository(directory);
+    const config = join(directory, 'codex-home');
+    mkdirSync(config, { recursive: true });
+    writeFileSync(join(config, 'config.toml'), 'model = "gpt-test"\n');
+    await page.locator('#source-input').fill(repo);
+    const review = page.getByRole('region', { name: 'Review provider request' });
+    await expect(review).toContainText('gpt-test · from Codex config');
+    await page.getByRole('button', { name: 'Add and build map' }).click();
+    const jobs = page.getByRole('region', { name: 'Repository generation' });
+    await expect(jobs).toContainText('Codex rejected the requested model gpt-test');
+    await expect(jobs).toContainText('update the model in Codex config');
+    const call = JSON.parse(readFileSync(join(directory, 'request.json'), 'utf8')) as { argv: string[] };
+    expect(call.argv.slice(call.argv.indexOf('--model'), call.argv.indexOf('--model') + 2)).toEqual(['--model', 'gpt-test']);
+  });
+});

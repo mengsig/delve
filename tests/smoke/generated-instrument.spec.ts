@@ -16,6 +16,14 @@ function response(directory: string, block: object) {
   }));
 }
 
+function boardWithFollowingContent(directory: string) {
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify({
+    lesson: { schema: 'delve.lesson/1', source: null, blocks: [prose, bundle(boardSource),
+      { type: 'prose', heading: 'More practice', text: 'Continue exploring. '.repeat(150) }] },
+    assessment: null, observation: null, recommendation: null,
+  }));
+}
+
 async function createTopic(page: Page) {
   await page.getByRole('button', { name: '+ Add', exact: true }).click();
   await page.getByRole('button', { name: 'Any topic', exact: true }).click();
@@ -38,6 +46,62 @@ function step(initial, action) {
   return {text: 'Token at square ' + position, controls: [{id:'advance', label:'Move token'}],
     marks:[{x:position*5,y:30,width:5,height:10,color:'#d8f879'}]};
 }`;
+
+test('a pointer can move the token while scrolling past the composer', async ({ desktop: { page, directory } }) => {
+  boardWithFollowingContent(directory);
+  await createTopic(page);
+  const button = page.frameLocator('.instrument-frame').getByRole('button', { name: 'Move token' });
+  await expect(button).toBeVisible();
+  const buttonBox = await button.boundingBox();
+  const composerBox = await page.locator('.reader-composer').boundingBox();
+  expect(buttonBox).not.toBeNull();
+  expect(composerBox).not.toBeNull();
+  await page.evaluate(delta => {
+    const browser = globalThis as unknown as { document: {
+      querySelector: (selector: string) => { scrollBy: (options: object) => void } | null;
+      scrollingElement: { scrollBy: (options: object) => void } | null;
+    } };
+    const scroller = browser.document.querySelector('.reader-scroll') ?? browser.document.scrollingElement;
+    if (!scroller) throw new Error('Lesson has no scroll container');
+    scroller.scrollBy({ top: delta, behavior: 'instant' });
+  }, buttonBox!.y + buttonBox!.height / 2 - composerBox!.y - composerBox!.height / 2);
+  await button.scrollIntoViewIfNeeded();
+  const visibleButton = await button.boundingBox();
+  expect(visibleButton).not.toBeNull();
+  if (process.env['DELVE_POINTER_EVIDENCE']) await page.screenshot({ path: process.env['DELVE_POINTER_EVIDENCE'] });
+  await page.mouse.click(visibleButton!.x + visibleButton!.width / 2, visibleButton!.y + visibleButton!.height / 2);
+  await expect(page.frameLocator('.instrument-frame').getByRole('status')).toHaveText('Token at square 3');
+});
+
+for (const size of ['default', '1280x800', '960x640'] as const) {
+  for (const pack of ['bundle@1', 'lease-handoff@1', 'camera-exposure@1', 'network-builder@1'] as const) {
+    test(`${pack} stays clear of the composer after jumping at ${size}`, async ({ desktop: { page, directory } }) => {
+      if (size === '1280x800') await page.setViewportSize({ width: 1280, height: 800 });
+      if (size === '960x640') await page.setViewportSize({ width: 960, height: 640 });
+      response(directory, pack === 'bundle@1' ? bundle(boardSource) :
+        { type: 'environment', pack, config: null, fallback: 'Practice the lesson.' });
+      await createTopic(page);
+      const frame = page.locator('#instrument .instrument-frame');
+      await expect(frame).toBeVisible();
+      await expect(page.frameLocator('#instrument .instrument-frame').locator('button').first()).toBeVisible();
+      await page.getByRole('link', { name: 'Jump to instrument' }).click();
+      if (process.env['DELVE_LAYOUT_EVIDENCE'] && size === 'default' && pack === 'network-builder@1') {
+        await page.screenshot({ path: process.env['DELVE_LAYOUT_EVIDENCE'] });
+      }
+      const instrument = await frame.boundingBox();
+      const composer = await page.locator('.reader-composer').boundingBox();
+      expect(instrument).not.toBeNull();
+      expect(composer).not.toBeNull();
+      expect(instrument!.y + instrument!.height).toBeLessThanOrEqual(composer!.y);
+      if (pack !== 'bundle@1') await page.frameLocator('.instrument-frame').locator('button').first().click();
+      if (pack === 'bundle@1') {
+        const board = page.frameLocator('.instrument-frame');
+        await board.getByRole('button', { name: 'Move token' }).click();
+        await expect(board.getByRole('status')).toHaveText('Token at square 3');
+      }
+    });
+  }
+}
 
 test('a new topic wires a network, then opens a generated board inside a tutor reply', async ({ desktop: { page, directory } }) => {
   response(directory, routeLab);
