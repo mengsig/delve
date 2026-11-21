@@ -1,0 +1,38 @@
+appId: dev.delve.app
+productName: Delve
+copyright: Copyright © 2026 mengsig
+directories:
+  output: release/${version}
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+asar: true
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Education
+  maintainer: mengsig <https://github.com/mengsig>
+  artifactName: ${productName}-${version}-${arch}.${ext}
+mac:
+  target:
+    - dmg
+  category: public.app-category.education
+  artifactName: ${productName}-${version}-${arch}.${ext}
+win:
+  target:
+    - nsis
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+publish: null

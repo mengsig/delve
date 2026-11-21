@@ -4,6 +4,12 @@
   "description": "Learn the codebase your agents are building.",
   "license": "MIT",
   "author": "mengsig",
+  "homepage": "https://github.com/mengsig/delve",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mengsig/delve.git"
+  },
+  "desktopName": "delve.desktop",
   "private": true,
   "main": "out/main/index.js",
   "engines": {
