@@ -9,7 +9,7 @@ const STATE_LABELS: Record<ProviderStatus['state'], string> = {
   'not-found': 'not found',
   'signed-out': 'not signed in',
   'signed-in': 'signed in',
-  'api-key': 'API key login (not used)',
+  'api-key': 'not signed in with a subscription',
   unknown: 'sign-in state unknown',
 };
 

@@ -29,7 +29,7 @@ export const DEFAULT_DEPTH: Depth = 'medium';
 export const PROVIDER_IDS = ['claude', 'codex'] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 
-/** `api-key`: signed in with per-use API billing, which Delve refuses to use. */
+/** `api-key`: not signed in with a subscription (per-use API billing), which Delve refuses to use. */
 export type ProviderState = 'not-found' | 'signed-out' | 'signed-in' | 'api-key' | 'unknown';
 
 export interface ProviderStatus {

@@ -28,7 +28,9 @@ function handleStatus() {
   const loggedIn = mode !== 'signed-out';
   const apiKey = mode === 'api-key';
   if (invokedAs === 'claude') {
-    console.log(JSON.stringify({ loggedIn, authMethod: apiKey ? 'api_key' : loggedIn ? 'claude.ai' : 'none' }));
+    const method = apiKey ? 'api_key' : loggedIn ? 'claude.ai' : 'none';
+    const keySource = apiKey ? { apiKeySource: '/login managed key' } : {};
+    console.log(JSON.stringify({ loggedIn, authMethod: method, apiProvider: 'firstParty', ...keySource }));
     return;
   }
   if (apiKey) console.log('Logged in using an API key - sk-proj-***');
@@ -50,11 +52,13 @@ function succeed() {
   console.log('done');
 }
 
-// A grandchild left behind by the CLI. A detached one starts its own session (setsid on POSIX)
-// and holds no pipes, like a daemonised helper; otherwise it inherits stdout/stderr.
-function spawnDescendant(detached) {
-  const stdio = detached ? 'ignore' : ['ignore', 'inherit', 'inherit'];
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio, detached });
+// A grandchild in the CLI's process group that inherits stdout/stderr, so it holds the pipes open.
+// With ignoreTerm it survives SIGTERM and keeps writing.
+function spawnDescendant(ignoreTerm) {
+  const body = ignoreTerm
+    ? "process.on('SIGTERM', () => {}); setInterval(() => process.stdout.write('.'), 20)"
+    : 'setInterval(() => {}, 1000)';
+  const child = spawn(process.execPath, ['-e', body], { stdio: ['ignore', 'inherit', 'inherit'] });
   fs.writeFileSync(process.env.FAKE_PROVIDER_CHILD_PID, String(child.pid));
   child.unref();
 }
@@ -80,8 +84,13 @@ async function main() {
 
   if (mode === 'hang') return setInterval(() => undefined, 1000);
   if (mode === 'flood') return flood();
-  if (['orphan', 'orphan-hang', 'detached', 'detached-hang'].includes(mode)) spawnDescendant(mode.startsWith('detached'));
-  if (mode.endsWith('-hang')) return setInterval(() => undefined, 1000);
+  if (mode === 'orphan' || mode === 'orphan-hang') spawnDescendant(false);
+  if (mode === 'orphan-hang') return setInterval(() => undefined, 1000);
+  if (mode === 'ignore-term') {
+    spawnDescendant(true);
+    process.on('SIGTERM', () => undefined);
+    return setInterval(() => process.stdout.write('still here\n'), 20);
+  }
   const delay = Number(process.env.FAKE_PROVIDER_DELAY_MS ?? 0);
   if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
   if (mode === 'auth') {

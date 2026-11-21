@@ -53,14 +53,8 @@ describe('ProviderRunner failures', () => {
     expect(await readdir(tempRoot)).toEqual([]);
   }, 10_000);
 
-  it('cancel(cacheKey) and AbortSignal reject with PROVIDER_CANCELLED', async () => {
+  it('an AbortSignal rejects with PROVIDER_CANCELLED', async () => {
     const { runner } = await setup({ FAKE_PROVIDER_MODE: 'hang' });
-    const pending = runner.run(request({ timeoutMs: 30_000 }));
-    await new Promise((r) => setTimeout(r, 200));
-    expect(runner.cancel('k1')).toBe(true);
-    await expect(pending).rejects.toMatchObject({ code: 'PROVIDER_CANCELLED' });
-    expect(runner.cancel('k1')).toBe(false);
-
     const controller = new AbortController();
     const second = runner.run(request({ cacheKey: 'k2', timeoutMs: 30_000, signal: controller.signal }));
     setTimeout(() => controller.abort(), 200);

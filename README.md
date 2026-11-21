@@ -69,11 +69,15 @@ The renderer is sandboxed and context-isolated, without Node integration, and lo
 permission requests are refused. Main validates every IPC request and ignores frames from other
 origins. Packaged builds disable `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and inspector flags via
 Electron fuses. Provider CLIs run with fixed arguments, no shell, no write tools or project plugins, in an empty
-temporary directory, and without API-key environment variables. Timeouts, cancellation and the end of
-a run stop every process the CLI started: its process group and descendants, plus (on Linux and macOS)
-any helper that moved to its own session, found by a per-run environment marker. A helper that clears
-its environment and detaches cannot be traced. On Windows, npm `.cmd` launchers are run through Node
-directly, never through a shell.
+temporary directory, and without API-key environment variables. Delve runs a CLI only when it is
+signed in with a subscription; an API key, including one the CLI has stored, is reported as "not
+signed in with a subscription". On Linux and macOS each CLI runs in its own process group: timeout
+or cancellation sends the group SIGTERM, then SIGKILL after a grace period, and leftovers in the group
+are killed when the CLI exits. On Windows, `taskkill /T /F` stops the tree on timeout or cancellation
+while the CLI still runs. A run settles when the CLI exits, without waiting on pipes a descendant
+still holds. Out of scope: a descendant that deliberately leaves the process group or session
+(claude and codex do not). npm `.cmd` launchers on Windows are run through Node directly, never
+through a shell.
 
 ## License
 

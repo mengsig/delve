@@ -40,7 +40,7 @@ export function apiKeyAuthError(p: ProviderId): ProviderError {
   return new ProviderError(
     'PROVIDER_AUTH',
     p,
-    `${DISPLAY_NAME[p]} is signed in with an API key, which bills per use. Delve only runs on a subscription login: run ${LOGIN_HINT[p]} and sign in with your subscription`,
+    `${DISPLAY_NAME[p]} is not signed in with a subscription: it uses an API key, which bills per use. Delve only runs on a subscription login: run ${LOGIN_HINT[p]} and sign in with your subscription`,
   );
 }
 

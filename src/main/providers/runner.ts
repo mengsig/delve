@@ -76,6 +76,10 @@ export function requireSubscription(status: ProviderStatus): string {
   }
 }
 
+/**
+ * Runs provider CLIs, sharing one process among concurrent callers with the same cache key. Each
+ * caller cancels only its own wait; the process is stopped once every caller has cancelled.
+ */
 export class ProviderRunner {
   private readonly inFlight = new Map<string, InFlight>();
 
@@ -86,15 +90,6 @@ export class ProviderRunner {
     assert(req.prompt.length > 0, 'prompt required');
     const entry = this.inFlight.get(req.cacheKey) ?? this.start(req);
     return this.subscribe(entry, req);
-  }
-
-  /** Cancels the shared run for every caller waiting on `cacheKey`. */
-  cancel(cacheKey: string): boolean {
-    const entry = this.inFlight.get(cacheKey);
-    if (!entry) return false;
-    this.inFlight.delete(cacheKey);
-    entry.controller.abort();
-    return true;
   }
 
   private start<T>(req: RunRequest<T>): InFlight {
