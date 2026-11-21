@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { DomainError } from '../../shared/errors';
 import type { TutorIntent } from '../../shared/reader';
-import type { EvidenceInput } from '../db/evidence';
+import { listEvidence, recordEvidenceInTransaction } from '../db/evidence';
+import type { Db } from '../db/connection';
 import type { LessonContext } from '../reader/demo';
-import type { SelectedLesson } from '../reader/stored-lesson';
+import { requireMasteryRevision, type Mastery } from './mastery';
 
 export interface ResponseToCheck {
   prompt: string;
@@ -12,11 +13,10 @@ export interface ResponseToCheck {
   correct: boolean | null;
 }
 
-export function checkResponse(lesson: SelectedLesson, intent: Extract<TutorIntent, { kind: 'answer' }>): ResponseToCheck {
-  const check = lesson.document?.blocks.find(block => block.type === 'check');
-  if (!check || lesson.revision !== intent.revision) {
-    throw new DomainError('LESSON_CHANGED', 'Reopen the lesson to try its current check.');
-  }
+export function checkResponse(mastery: Mastery, intent: Extract<TutorIntent, { kind: 'answer' }>): ResponseToCheck {
+  requireMasteryRevision(mastery, intent.revision, ['checking']);
+  const check = mastery.check;
+  assert.ok(check, 'checking always has one active question');
   if (check.options) {
     const index = intent.answer;
     if (typeof index !== 'number' || !Number.isInteger(index) || check.options[index] === undefined) {
@@ -32,9 +32,15 @@ export function checkResponse(lesson: SelectedLesson, intent: Extract<TutorInten
   return { prompt: check.prompt, answer: intent.answer.trim(), reference: check.expected, correct: null };
 }
 
-export function assessedEvidence(context: LessonContext, response: ResponseToCheck, correct: boolean): EvidenceInput {
-  return {
+export function saveCheckEvidence(db: Db, context: LessonContext, response: ResponseToCheck, demonstrated: boolean): void {
+  assert.ok(db.isTransaction);
+  assert.ok(response.prompt.trim() && response.answer.trim());
+  const prior = listEvidence(db, context.conceptId).find(e => e.depth === context.depth);
+  if (prior?.workspaceId && prior.workspaceId !== context.workspaceId && (prior.masteryVerified || !demonstrated)) return;
+  if (prior?.status === 'demonstrated' && !demonstrated) return;
+  recordEvidenceInTransaction(db, {
     workspaceId: context.workspaceId, conceptId: context.conceptId, snapshotId: context.snapshotId ?? undefined, depth: context.depth,
-    status: correct ? 'demonstrated' : 'partial', source: 'check', note: response.prompt + ' — ' + response.answer,
-  };
+    status: demonstrated ? 'demonstrated' : 'partial', source: 'check', note: response.prompt + ' — ' + response.answer,
+    masteryVerified: demonstrated,
+  });
 }

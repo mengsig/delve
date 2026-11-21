@@ -58,9 +58,11 @@ function learningContext(db: Db, request: RepoRequest) {
   const keys = new Map(concepts.map(c => [c.id, c.key]));
   const edges = graph.edges.filter(e => keys.has(e.conceptId) && keys.has(e.prerequisiteId)).slice(0, 320)
     .map(e => ({ concept: keys.get(e.conceptId), prerequisite: keys.get(e.prerequisiteId) }));
-  const portable = db.prepare(`SELECT c.key, c.title, e.status FROM concepts c LEFT JOIN evidence e
+  const portable = db.prepare(`SELECT c.key, c.title,
+    CASE WHEN e.status = 'demonstrated' AND e.mastery_verified = 0 THEN 'revisit' ELSE e.status END AS status
+    FROM concepts c LEFT JOIN evidence e
     ON c.id = e.concept_id AND e.depth = ? WHERE c.portable = 1 AND c.key NOT LIKE 'Demo:%'
-    ORDER BY (e.status = 'demonstrated') DESC, c.id LIMIT 200`).all(request.depth);
+    ORDER BY (e.status = 'demonstrated' AND e.mastery_verified = 1) DESC, c.id LIMIT 200`).all(request.depth);
   return { mappedConcepts: concepts, prerequisites: edges, portableVocabulary: portable };
 }
 

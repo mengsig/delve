@@ -23,14 +23,17 @@ interface TranscriptEntry {
   lesson?: Document;
   observation?: string;
   recommendation?: ReaderMessage['recommendation'];
+  masteryRevision?: string;
 }
+
+export const teachingBlocks = (doc: Document) => publicBlocks(doc).filter(block => block.type !== 'check');
 
 function decodeMessage(row: Record<string, unknown>): ReaderMessage {
   assert.ok(typeof row.id === 'number' && typeof row.body === 'string');
   assert.ok(row.role === 'learner' || row.role === 'tutor' || row.role === 'system');
   const parsed = messageBody.safeParse(JSON.parse(row.body));
   const entry: Omit<TranscriptEntry, 'role'> = parsed.success ? parsed.data : { text: 'This saved message has an unsupported format.' };
-  return { id: row.id, role: row.role, text: entry.text, blocks: entry.lesson && publicBlocks(entry.lesson),
+  return { id: row.id, role: row.role, text: entry.text, blocks: entry.lesson && teachingBlocks(entry.lesson),
     observation: entry.observation, recommendation: entry.recommendation };
 }
 
@@ -59,7 +62,7 @@ export function appendEntries(db: Db, context: LessonContext, lessonId: number |
     const saved = hasLab ? { ...body, labSnapshotId: context.snapshotId } : body;
     const result = insert.run(conversationId, role, JSON.stringify(saved), now);
     assert.equal(result.changes, 1);
-    return { role, text: body.text, id: Number(result.lastInsertRowid), blocks: body.lesson && publicBlocks(body.lesson),
+    return { role, text: body.text, id: Number(result.lastInsertRowid), blocks: body.lesson && teachingBlocks(body.lesson),
       recommendation: body.recommendation, observation: body.observation };
   });
 }

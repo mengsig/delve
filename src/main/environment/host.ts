@@ -64,15 +64,16 @@ function suggestedConcept(db: Db, workspaceId: string, demo: boolean, key?: stri
 
 function saveAssessment(db: Db, activity: ReturnType<typeof resolveActivity>, assessment: Assessment): void {
   const { context, lessonId } = activity;
+  const observation = assessment.observation + ' ' + assessment.reason;
   const prior = listEvidence(db, context.conceptId).find(e => e.depth === context.depth);
   const foreignOrigin = prior?.workspaceId && prior.workspaceId !== context.workspaceId;
-  if (!foreignOrigin && assessment.status !== 'practice') recordEvidenceInTransaction(db, { workspaceId: context.workspaceId, conceptId: context.conceptId,
-    depth: context.depth, snapshotId: context.snapshotId ?? undefined, status: assessment.status,
-    source: 'environment', note: assessment.observation });
+  if (!foreignOrigin && prior?.status !== 'demonstrated' && assessment.status !== 'practice') recordEvidenceInTransaction(db, { workspaceId: context.workspaceId, conceptId: context.conceptId,
+    depth: context.depth, snapshotId: context.snapshotId ?? undefined, status: 'partial',
+    source: 'environment', note: observation });
   const targetId = suggestedConcept(db, context.workspaceId, context.demo, assessment.targetKey);
   appendEntries(db, context, lessonId, [{ role: 'system', text: foreignOrigin
-    ? 'Activity practice recorded; existing evidence remains in its original workspace.' : 'Activity practice recorded.',
-  observation: assessment.observation, recommendation: { action: assessment.action, reason: assessment.reason, targetId } }]);
+    ? 'Activity practice saved; your previous progress remains in its original workspace.' : 'Activity practice saved.',
+  observation, recommendation: { action: assessment.action, reason: assessment.reason, targetId } }]);
 }
 
 export class LabHost {

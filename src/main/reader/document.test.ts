@@ -47,8 +47,11 @@ describe('lesson documents', () => {
     { type: 'analogy', heading: ' ', text: 'Analogy body' },
     { type: 'example', heading: 'Example', setup: 'Setup', steps: [], takeaway: 'Result' },
     { type: 'diagram', nodes, edges: [{ from: 0, to: 3 }] },
-    { type: 'diagram', nodes, edges: [{ from: 0, to: 1 }, { from: 0, to: 1 }] },
+    { type: 'diagram', nodes, edges: [{ from: -1, to: 1 }] },
+    { type: 'diagram', nodes, edges: [{ from: 0, to: 1.5 }] },
     { type: 'diagram', nodes, edges: [{ from: 0, to: 1, label: ' ' }] },
+    { type: 'diagram', nodes: [] },
+    { type: 'diagram', nodes: ['Depot', '\t'] },
     { ...code, span: { line: 0, start: 0, end: 2 } },
     { ...code, spans: [{ line: 1, start: 0, end: 100 }] },
     { ...code, spans: [{ line: 1, start: 0, end: 2 }, { line: 1, start: 1, end: 3 }] },
@@ -70,6 +73,47 @@ describe('lesson documents', () => {
       const publicCheck = publicBlocks(documentSchema.parse(lesson(check)));
       expect(publicCheck).toStrictEqual([Object.fromEntries(Object.entries(check).filter(([key]) => key !== 'expected'))]);
     }
+  });
+});
+
+describe('diagram documents', () => {
+  it('remaps Task, Agent, and Run edges before deduplicating them', () => {
+    const graph = {
+      type: 'diagram', nodes: ['Task', ' Agent ', 'Run', 'Agent', 'Task'],
+      edges: [
+        { from: 2, to: 1, label: 'groups' }, { from: 2, to: 3, label: ' groups ' },
+        { from: 1, to: 0, label: 'works on' }, { from: 3, to: 4, label: 'works on' },
+      ],
+    };
+    const parsed = documentSchema.parse(lesson(graph));
+    expect(publicBlocks(parsed)).toStrictEqual([{
+      type: 'diagram', nodes: ['Task', 'Agent', 'Run'],
+      edges: [{ from: 2, to: 1, label: 'groups' }, { from: 1, to: 0, label: 'works on' }],
+    }]);
+    expect(documentSchema.parse(parsed)).toStrictEqual(parsed);
+    expect(documentGenerationSchema.parse({ ...lesson(graph), source: null })).toStrictEqual(parsed);
+  });
+
+  it('keeps distinct labels, directions, and self-loops when removing duplicate edges', () => {
+    const edges = [
+      { from: 0, to: 1 }, { from: 0, to: 1, label: 'retries' },
+      { from: 1, to: 0 }, { from: 1, to: 1, label: 'waits' },
+    ];
+    const block = { type: 'diagram', nodes, edges };
+    const repeated = [...edges, ...edges];
+    expect(documentSchema.parse(lesson({ ...block, edges: repeated }))).toStrictEqual(lesson(block));
+    const generated = { ...block, edges: repeated.map(edge => ({ ...edge, label: edge.label ?? null })) };
+    expect(documentGenerationSchema.parse({ ...lesson(generated), source: null })).toStrictEqual(lesson(block));
+  });
+
+  it('preserves transitions through repeated legacy nodes and honors explicit empty edges', () => {
+    const legacy = { type: 'diagram', nodes: ['Depot', 'Station', 'Depot', 'Garage'] };
+    expect(documentSchema.parse(lesson(legacy))).toStrictEqual(lesson({
+      type: 'diagram', nodes, edges: [{ from: 0, to: 1 }, { from: 1, to: 0 }, { from: 0, to: 2 }],
+    }));
+    expect(documentSchema.parse(lesson({ ...legacy, edges: [] }))).toStrictEqual(lesson({
+      type: 'diagram', nodes, edges: [],
+    }));
   });
 });
 
@@ -103,6 +147,9 @@ describe('provider lesson documents', () => {
     expect(documentGenerationSchema.parse({ ...wire, blocks: [{ type: 'future', markup: '<script>' }] }).blocks)
       .toEqual([{ type: 'unknown', name: 'future' }]);
     expect(documentGenerationSchema.safeParse(lesson(prose)).success).toBe(false);
+    expect(documentGenerationSchema.safeParse({
+      ...wire, blocks: [{ type: 'diagram', nodes, edges: [{ from: 3, to: 0, label: null }] }],
+    }).success).toBe(false);
   });
 
   it('uses a closed required object at every level and a finite union of blocks', () => {

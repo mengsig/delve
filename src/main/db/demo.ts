@@ -43,8 +43,8 @@ function seedDemoGraph(db: Db, workspace: DemoWorkspace, timestamp: string): voi
 
   const snapshotId = workspace.snapshot ? bindSnapshot(db, workspace.id, workspace.snapshot) : null;
   const insertEvidence = db.prepare(
-    `INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, recorded_at)
-     VALUES (?, ?, 'demonstrated', 'check', 'Curated demo evidence.', ?, ?, ?)`,
+    `INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, recorded_at, mastery_verified)
+     VALUES (?, ?, 'demonstrated', 'check', 'Curated demo evidence.', ?, ?, ?, 1)`,
   );
   for (const [key, depths] of workspace.evidence ?? []) {
     const concept = ids.get(key);

@@ -54,7 +54,10 @@ function tutorSuggestions(db: Db, workspaceId: string, ids: Set<number>): NonNul
   const latest = db.prepare(`SELECT target, reason FROM (SELECT json_extract(m.body, '$.recommendation.targetId') AS target,
     json_extract(m.body, '$.recommendation.reason') AS reason, m.created_at AS at, m.id AS seq
     FROM conversations c JOIN messages m ON m.conversation_id = c.id
-    WHERE c.workspace_id = ? AND c.depth = ? AND m.role IN ('tutor', 'system') AND json_type(m.body, '$.recommendation') = 'object'
+    JOIN lesson_mastery lm ON lm.workspace_id = c.workspace_id AND lm.concept_id = c.concept_id AND lm.depth = c.depth
+    WHERE c.workspace_id = ? AND c.depth = ? AND m.role = 'tutor' AND json_type(m.body, '$.recommendation') = 'object'
+      AND json_extract(lm.state, '$.stage') IN ('understood', 'skipped')
+      AND lm.revision = json_extract(m.body, '$.masteryRevision') AND lm.lesson_id IS c.lesson_id
     UNION ALL SELECT next_concept, reason, created_at, last_used FROM repository_generations WHERE workspace_id = ? AND depth = ?
     ) WHERE target IN (SELECT concept_id FROM workspace_concepts WHERE workspace_id = ? AND on_atlas = 1)
     ORDER BY at DESC, seq DESC LIMIT 1`);
@@ -85,7 +88,7 @@ export function readWorkspaceCoverage(db: Db): WorkspaceCoverage[] {
      FROM workspaces w
      LEFT JOIN workspace_concepts wc ON wc.workspace_id = w.id AND wc.on_atlas = 1
      LEFT JOIN concepts c ON c.id = wc.concept_id AND (c.portable = 1 OR c.workspace_id = w.id)
-     LEFT JOIN evidence e ON e.concept_id = c.id AND e.status = 'demonstrated'
+     LEFT JOIN evidence e ON e.concept_id = c.id AND e.mastery_verified = 1
        AND (c.portable = 1 OR e.workspace_id = w.id)
      GROUP BY w.id ORDER BY w.rowid`,
   ).all() as unknown as CoverageRow[];

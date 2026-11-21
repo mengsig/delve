@@ -4,6 +4,7 @@ import { DomainError } from '../../shared/errors';
 import type { GraphEvidence } from '../../shared/graph';
 import { getConceptByKey } from './concepts';
 import { nowIso, transaction, type Db } from './connection';
+import { resetMastery } from './mastery';
 import { resolveScope } from './scope';
 import { getWorkspace } from './workspaces';
 
@@ -20,6 +21,7 @@ export interface EvidenceInput {
   note?: string;
   workspaceId?: string;
   snapshotId?: number;
+  masteryVerified?: boolean;
 }
 
 export interface Evidence {
@@ -33,6 +35,7 @@ export interface Evidence {
   snapshotId: number | null;
   revision: number;
   recordedAt: string;
+  masteryVerified: boolean;
 }
 
 interface EvidenceRow {
@@ -46,12 +49,14 @@ interface EvidenceRow {
   snapshot_id: number | null;
   revision: number;
   recorded_at: string;
+  mastery_verified: number;
 }
 
 function evidenceDetails(row: EvidenceRow): Omit<Evidence, 'id' | 'snapshotId'> {
   assert.ok((DEPTHS as readonly string[]).includes(row.depth), `unknown depth ${row.depth}`);
   assert.ok((EVIDENCE_STATUSES as readonly string[]).includes(row.status), `unknown status ${row.status}`);
   assert.ok((EVIDENCE_SOURCES as readonly string[]).includes(row.source), `unknown source ${row.source}`);
+  assert.ok(row.mastery_verified === 0 || row.mastery_verified === 1);
   return {
     conceptId: row.concept_id,
     depth: row.depth as Depth,
@@ -61,6 +66,7 @@ function evidenceDetails(row: EvidenceRow): Omit<Evidence, 'id' | 'snapshotId'> 
     workspaceId: row.workspace_id,
     revision: row.revision,
     recordedAt: row.recorded_at,
+    masteryVerified: row.mastery_verified === 1,
   };
 }
 
@@ -87,13 +93,14 @@ export function recordEvidenceInTransaction(db: Db, input: EvidenceInput): Evide
     db.prepare('INSERT OR IGNORE INTO workspace_concepts (workspace_id, concept_id) VALUES (?, ?)').run(scope.workspaceId, input.conceptId);
   }
   db.prepare(
-    `INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+    `INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at, mastery_verified)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
      ON CONFLICT (concept_id, depth) DO UPDATE SET
        status = excluded.status, source = excluded.source, note = excluded.note,
        workspace_id = excluded.workspace_id, snapshot_id = excluded.snapshot_id,
-       revision = evidence.revision + 1, recorded_at = excluded.recorded_at`,
-  ).run(input.conceptId, input.depth, input.status, input.source, input.note ?? '', scope.workspaceId, scope.snapshotId, nowIso());
+       revision = evidence.revision + 1, recorded_at = excluded.recorded_at, mastery_verified = excluded.mastery_verified`,
+  ).run(input.conceptId, input.depth, input.status, input.source, input.note ?? '', scope.workspaceId, scope.snapshotId,
+    nowIso(), Number(input.masteryVerified ?? false));
   const saved = listEvidence(db, input.conceptId).find((e) => e.depth === input.depth);
   assert.ok(saved && saved.status === input.status, 'recorded evidence must be readable');
   return saved;
@@ -123,7 +130,9 @@ export function listWorkspaceEvidence(db: Db, workspaceId: string, includeChange
   return rows.map((row) => {
     assert.equal(row.workspace_id === null, row.workspace_name === null, 'provenance must refer to an existing workspace');
     assert.ok(Number.isSafeInteger(row.revision) && row.revision >= 1, 'evidence revision must be a positive integer');
-    return { ...evidenceDetails(row), workspaceName: row.workspace_name };
+    const { masteryVerified: _masteryVerified, ...details } = evidenceDetails(row);
+    const status = details.status === 'demonstrated' && !_masteryVerified ? 'revisit' : details.status;
+    return { ...details, status, workspaceName: row.workspace_name };
   });
 }
 
@@ -151,6 +160,7 @@ export function resetEvidence(db: Db, conceptId: number, options: { depth?: Dept
         ? db.prepare('DELETE FROM evidence WHERE concept_id = ?').run(conceptId)
         : db.prepare('DELETE FROM evidence WHERE concept_id = ? AND depth = ?').run(conceptId, depth);
     const removed = Number(result.changes);
+    resetMastery(db, conceptId, depth, removed > 0 ? undefined : workspaceId);
     assert.ok(Number.isSafeInteger(removed) && removed >= 0, 'deletion must report a non-negative integer');
     assert.ok(removed <= (depth === undefined ? DEPTHS.length : 1), 'at most one record per depth');
     return removed;
@@ -176,7 +186,7 @@ export function isConceptKnown(db: Db, query: { conceptKey: string; depth: Depth
   if (!concept.portable && concept.workspaceId !== query.workspaceId) {
     return { known: false, viaDepth: null, reason: 'This concept is specific to another workspace and is not reused.' };
   }
-  const satisfying = listEvidence(db, concept.id).find((e) => e.status === 'demonstrated' && DEPTHS.indexOf(e.depth) >= wanted);
+  const satisfying = listEvidence(db, concept.id).find((e) => e.masteryVerified && DEPTHS.indexOf(e.depth) >= wanted);
   if (!satisfying) return { known: false, viaDepth: null, reason: `Not yet demonstrated at ${query.depth} depth.` };
   return { known: true, viaDepth: satisfying.depth, reason: `Demonstrated at ${satisfying.depth} depth.` };
 }

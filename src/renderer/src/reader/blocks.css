@@ -24,14 +24,123 @@
   margin-top: 0.4em;
 }
 
-.lesson-diagram-links {
-  list-style: none;
-  padding: 0;
+.lesson-diagram {
   margin: 0;
 }
 
-.lesson-diagram-links b {
+.lesson-diagram-scroll {
+  overflow: auto;
+  margin-top: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--soft);
+  background-image: repeating-radial-gradient(ellipse at 100% 0%, transparent 0 24px,
+    color-mix(in srgb, var(--green) 10%, transparent) 25px 26px, transparent 27px 38px);
+}
+
+.lesson-diagram-scroll:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.lesson-diagram-grid {
+  --diagram-label-lane: 7rem;
+  display: grid;
+  grid-auto-rows: minmax(16px, auto) minmax(16px, auto) minmax(16px, auto) minmax(34px, auto);
+  justify-content: safe center;
+  direction: ltr;
+  padding: 16px;
+}
+
+.lesson-diagram-node {
+  grid-column: 1;
+  display: grid;
+  place-items: center;
+  padding: 8px 16px;
+  border: 1px solid var(--green);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 3px var(--panel), inset 0 0 0 4px var(--rule);
+  color: var(--ink);
+  font-weight: 600;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.lesson-diagram-direct,
+.lesson-diagram-branch {
+  position: relative;
+  display: grid;
   color: var(--green);
+}
+
+.lesson-diagram-direct {
+  grid-column: 1;
+  place-items: center;
+  padding: 6px 12px;
+}
+
+.lesson-diagram-direct::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 3px 50%;
+  border-left: 1px solid;
+}
+
+.lesson-diagram-direct::after,
+.lesson-diagram-branch::after {
+  content: "";
+  position: absolute;
+  width: 6px;
+  height: 6px;
+}
+
+.lesson-diagram-direct::after {
+  bottom: 2px;
+  left: calc(50% - 2.5px);
+  border: solid;
+  border-width: 0 1px 1px 0;
+  transform: rotate(45deg);
+}
+
+.lesson-diagram-branch {
+  align-items: center;
+  justify-items: end;
+  border: solid;
+  border-width: 1px 1px 1px 0;
+  border-radius: 0 10px 10px 0;
+}
+
+.lesson-diagram-branch::after {
+  bottom: -3.5px;
+  left: 1px;
+  border: solid;
+  border-width: 1px 0 0 1px;
+  transform: rotate(-45deg);
+}
+
+.lesson-diagram-branch[data-returns="true"]::after {
+  top: -3.5px;
+  bottom: auto;
+}
+
+.lesson-diagram-direct span,
+.lesson-diagram-branch span {
+  position: relative;
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.lesson-diagram-branch span {
+  max-width: var(--diagram-label-lane);
+  margin: 5px 0 5px 10px;
 }
 
 .lesson-table-wrap {

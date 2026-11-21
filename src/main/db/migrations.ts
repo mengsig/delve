@@ -152,6 +152,27 @@ export const MIGRATIONS: readonly Migration[] = [
     CREATE INDEX repository_path ON repository_generations (workspace_id, depth, last_used);
     CREATE INDEX snapshot_membership ON snapshot_concepts (concept_id, snapshot_id);`,
   },
+  {
+    version: 4,
+    name: 'persist guided lesson mastery',
+    sql: `ALTER TABLE evidence ADD COLUMN mastery_verified INTEGER NOT NULL DEFAULT 0 CHECK (
+      mastery_verified IN (0, 1) AND (mastery_verified = 0 OR (status = 'demonstrated' AND source = 'check'))
+    );
+    UPDATE evidence SET mastery_verified = 1 WHERE status = 'demonstrated' AND source = 'check'
+      AND note = 'Curated demo evidence.'
+      AND workspace_id IN ('de100000-0000-4000-8000-000000000001', 'de100000-0000-4000-8000-000000000002', 'de100000-0000-4000-8000-000000000003');
+    CREATE TABLE lesson_mastery (
+      workspace_id TEXT NOT NULL,
+      concept_id INTEGER NOT NULL,
+      depth TEXT NOT NULL CHECK (depth IN ('high', 'medium', 'low')),
+      lesson_id INTEGER REFERENCES lessons ON DELETE CASCADE,
+      scope TEXT NOT NULL,
+      revision TEXT NOT NULL,
+      state TEXT CHECK (json_valid(state)),
+      PRIMARY KEY (workspace_id, concept_id, depth),
+      FOREIGN KEY (workspace_id, concept_id) REFERENCES workspace_concepts ON DELETE CASCADE
+    );`,
+  },
 ];
 
 function assertOrdered(migrations: readonly Migration[]): void {

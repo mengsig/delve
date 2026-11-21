@@ -26,7 +26,7 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
     'reader:start-topic': () => { throw new Error('Unexpected topic request'); },
     'reader:lesson': () => { throw new Error('Unexpected lesson request'); },
     'reader:message': () => { throw new Error('Unexpected message request'); },
-    'reader:answer': () => { throw new Error('Unexpected answer request'); },
+    'reader:skip': () => { throw new Error('Unexpected skip request'); },
     'graph:read': ({ workspaceId }) => ({ workspaceId, concepts: [], edges: [], evidence: [], snapshot: null, demo: false }),
     'progress:read': () => [],
     'evidence:reset': () => false,
@@ -114,7 +114,7 @@ describe('graph IPC', () => {
       const input = { key: 'queue', title: 'Queue', portable: true };
       const concept = upsertConcept(db, { ...input, workspaceId: origin.id });
       upsertConcept(db, { ...input, workspaceId: linked.id });
-      recordEvidence(db, { conceptId: concept.id, depth: 'medium', status: 'demonstrated', source: 'check', workspaceId: origin.id });
+      recordEvidence(db, { conceptId: concept.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true, workspaceId: origin.id });
       const h = handlers(graphHandlers(db));
       expect(await dispatch(h, 'progress:read', null)).toEqual({
         ok: true,

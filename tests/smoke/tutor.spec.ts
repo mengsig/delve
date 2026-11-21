@@ -98,8 +98,9 @@ test('shows the exact opening request before sending, then cancels, retries and 
   await expect(page.getByRole('heading', { name: explanation.heading })).toBeVisible();
 
   writeFileSync(responseFile, JSON.stringify({ assessment: true, observation: 'You recognized prefix specificity.',
-    recommendation: { action: 'Compare overlapping routes', reason: 'You can identify the narrower match.', targetId: null },
-    lesson: { schema: 'delve.lesson/1', source: null, blocks: [{ type: 'trace', steps: ['Match destination', 'Compare lengths', 'Choose /24'] }] } }));
+    recommendation: null,
+    lesson: { schema: 'delve.lesson/1', source: null, blocks: [{ type: 'trace', steps: ['Match destination', 'Compare lengths', 'Choose /24'] },
+      { type: 'check', kind: 'short-answer', prompt: 'A /20 and a /28 match. Which wins, and why?', expected: ['The /28 has the longer prefix.'] }] } }));
   await page.getByRole('textbox', { name: check.prompt }).fill('It covers a smaller destination network.');
   await page.getByRole('button', { name: 'Preview answer', exact: true }).click();
   await expect(page.getByRole('dialog').getByLabel('Exact provider request')).toContainText('It covers a smaller destination network.');
@@ -109,7 +110,8 @@ test('shows the exact opening request before sending, then cancels, retries and 
   await page.getByRole('dialog').getByRole('button', { name: 'Always allow for this workspace' }).click();
   await expect(page.getByRole('log')).toContainText('You recognized prefix specificity.');
   await expect(page.getByRole('log')).toContainText('Choose /24');
-  await expect(page.getByRole('complementary')).toContainText('Prior knowledge');
+  await expect(page.getByRole('heading', { name: 'A /20 and a /28 match. Which wins, and why?' })).toBeVisible();
+  await expect(page.getByRole('complementary')).toContainText('Not yet marked understood');
 });
 
 test('keeps an approved turn running in the background and reopens the lesson', async ({ desktop: { page, directory } }) => {

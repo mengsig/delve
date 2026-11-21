@@ -28,7 +28,7 @@ describe('workspace graph and coverage', () => {
     const unlinked = upsertConcept(db, { key: 'clock', title: 'Clock', portable: true, workspaceId: second });
     addPrerequisite(db, privateConcept.id, shared.id);
     addPrerequisite(db, shared.id, unlinked.id);
-    recordEvidence(db, { conceptId: shared.id, depth: 'medium', status: 'demonstrated', source: 'check', workspaceId: second });
+    recordEvidence(db, { conceptId: shared.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true, workspaceId: second });
     recordEvidence(db, { conceptId: shared.id, depth: 'low', status: 'partial', source: 'self-report', workspaceId: first });
     recordEvidence(db, { conceptId: privateConcept.id, depth: 'high', status: 'demonstrated', source: 'environment' });
     // A stray membership cannot give another workspace access to a local concept.
@@ -40,14 +40,14 @@ describe('workspace graph and coverage', () => {
     expect(graph.evidence).toEqual([
       expect.objectContaining({ conceptId: shared.id, depth: 'medium', status: 'demonstrated', workspaceId: second, workspaceName: 'Second' }),
       expect.objectContaining({ conceptId: shared.id, depth: 'low', status: 'partial', workspaceId: first, workspaceName: 'First' }),
-      expect.objectContaining({ conceptId: privateConcept.id, depth: 'high', status: 'demonstrated', workspaceId: first, workspaceName: 'First' }),
+      expect.objectContaining({ conceptId: privateConcept.id, depth: 'high', status: 'revisit', workspaceId: first, workspaceName: 'First' }),
     ]);
     const secondGraph = readWorkspaceGraph(db, second);
     expect(secondGraph.concepts.map(({ id }) => id)).toEqual([shared.id, unlinked.id]);
     expect(secondGraph.edges).toEqual([{ conceptId: shared.id, prerequisiteId: unlinked.id }]);
     expect(secondGraph.evidence.every((row) => row.conceptId === shared.id)).toBe(true);
     expect(readWorkspaceCoverage(db)).toEqual([
-      { workspaceId: first, total: 2, known: { high: 1, medium: 1, low: 0 } },
+      { workspaceId: first, total: 2, known: { high: 0, medium: 1, low: 0 } },
       { workspaceId: second, total: 2, known: { high: 0, medium: 1, low: 0 } },
       { workspaceId: empty, total: 0, known: { high: 0, medium: 0, low: 0 } },
     ]);
@@ -70,7 +70,7 @@ describe('portable evidence reset', () => {
   it('requires a linked origin, fails atomically and updates every linked read', () => {
     const concept = upsertConcept(db, { key: 'queue', title: 'Queue', portable: true, workspaceId: first });
     upsertConcept(db, { key: 'queue', title: 'Queue', portable: true, workspaceId: second });
-    recordEvidence(db, { conceptId: concept.id, depth: 'medium', status: 'demonstrated', source: 'check', workspaceId: second });
+    recordEvidence(db, { conceptId: concept.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true, workspaceId: second });
     recordEvidence(db, { conceptId: concept.id, depth: 'high', status: 'demonstrated', source: 'check', workspaceId: first });
 
     expect(() => resetEvidence(db, concept.id, { workspaceId: empty, depth: 'medium' })).toThrow(/not linked/);
@@ -86,7 +86,7 @@ describe('portable evidence reset', () => {
   it('allows a linked workspace to reset portable evidence whose origin was deleted', () => {
     const concept = upsertConcept(db, { key: 'queue', title: 'Queue', portable: true, workspaceId: first });
     upsertConcept(db, { key: 'queue', title: 'Queue', portable: true, workspaceId: second });
-    recordEvidence(db, { conceptId: concept.id, depth: 'medium', status: 'demonstrated', source: 'check', workspaceId: second });
+    recordEvidence(db, { conceptId: concept.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true, workspaceId: second });
     db.prepare('DELETE FROM workspaces WHERE id = ?').run(second);
     expect(readWorkspaceGraph(db, first).evidence).toMatchObject([{ workspaceId: null, workspaceName: null }]);
     expect(() => resetEvidence(db, concept.id, { workspaceId: empty, depth: 'medium' })).toThrow(/not linked/);
