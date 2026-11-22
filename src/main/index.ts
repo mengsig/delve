@@ -21,7 +21,7 @@ import { ConnectionSession } from './connections/session';
 import { createTransferLink, getGlobalKnowledgeGraph } from './db/knowledge';
 import { transaction } from './db/connection';
 import { DomainError } from '../shared/errors';
-import { showErrorDialog } from './error-dialog';
+import { reportStartupFailure, showErrorDialog } from './error-dialog';
 
 // electron-vite sets this in development only; an empty value means "not set".
 const devServerUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'] || undefined;
@@ -31,15 +31,6 @@ const userDataOverride = process.env['DELVE_USER_DATA_DIR'];
 if (userDataOverride) app.setPath('userData', resolve(userDataOverride));
 
 type Shutdown = ReturnType<typeof installShutdown>;
-
-async function reportStartupFailure(message: string, shutdown: Shutdown): Promise<void> {
-  try {
-    await showErrorDialog({ type: 'error', title: 'Delve could not start', message }, shutdown.signal);
-  } catch (error) {
-    console.error('[delve] could not show startup error', error);
-  }
-  if (!shutdown.signal.aborted) shutdown.quit(1);
-}
 
 function connectionHandlers(db: Db, connections: ConnectionSession, signal: AbortSignal): Pick<IpcHandlers, 'connections:preview' | 'connections:cancel' | 'connections:run'> {
   let running: AbortController | null = null;

@@ -10,7 +10,8 @@ test('SIGTERM closes a startup error dialog', async () => {
   test.skip(process.platform === 'win32', 'Uses POSIX signals.');
   const directory = mkdtempSync(join(tmpdir(), 'delve-startup-error-'));
   mkdirSync(join(directory, 'delve.sqlite'));
-  const child = spawn(electron as unknown as string, [resolve('out/main/index.js')], {
+  const args = [...(process.platform === 'linux' ? ['--no-sandbox'] : []), resolve('out/main/index.js')];
+  const child = spawn(electron as unknown as string, args, {
     env: { ...process.env, DELVE_USER_DATA_DIR: directory }, stdio: ['ignore', 'ignore', 'pipe'],
   });
   let log = '';
@@ -21,7 +22,7 @@ test('SIGTERM closes a startup error dialog', async () => {
     expect(log).toContain('[delve] startup failed');
     expect(child.kill('SIGTERM')).toBe(true);
     await expect(Promise.race([exited, new Promise(resolve => setTimeout(() => resolve('timeout'), 10_000))]))
-      .resolves.toEqual([0, null]);
+      .resolves.toEqual([1, null]);
     expect(log).toContain('[delve] received SIGTERM');
   } finally {
     if (child.exitCode === null && child.signalCode === null) {

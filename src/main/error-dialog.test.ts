@@ -8,7 +8,7 @@ vi.mock('electron', () => ({
   dialog: { showMessageBox },
 }));
 
-import { showErrorDialog } from './error-dialog';
+import { reportStartupFailure, showErrorDialog } from './error-dialog';
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -47,5 +47,18 @@ describe('error dialogs', () => {
     expect(owner.destroy).toHaveBeenCalledOnce();
     await showErrorDialog({ message: 'failure' }, AbortSignal.abort());
     expect(showMessageBox).toHaveBeenCalledOnce();
+  });
+
+  it('records startup failure before dismissing the last window initiates shutdown', async () => {
+    const controller = new AbortController();
+    let exitCode = 0;
+    let observedExitCode = 0;
+    const owner = { isDestroyed: () => false, destroy: () => { observedExitCode = exitCode; controller.abort(); } };
+    createWindow.mockReturnValue(owner);
+    showMessageBox.mockResolvedValue({ response: 0 });
+    const shutdown = { signal: controller.signal, setExitCode: (code: number) => { exitCode = code; }, quit: vi.fn() };
+    await reportStartupFailure('failure', shutdown);
+    expect(observedExitCode).toBe(1);
+    expect(shutdown.quit).not.toHaveBeenCalled();
   });
 });

@@ -14,3 +14,15 @@ export async function showErrorDialog(options: MessageBoxOptions, signal: AbortS
     if (!existing && !owner.isDestroyed()) owner.destroy();
   }
 }
+
+export async function reportStartupFailure(message: string, shutdown: {
+  signal: AbortSignal; setExitCode: (code: number) => void; quit: (code: number) => void;
+}): Promise<void> {
+  shutdown.setExitCode(1);
+  try {
+    await showErrorDialog({ type: 'error', title: 'Delve could not start', message }, shutdown.signal);
+  } catch (error) {
+    console.error('[delve] could not show startup error', error);
+  }
+  if (!shutdown.signal.aborted) shutdown.quit(1);
+}

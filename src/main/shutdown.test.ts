@@ -103,4 +103,13 @@ describe('shutdown drain', () => {
     expect(app.exit).toHaveBeenCalledWith(2);
     expect(app.quit).toHaveBeenCalledOnce();
   });
+
+  it('preserves a recorded failure when a window close starts the drain', async () => {
+    const shutdown = installShutdown();
+    shutdown.setExitCode(1);
+    beforeQuit();
+    await vi.runAllTimersAsync();
+    expect(app.exit).toHaveBeenCalledWith(1);
+    expect(app.quit).not.toHaveBeenCalled();
+  });
 });

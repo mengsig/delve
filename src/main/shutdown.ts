@@ -11,8 +11,12 @@ export function installShutdown() {
   let exitCode = 0;
   let drained = false;
 
-  function quit(code = 0) {
+  function setExitCode(code: number) {
     exitCode = Math.max(code, exitCode);
+  }
+
+  function quit(code = 0) {
+    setExitCode(code);
     app.quit();
   }
 
@@ -47,6 +51,7 @@ export function installShutdown() {
 
   return {
     signal: controller.signal,
+    setExitCode,
     setCleanup(callback: () => Promise<void>) {
       assert.equal(cleanup, undefined, 'shutdown cleanup may only be installed once');
       assert.ok(!controller.signal.aborted, 'cannot acquire resources during shutdown');
