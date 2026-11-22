@@ -46,7 +46,7 @@ function commitAnswer(db: Db, turn: PreparedTurn, reply: TutorReply): void {
   appendEntries(db, context, turn.selected.id, [
     { role: 'learner', text: !response.reasoning
       ? response.answer : response.answer + '\n\nReasoning: ' + response.reasoning },
-    { role: 'tutor', text: gradeFeedback(response.correct, next.stage), correct: response.correct, lesson: reply.lesson,
+    { role: 'tutor', text: gradeFeedback(response.correct, next.stage), correct: response.correct, lesson: reply.lesson, reasoningFeedback: reply.reasoningFeedback,
       observation: reply.observation ?? undefined, recommendation: reply.recommendation ?? undefined,
       masteryRevision: reply.recommendation ? revision : undefined },
   ]);

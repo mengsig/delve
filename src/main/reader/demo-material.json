@@ -383,12 +383,12 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "The rider is too centered in the composition. Which change affects framing?",
+        "prompt": "A centered cyclist is heading right. Which change gives them more space in the direction of travel?",
         "options": [
-          "Move the rider toward the edge",
-          "Raise ISO one stop",
-          "Shorten the exposure",
-          "Use a lower ISO at the same aperture and shutter time"
+          "Frame the cyclist left of center",
+          "Frame the cyclist farther right",
+          "Crop closer on both sides",
+          "Keep the cyclist centered and tilt down"
         ],
         "expected": 0,
         "kind": "prediction"

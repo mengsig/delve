@@ -5,6 +5,8 @@ import type { PreparedTurn } from './prompt';
 import type { TutorReply } from './provider';
 import { canRecommend, nextGrade } from './mastery';
 import { demoCheck } from './sample-checks';
+import { reasoningFeedback } from './sample-reasoning';
+import { scenarioFeedback, transferCase } from './sample-scenarios';
 
 function sampleExample(turn: PreparedTurn): Document['blocks'][number] {
   const { context } = turn;
@@ -17,52 +19,28 @@ function sampleExample(turn: PreparedTurn): Document['blocks'][number] {
     setup: 'At 1/125 s and ISO 200 the exposure is bright, but the rider is blurred.',
     steps: ['Shorten the exposure to 1/500 s to record less motion.', 'At fixed aperture, raise ISO to 800 to restore displayed brightness.'],
     takeaway: 'Shutter time changes recorded motion. ISO changes brightness.' };
-  return { type: 'example', heading: 'Work through the decision', setup: item.checks[context.depth].prompt,
-    steps: [item.mechanics, item.detail], takeaway: item.checks[context.depth].options[item.checks[context.depth].expected]! };
-}
-
-function reasoningFeedback(key: string, reasoning: string | undefined) {
-  if (!reasoning?.trim()) return null;
-  const { id, item } = demoMaterial(key);
-  const text = reasoning.trim().replace(/[.!?]+$/, '');
-  if (id === 'lease') {
-    if (/^(?:(?:I thought |I think )?arrival order (?:matters|mattered|decides)|(?:the )?first (?:result|worker|writer) (?:wins|always wins|should win))$/i.test(text)) {
-      return { focus: 'arrival', feedback: 'You looked at arrival order. Even the first result can carry an expired claim; compare it with the active generation.' };
-    }
-    const currentClaim = /^(?:because )?B (?:still )?(?:holds|has) the current (?:lease|claim)$/i;
-    const matchesCurrent = /^(?:because )?(?:the generation (?:is stale|does not match)|the active generation (?:must match|matches|decides))$/i;
-    const ownerFromClaim = /^(?:I think )?B owns the task (?:now )?because (?:its|B's) claim is current$/i;
-    if (currentClaim.test(text) || matchesCurrent.test(text) || ownerFromClaim.test(text)) {
-      return { focus: 'claim', feedback: 'Your reasoning uses the claim and its active generation to identify the owner. That comparison is what protects the write.' };
-    }
-  }
-  if (id === 'exposure') {
-    if (/^(?:because )?(?:raising |higher |changing )?ISO (?:freezes motion|reduces (?:motion )?blur|shortens the motion trail)$/i.test(text)) {
-      return { focus: 'iso', feedback: 'ISO changes displayed brightness. Shortening the shutter time is what limits the distance the rider moves during exposure.' };
-    }
-    if (/^(?:because )?(?:a (?:faster shutter|shorter exposure) (?:limits|reduces) (?:motion|blur|motion blur)|ISO (?:only )?changes (?:the )?brightness)$/i.test(text)) {
-      return { focus: 'shutter', feedback: 'You separated brightness from motion. ISO changes the rendered brightness, and shutter duration controls how much movement appears.' };
-    }
-  }
-  if ([item.mechanics, item.detail].some(rule => rule.replace(/[.!?]+$/, '').toLowerCase() === text.toLowerCase())) {
-    return { feedback: 'You identified the rule that governs the scenario. ' + item.detail };
-  }
-  return { feedback: id === 'lease' ? 'Which claim would your rule allow the writer to accept, and how would it identify the current owner?'
-    : id === 'exposure' ? 'Which camera setting does your explanation change, and what would happen to the motion trail?'
-      : 'How would your reasoning change what happens in this example?' };
+  const current = turn.mastery.check;
+  const choice = turn.request.intent.kind === 'answer' && current?.options && typeof current.expected === 'number'
+    ? { check: { ...current, expected: current.expected, options: current.options }, explanation: item.detail }
+    : transferCase(id, turn, true);
+  const { check, explanation } = choice;
+  const takeaway = check.options[check.expected];
+  assert.ok(takeaway && explanation);
+  return { type: 'example', heading: 'Work through the decision', setup: check.prompt,
+    steps: [explanation], takeaway };
 }
 
 function assessDemo(turn: PreparedTurn, response: NonNullable<PreparedTurn['response']>): TutorReply {
   const { context, mastery, nextConcepts } = turn;
-  const { item } = demoMaterial(context.key);
+  const { id, item } = demoMaterial(context.key);
   const [reference] = response.reference;
   assert.ok(mastery.check && reference !== undefined);
   assert.equal(turn.request.intent.kind, 'answer');
   const { correct } = response;
-  const rationale = reasoningFeedback(context.key, response.reasoning);
-  const selection = correct ? '“' + response.answer + '” is correct. ' + item.mechanics
-    : '“' + response.answer + '” does not fit this case. The correct choice is “' + reference + '”. ' + item.mechanics;
-  const observation = [selection, rationale?.feedback].filter(Boolean).join(' ');
+  const explanation = scenarioFeedback(id, context.depth, mastery.check.prompt) ?? item.mechanics;
+  const rationale = response.reasoning?.trim() ? reasoningFeedback(id, response.reasoning, item.detail, item.mechanics) : null;
+  const selection = correct ? '“' + response.answer + '” is correct. ' + explanation
+    : '“' + response.answer + '” does not fit this case. The correct choice is “' + reference + '”. ' + explanation;
   const blocks: Document['blocks'] = [{ type: 'prose', heading: correct ? 'Why that works' : 'Let’s look at the decision again',
     text: item.mechanics }, sampleExample(turn)];
   const next = nextGrade(mastery, correct);
@@ -72,7 +50,8 @@ function assessDemo(turn: PreparedTurn, response: NonNullable<PreparedTurn['resp
   const recommendation = !canRecommend(next) ? null : target
     ? { targetId: target.id, action: 'Explore ' + target.title, reason: target.summary }
     : { targetId: null, action: 'Apply this rule to another case', reason: item.detail };
-  return { lesson: { schema: 'delve.lesson/1', blocks }, assessment: correct, observation, recommendation };
+  const feedback = rationale ? { reasoningFeedback: rationale.feedback } : {};
+  return { lesson: { schema: 'delve.lesson/1', blocks }, assessment: correct, observation: selection, recommendation, ...feedback };
 }
 
 export function demoTurn(turn: PreparedTurn): TutorReply {

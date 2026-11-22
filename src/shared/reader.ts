@@ -14,6 +14,7 @@ export interface ReaderMessage {
   text: string;
   blocks?: LessonBlock[];
   observation?: string;
+  reasoningFeedback?: string;
   correct?: boolean;
   recommendation?: { action: string; reason: string; targetId?: number | null };
 }

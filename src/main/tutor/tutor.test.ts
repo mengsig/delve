@@ -111,7 +111,7 @@ it('previews the exact UTF-8 prompt, chosen depth, known prerequisites and most 
   const generate: Generate = async turn => {
     calls.push(turn.preview.prompt);
     if (!turn.response) return opening;
-    return intermediate;
+    return { ...intermediate, reasoningFeedback: 'A smaller matching network has a longer prefix.' };
   };
   session = new TutorSession(db, generate);
   const preview = prepareTurn(db, request).preview;
@@ -298,7 +298,7 @@ it('the offline provider reteaches a miss, offers fresh applied checks and recom
 it('refuses stale answers and rolls back evidence with the exchange if a message cannot be saved', async () => {
   const lesson = await run(request.intent);
   const intent = { kind: 'answer' as const, revision: lesson.mastery.revision!, answer: 1, reasoning: 'Specific routing.' };
-  session = new TutorSession(db, async () => intermediate);
+  session = new TutorSession(db, async () => ({ ...intermediate, reasoningFeedback: 'Specificity is determined by the matching prefix length.' }));
   db.exec(`CREATE TRIGGER reject_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'write refused'); END`);
   await expect(run(intent)).rejects.toThrow(/write refused/);
   expect(listEvidence(db, request.conceptId)).toEqual([]);
@@ -335,7 +335,7 @@ it('runs an opening, a miss and two applied passes through the fake CLI', async 
   });
   expect(miss.mastery).toMatchObject({ stage: 'checking', attempts: 1, correctAnswers: 0 });
   const first = await send({ kind: 'answer', revision: miss.mastery.revision!, answer: 3, reasoning: 'The destination matches the narrower CIDR.' }, {
-    ...intermediate, lesson: { ...opening.lesson, blocks: [explanation, { ...applied,
+    ...intermediate, reasoningFeedback: 'The narrower CIDR is the more specific match.', lesson: { ...opening.lesson, blocks: [explanation, { ...applied,
       prompt: 'When the /24 is withdrawn, which surviving match carries the packet?', options: ['/8', '/6', '/4', '/0'], expected: 0 }] },
   });
   expect(first.mastery).toMatchObject({ stage: 'checking', attempts: 2, correctAnswers: 1 });
@@ -448,9 +448,11 @@ it('binds reasons and keyed verdicts to exact previews and gives the CLI the app
   const [approved, different, empty] = inputs.map(input => prepareTurn(db, input));
   expect(new Set([approved!.preview.token, different!.preview.token, empty!.preview.token]).size).toBe(3);
   expect(() => session.run({ ...inputs[1]!, token: approved!.preview.token, requestId: randomUUID() })).toThrow(/changed/);
-  for (const [turn, reason] of [[different!, '1 means the packet takes the newest route.'], [empty!, 'No reasoning supplied.']] as const) {
+  for (const turn of [different!, empty!]) {
     const result = await generate(turn, new AbortController().signal);
-    expect(result).toMatchObject({ assessment: true, observation: expect.stringContaining(reason) });
+    expect(result.assessment).toBe(true);
+    if (turn.response?.reasoning) expect(result.reasoningFeedback).toContain(turn.response.reasoning);
+    else expect(result.reasoningFeedback).toBeUndefined();
     expect(JSON.parse(await readFile(record, 'utf8')).stdin).toBe(turn.preview.prompt);
   }
   const saved = await session.run({ ...approved!.request, token: approved!.preview.token, requestId: randomUUID() });
@@ -458,7 +460,7 @@ it('binds reasons and keyed verdicts to exact previews and gives the CLI the app
   expect(approved!.response).toMatchObject({ selectedIndex: 1, answer: '/24', reasoning: '  The /24 is narrower. 網\n',
     correct: true, reference: ['/24'] });
   expect(saved.messages).toMatchObject([{ text: '/24\n\nReasoning:   The /24 is narrower. 網\n' },
-    { correct: true, observation: expect.stringContaining('The /24 is narrower. 網') }]);
+    { correct: true, reasoningFeedback: expect.stringContaining('The /24 is narrower. 網') }]);
   expect(saved.mastery).toMatchObject({ attempts: 1, correctAnswers: 1, appliedPassed: true });
 });
 
@@ -472,6 +474,7 @@ it('enforces the reasoning bound, stored choice range and local grade before sav
   expect(schema.safeParse({ ...request, intent: { ...intent, assessment: true } }).success).toBe(false);
   expect(() => run({ ...intent, answer: 4 })).toThrow(/displayed answers/);
   session = new TutorSession(db, async () => intermediate);
+  await expect(run({ ...intent, answer: 1, reasoning: 'It is a narrower route.' })).rejects.toThrow(/address the learner/);
   await expect(run(intent)).rejects.toThrow(/disagrees with the recorded answer key/);
   session = new TutorSession(db, async () => ({ ...intermediate, assessment: false, observation: null }));
   await expect(run(intent)).rejects.toThrow(/did not explain/);
@@ -526,7 +529,7 @@ it('keeps legacy choices in their original order and requires an application pas
   const before = readLesson(db, request);
   expect(before.mastery).toMatchObject({ needsAdaptation: false, activeCheck: { options, kind: 'recognition' } });
   expect(() => run({ kind: 'answer', revision: before.mastery.revision!, answer: 3 })).toThrow(/displayed answers/);
-  session = new TutorSession(db, async () => intermediate);
+  session = new TutorSession(db, async () => ({ ...intermediate, reasoningFeedback: 'A route’s age does not affect prefix specificity.' }));
   const first = await run({ kind: 'answer', revision: before.mastery.revision!, answer: 1, reasoning: 'The latest route is always chosen.' });
   expect(first.mastery).toMatchObject({ appliedPassed: false, attempts: 1, correctAnswers: 1, stage: 'checking' });
   session = new TutorSession(db, async () => ({ ...intermediate, lesson: { ...opening.lesson, blocks: [explanation] } }));
@@ -563,14 +566,14 @@ it('adapts demo checks locally and responds distinctly to known and unfamiliar r
   const feedback = (reasoning?: string) => demoTurn(prepareTurn(db, { ...request, intent: answer(reasoning) }));
   const misconception = feedback('I thought arrival order mattered.');
   const goodReason = feedback('B still holds the current lease.');
-  expect(misconception).toMatchObject({ assessment: true, observation: expect.stringContaining('Even the first result can carry an expired claim') });
-  expect(goodReason).toMatchObject({ assessment: true, observation: expect.stringContaining('its active generation') });
+  expect(misconception).toMatchObject({ assessment: true, reasoningFeedback: expect.stringContaining('Even the first result can carry an expired claim') });
+  expect(goodReason).toMatchObject({ assessment: true, reasoningFeedback: expect.stringContaining('its active generation') });
   expect(misconception.lesson.blocks.at(-1)).not.toEqual(goodReason.lesson.blocks.at(-1));
-  expect(feedback('The label on the envelope is green.').observation).toMatch(/how would it identify the current owner\?/);
+  expect(feedback('The label on the envelope is green.').reasoningFeedback).toMatch(/how would it identify the current owner\?/);
   expect(feedback().observation).not.toMatch(/your reasoning|your rule/i);
   const saved = await run(answer('I thought arrival order mattered.'));
   expect(saved.mastery).toMatchObject({ attempts: 1, correctAnswers: 1, appliedPassed: true });
-  expect(saved.messages.at(-1)).toMatchObject({ correct: true, observation: misconception.observation });
+  expect(saved.messages.at(-1)).toMatchObject({ correct: true, observation: misconception.observation, reasoningFeedback: misconception.reasoningFeedback });
 });
 
 it('rejects a pending duplicate answer after a second session commits the same revision', async () => {

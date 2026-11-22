@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { demoMaterial } from '../reader/demo';
 import { freshCheckSchema } from '../reader/document';
+import { transferCase } from './sample-scenarios';
 import type { PreparedTurn } from './prompt';
 
 const scenarioShape = (prompt: string) => prompt.replace(/\d+/g, '#');
@@ -38,7 +39,7 @@ export function demoCheck(turn: PreparedTurn, position: number, cycle: number, f
   const { context, mastery } = turn;
   assert.ok(Number.isSafeInteger(position) && position >= 0 && position <= mastery.maxAttempts);
   assert.ok(Number.isSafeInteger(cycle) && cycle >= 0);
-  const { id, item } = demoMaterial(context.key);
+  const { id } = demoMaterial(context.key);
   // Leave room for all attempts and a replacement of the current check in each round.
   const caseId = 20 + cycle * 32 + mastery.prompts.length;
   if (id === 'lease' || id === 'exposure') {
@@ -53,11 +54,5 @@ export function demoCheck(turn: PreparedTurn, position: number, cycle: number, f
     const [prompt, first, second, third, fourth, expected] = cases[index]!;
     return freshCheckSchema.parse({ type: 'check', kind: 'prediction', prompt, options: [first, second, third, fourth], expected });
   }
-  const scenarios = Object.values(item.checks);
-  const scenario = turn.request.intent.kind === 'adapt'
-    ? item.checks[context.depth] : scenarios[(position + cycle) % scenarios.length]!;
-  const shift = caseId % scenario.options.length;
-  return freshCheckSchema.parse({ ...scenario, prompt: `Case ${caseId} · ${scenario.prompt}`,
-    options: scenario.options.slice(shift).concat(scenario.options.slice(0, shift)),
-    expected: (scenario.expected + scenario.options.length - shift) % scenario.options.length });
+  return transferCase(id, turn).check;
 }
