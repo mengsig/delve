@@ -1,4 +1,4 @@
-import { useEffect, useMemo, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, type ReactNode } from 'react';
 import type { Workspace } from '../../shared/domain';
 import type { ReaderLesson } from '../../shared/reader';
 import type { ChangeRef } from '../../shared/repository';
@@ -42,7 +42,7 @@ function StudyLesson({ route, common, remember, commit, refresh, backTo }: {
   const { depth, workspace, graph } = common;
   const title = graph.concepts.find(concept => concept.id === conceptId)?.title;
   const workspaceId = workspace.id;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (title && !environment) remember({ kind: 'lesson', workspaceId, conceptId, depth, title, change });
   }, [title, environment, remember, workspaceId, conceptId, depth, change]);
   function read() {
@@ -68,7 +68,7 @@ function StudyChanges({ route, common, remember, visit }: {
   const { workspace, graph, depth } = common;
   const { change, title, job } = route;
   const demo = graph.demo && graph.snapshot === demoBrief.head;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (change) {
       const label = change.kind === 'pr' ? 'PR #' + change.ref : 'Commit ' + change.ref.slice(0, 8);
       remember({ kind: 'change', workspaceId: workspace.id, depth, change, title: title ?? label });

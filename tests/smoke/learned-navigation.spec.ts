@@ -21,9 +21,14 @@ function seedLearned(directory: string) {
 }
 
 async function verifyPositionAcrossFilters(page: Page, lastTitle: string) {
-  await page.getByLabel('Group by workspace').check();
+  const group = page.getByLabel('Group by workspace');
+  const current = page.locator('.knowledge-list-select:focus');
+  await group.check();
   await expect(page.getByRole('button', { name: `Open lesson: ${lastTitle}` }).last()).toBeInViewport();
-  await page.getByLabel('Group by workspace').uncheck();
+  await group.focus();
+  await page.keyboard.press('Tab');
+  await expect(current).toContainText(lastTitle);
+  await group.uncheck();
   await expect(page.getByRole('button', { name: `Open lesson: ${lastTitle}` })).toBeInViewport();
   await page.getByRole('button', { name: 'Find a concept' }).click();
   const search = page.getByRole('searchbox', { name: 'Search' });
@@ -34,6 +39,9 @@ async function verifyPositionAcrossFilters(page: Page, lastTitle: string) {
   await expect(page.locator('.knowledge-list-select')).toContainText(otherTitle);
   await search.clear();
   await expect(page.getByRole('button', { name: `Open lesson: ${lastTitle}` })).toBeInViewport();
+  await group.focus();
+  await page.keyboard.press('Tab');
+  await expect(current).toContainText(lastTitle);
 }
 
 test('navigates the virtualized learned list by keyboard', async ({ desktop: { page, directory, application } }) => {
@@ -51,7 +59,9 @@ test('navigates the virtualized learned list by keyboard', async ({ desktop: { p
   await expect(first.locator('.knowledge-list-select')).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(first.getByRole('button', { name: /Open lesson:/ })).toBeFocused();
-  await page.keyboard.press('Tab');
+  await page.keyboard.press('ArrowDown');
+  await expect(second.getByRole('button', { name: /Open lesson:/ })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
   await expect(second.locator('.knowledge-list-select')).toBeFocused();
   const initialTitle = await second.locator('strong').innerText();
   if (process.env.DELVE_NIGHT_EVIDENCE === '1') {
@@ -64,6 +74,8 @@ test('navigates the virtualized learned list by keyboard', async ({ desktop: { p
   const lastTitle = await selected.locator('strong').innerText();
   expect(lastTitle).not.toBe(initialTitle);
   expect(await rows.count()).toBeLessThanOrEqual(15);
+  await expect(rows.last()).toHaveAttribute('data-row-index', '39');
+  await expect(rows.last().locator('.knowledge-list-select')).toBeFocused();
   await expect(selected).toBeInViewport();
   await expect(selected).toHaveCSS('outline-style', 'solid');
   if (process.env.DELVE_NIGHT_EVIDENCE === '1') await page.screenshot({ path: '.archon/evidence/learned-navigation-end.png' });

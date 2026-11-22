@@ -128,7 +128,8 @@ function useMapModel({ local, activeId, areas, view }: ContentsProps) {
 type Model = ReturnType<typeof useMapModel>;
 
 function AreaContents(props: ContentsProps) {
-  const { graph, local, workspaces, workspace, view, update, updateFilters, depth } = props;
+  const { graph, local, workspaces, workspace, view, update, updateFilters, depth, historyView } = props;
+  const areaKey = (view.demo ? 'demo/' : 'personal/') + workspace;
   const model = useMapModel(props);
   const open: OpenConcept = (...args) => {
     props.historyView.save({ ...view, selected: model.selected });
@@ -153,9 +154,10 @@ function AreaContents(props: ContentsProps) {
       <AreaBar workspace={workspace} workspaces={workspaces} count={local.concepts.length} onArea={id => {
         updateFilters({ workspace: id }); update({ selected: null, details: false });
       }} list={view.list} toggleList={() => update({ list: !view.list })} />
-      {view.list ? <LearnedList areaId={workspace} graph={graph} concepts={learned} group={view.filters.group}
+      {view.list ? <LearnedList key={areaKey} areaId={workspace} areaKey={areaKey} positions={historyView.listPositions}
+        graph={graph} concepts={learned} group={view.filters.group}
         setGroup={group => updateFilters({ group })} onSelect={select} onOpen={open} />
-        : <div className="knowledge-map-slot"><div inert={!model.visible.size}><KnowledgeMap cameras={props.historyView.cameras} areaKey={(view.demo ? 'demo/' : 'personal/') + workspace}
+        : <div className="knowledge-map-slot"><div inert={!model.visible.size}><KnowledgeMap cameras={historyView.cameras} areaKey={areaKey}
           global={workspace === anyWorkspace} graph={local} visible={model.visible} states={model.states} selected={model.selected} onSelect={select} focus={model.focus} /></div>
           {!model.visible.size && <div className="knowledge-no-matches"><Icon name="frame" /><h2>No matching concepts</h2><p>Try another name, state or verified depth.</p><button onClick={clear}>Clear filters</button></div>}</div>}
       {!view.list && <Legend transfers={local.links.length > 0} />}
