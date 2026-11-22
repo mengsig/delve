@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
 import { readLesson } from '../reader/ipc';
+import type { Document } from '../reader/document';
 import { lessonContext } from '../reader/stored-lesson';
 import { saveCheckEvidence } from '../tutor/assessment';
 import { prepareTurn } from '../tutor/prompt';
@@ -49,7 +50,7 @@ it('recovers an unreadable migrated opening with or without a readable fallback'
   const db = migratedQueue();
   try {
     const address = { workspaceId: 'a', conceptId: 3, depth: 'low' } as const;
-    const body = { schema: 'delve.lesson/1', blocks: [{ type: 'prose', heading: 'Queue', text: 'Readable shared opening.' }] };
+    const body: Document = { schema: 'delve.lesson/1', blocks: [{ type: 'prose', heading: 'Queue', text: 'Readable shared opening.' }] };
     const fallback = saveLesson(db, { ...address, workspaceId: undefined, cacheKey: 'fallback', schemaVersion: body.schema,
       provider: 'codex', model: 'fixture', body });
     db.prepare("UPDATE lessons SET body = '{}', created_at = '2100-01-01' WHERE id = 1").run();
@@ -59,7 +60,7 @@ it('recovers an unreadable migrated opening with or without a readable fallback'
     expect(readLesson(db, address)).toMatchObject({ invalidLatest: true, revision: null, blocks: [], mastery: { stage: 'understood' } });
     const turn = prepareTurn(db, { ...address, provider: 'codex', intent: { kind: 'teach' } });
     expect(turn.selected.invalidLatest).toBe(true);
-    const check = { type: 'check', kind: 'prediction', prompt: 'A writer adds C after A and B. Which item comes out first?',
+    const check: Document['blocks'][number] = { type: 'check', kind: 'prediction', prompt: 'A writer adds C after A and B. Which item comes out first?',
       options: ['A', 'B', 'C', 'None'], expected: 0 };
     const recovered = await executeTurn(db, async () => ({
       lesson: { ...body, blocks: [...body.blocks, check] }, assessment: null, observation: null, recommendation: null,
@@ -67,6 +68,42 @@ it('recovers an unreadable migrated opening with or without a readable fallback'
     expect(recovered).toMatchObject({ invalidLatest: false, blocks: [{ text: 'Readable shared opening.' }, { type: 'check' }] });
     expect(db.prepare("SELECT concept_id FROM lessons WHERE id = 1").get()?.concept_id).toBe(1);
     expect(db.prepare("SELECT concept_id FROM lessons WHERE id <> 1").get()?.concept_id).toBe(3);
+  } finally {
+    db.close();
+  }
+});
+
+it('corroborates legacy matches to existing portable identities before transferring evidence', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    migrate(db, MIGRATIONS.slice(0, 6));
+    db.exec(`INSERT INTO workspaces (id,kind,name,source,created_at) VALUES ('a','git','A','/a','2020'), ('b','git','B','/b','2020');
+      INSERT INTO concepts (id,key,title,summary,portable,workspace_id,created_at,updated_at) VALUES
+      (1,'cache','Cache','CPU cache',1,NULL,'2020','2020'),
+      (2,'ws/a/cache','Cache','HTTP response cache',0,'a','2020','2020'),
+      (3,'semaphore','Semaphore','Limits concurrent access.',1,NULL,'2020','2020'),
+      (4,'ws/a/semaphore','Semaphore',' limits concurrent access. ',0,'a','2020','2020'),
+      (5,'queues','Queue','First in, first out.',1,NULL,'2020','2020'),
+      (6,'ws/a/queue','Queue','Where this repository stores failed jobs.',0,'a','2020','2020');
+      INSERT INTO workspace_concepts (workspace_id,concept_id) VALUES ('a',2), ('a',4), ('a',6), ('b',1), ('b',3), ('b',5);
+      INSERT INTO evidence (concept_id,depth,status,source,note,workspace_id,recorded_at,revision,mastery_verified) VALUES
+      (1,'medium','demonstrated','check','CPU hit rate','b','2020',1,1),
+      (2,'medium','demonstrated','check','HTTP headers','a','2021',3,1),
+      (4,'low','demonstrated','check','Release a permit','a','2021',2,1),
+      (6,'low','demonstrated','check','Locate failed jobs','a','2021',2,1);`);
+    migrate(db);
+    expect(db.prepare('SELECT legacy_concept_id, portable_concept_id FROM concept_identity_links').all())
+      .toEqual([{ legacy_concept_id: 4, portable_concept_id: 3 }]);
+    expect(readWorkspaceGraph(db, 'a').evidence).toMatchObject([
+      { conceptId: 2, note: 'HTTP headers', revision: 3 }, { conceptId: 3, note: 'Release a permit', revision: 2 },
+      { conceptId: 6, note: 'Locate failed jobs', revision: 2 },
+    ]);
+    expect(readWorkspaceGraph(db, 'b').evidence).toMatchObject([
+      { conceptId: 1, note: 'CPU hit rate', revision: 1 }, { conceptId: 3, note: 'Release a permit', revision: 2 },
+    ]);
+    expect(db.prepare('SELECT concept_id, note FROM migrated_evidence_archive').all())
+      .toEqual([{ concept_id: 4, note: 'Release a permit' }]);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   } finally {
     db.close();
   }

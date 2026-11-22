@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { DEPTHS, type Depth } from '../../shared/domain';
+import { DEPTHS } from '../../shared/domain';
 import { coversDepth, demonstratedEvidence } from '../../shared/evidence-depth';
 import type { WorkspaceGraph } from '../../shared/graph';
 import type { Db } from './connection';

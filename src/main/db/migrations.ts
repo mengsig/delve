@@ -276,12 +276,18 @@ export const MIGRATIONS: readonly Migration[] = [
     SELECT general_key, min(id) AS sample_id, min(normalized_title) AS normalized_title,
       count(DISTINCT workspace_id) AS workspace_count,
       CASE WHEN count(DISTINCT normalized_summary) = 1 AND min(normalized_summary) <> '' THEN min(normalized_summary) END AS shared_summary,
-      (count(known_alias) = count(*) OR (count(DISTINCT normalized_summary) = 1 AND min(normalized_summary) <> '')) AS corroborated
+      count(known_alias) = count(*) AS known_identity,
+      count(DISTINCT nullif(normalized_summary, '')) AS description_count,
+      max(normalized_summary) AS description
     FROM migration_candidates
     GROUP BY general_key HAVING count(DISTINCT normalized_title) = 1 AND count(DISTINCT workspace_id) = count(*);
     ALTER TABLE migration_groups ADD COLUMN portable_id INTEGER;
     UPDATE migration_groups AS groups SET portable_id = (
-      SELECT CASE WHEN count(*) = 1 AND min(p.normalized_title) = groups.normalized_title THEN min(p.id) END
+      SELECT CASE WHEN count(*) = 1 AND min(p.normalized_title) = groups.normalized_title
+        AND (min(p.normalized_summary) = groups.shared_summary OR
+          (groups.known_identity AND groups.description_count <= 1
+            AND (groups.description_count = 0 OR min(p.normalized_summary) IN ('', groups.description))))
+        THEN min(p.id) END
       FROM migration_portable p WHERE p.general_key = groups.general_key
     );
     UPDATE migration_groups AS groups SET portable_id = (
@@ -295,7 +301,7 @@ export const MIGRATIONS: readonly Migration[] = [
       WHERE a.general_key = migration_groups.general_key AND other.portable_id = migration_groups.portable_id
     );
     DELETE FROM migration_groups WHERE portable_id IS NULL AND (
-      workspace_count < 2 OR NOT corroborated
+      workspace_count < 2 OR (NOT known_identity AND shared_summary IS NULL)
       OR EXISTS (SELECT 1 FROM migration_portable p WHERE p.general_key = migration_groups.general_key)
       OR EXISTS (SELECT 1 FROM migration_portable p
         WHERE p.normalized_title = migration_groups.normalized_title AND p.normalized_summary = migration_groups.shared_summary)
