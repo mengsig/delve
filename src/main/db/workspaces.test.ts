@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase, type Db } from './connection';
 import { MIGRATIONS, migrate, schemaVersion } from './migrations';
@@ -63,7 +63,8 @@ describe('workspaces', () => {
       source: 'mengsig/delve',
     });
     expect(resolveWorkspaceSource({ kind: 'topic', title: '  Chess   openings ' }).name).toBe('Chess openings');
-    expect(resolveWorkspaceSource({ kind: 'git', path: '/home/me/code/app/' })).toMatchObject({ name: 'app', source: '/home/me/code/app' });
+    const repoPath = resolve('home', 'me', 'code', 'app');
+    expect(resolveWorkspaceSource({ kind: 'git', path: repoPath + sep })).toMatchObject({ name: 'app', source: repoPath });
     expect(() => resolveWorkspaceSource({ kind: 'git', path: 'relative/dir' })).toThrow(/absolute path/);
     expect(() => resolveWorkspaceSource({ kind: 'github', owner: '-bad', repo: 'x' })).toThrow(/owner/);
     expect(() => resolveWorkspaceSource({ kind: 'github', owner: 'ok', repo: '..' })).toThrow(/repository name/);

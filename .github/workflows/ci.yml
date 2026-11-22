@@ -60,8 +60,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Provider runner tests on this platform (process trees, launchers)
-        run: npm run test:providers
+      - name: Unit tests on this platform
+        run: npm test
       - run: npm run ${{ matrix.script }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'

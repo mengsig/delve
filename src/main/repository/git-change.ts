@@ -1,16 +1,15 @@
 import assert from 'node:assert/strict';
-import { devNull } from 'node:os';
 import type { ChangeDetail } from '../../shared/explorer';
 import { gitHistoryNode } from './git-history';
 import { DomainError } from '../../shared/errors';
 import { changeTitle, gitReader, nulRecords, readBlob, requireReachable, resolveCommit,
   withoutChangePatches, type ChangeSnapshot, type ChangePatch, type GitReader } from './git-reader';
-import { completedOutput } from './source-process';
+import { completedOutput, GIT_NULL_FILE } from './source-process';
 import { isSourcePath, MAX_DIFF_BYTES, MAX_DIFF_FILES, MAX_PATCH_BYTES, OBJECT_ID, sourceText } from './source-policy';
 
 const CHANGE_MODE = /^(?:000000|100644|100755)$/;
 const DIFF_TREE_ARGS = ['diff-tree', '--root', '--no-commit-id', '--no-ext-diff', '--no-textconv',
-  '--no-color', '--no-renames', '--no-relative', '--ignore-submodules=none', '-r', '-O', devNull];
+  '--no-color', '--no-renames', '--no-relative', '--ignore-submodules=none', '-r', '-O', GIT_NULL_FILE];
 
 interface ChangedFile {
   path: string;
