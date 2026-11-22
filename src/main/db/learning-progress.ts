@@ -73,7 +73,7 @@ export function readLearningProgress(db: Db, graph: WorkspaceGraph, depth: Depth
     assert.ok(typeof conceptId === 'number' && typeof canonicalId === 'number' && typeof revision === 'string');
     if (!ids.has(canonicalId)) continue;
     assert.ok(snapshotId === null || typeof snapshotId === 'number');
-    if (hasAlias && lessonBinding(db, { workspaceId, conceptId: canonicalId, depth, snapshotId }) !== conceptId) continue;
+    if (hasAlias && lessonBinding(db, { workspaceId, conceptId: canonicalId, depth, snapshotId, demo }).conceptId !== conceptId) continue;
     assert.ok(snapshot === null || typeof snapshot === 'string');
     assert.equal(snapshotId === null, snapshot === null);
     const context = { workspaceId, conceptId, depth, snapshotId };

@@ -111,6 +111,35 @@ it('restores the original saved recommendation after portable evidence is reset'
   expect(useCachedGeneration(db, selected)).toEqual({ kind: 'change', brief: reopened });
 });
 
+it('suggests the PR usage in Atlas only while current portable evidence covers the selected depth', () => {
+  const selection = { kind: 'pr', ref: '21' } as const;
+  persistGeneration(db, source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline), mapped);
+  const selected = source(selection, previous);
+  const reply = { ...change, recommendation: { key: 'nginx/proxy', reason: 'Learn about proxies.' } };
+  const result = persistGeneration(db, selected, reply);
+  if (result.kind !== 'change') throw new Error('Expected a change brief');
+  const proxy = result.brief.recommendation.conceptId;
+  const origin = addWorkspace(db, { kind: 'git', path: '/upstream' });
+  const graph = () => readWorkspaceGraph(db, workspaceId);
+  const address = { ...selection, workspaceId, depth: 'medium', provider: 'codex' } as const;
+  const before = graph();
+  expect(before.changeSuggestions?.medium).toBeUndefined();
+  expect(before.suggestions?.medium).toEqual({ conceptId: proxy, reason: reply.recommendation.reason });
+  const prove = (depth: 'high' | 'low') => recordEvidence(db, { workspaceId: origin.id, conceptId: proxy, depth,
+    status: 'demonstrated', source: 'check', masteryVerified: true });
+  prove('high');
+  expect(graph().changeSuggestions?.medium).toBeUndefined();
+  prove('low');
+  const live = latestBrief(db, address)?.recommendation;
+  expect(live?.conceptId).toBe(result.brief.conceptId);
+  expect(graph().changeSuggestions?.medium).toEqual({ ...selection, reason: live?.reason, title: result.brief.title });
+  expect(graph().suggestions?.medium?.conceptId).toBe(before.concepts.find(c => !c.portable)?.id);
+  expect(resetEvidence(db, proxy, { workspaceId: origin.id, depth: 'low' })).toBe(1);
+  expect(graph().changeSuggestions?.medium).toBeUndefined();
+  expect(graph().suggestions?.medium).toEqual(before.suggestions?.medium);
+  expect(latestBrief(db, address)?.recommendation).toEqual(result.brief.recommendation);
+});
+
 it('recommends the missing prerequisite of the linked usage before an unrelated ready concept', () => {
   const portable = upsertConcept(db, { workspaceId, portable: true, key: 'nginx/proxy', title: 'Proxy' });
   recordEvidence(db, { workspaceId, conceptId: portable.id, depth: 'medium', status: 'demonstrated',

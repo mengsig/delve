@@ -10,6 +10,7 @@ export interface LessonContext {
   workspaceId: string;
   conceptId: number;
   canonicalConceptId: number;
+  invalidLatest: boolean;
   key: string;
   title: string;
   summary: string;

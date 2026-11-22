@@ -1,15 +1,91 @@
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
+import { readLesson } from '../reader/ipc';
+import { lessonContext } from '../reader/stored-lesson';
+import { saveCheckEvidence } from '../tutor/assessment';
+import { prepareTurn } from '../tutor/prompt';
+import { executeTurn } from '../tutor/turn';
+import { transaction } from './connection';
+import { recordEvidence } from './evidence';
 import { MIGRATIONS, migrate } from './migrations';
 import { readWorkspaceGraph } from './graph';
 import { getGlobalKnowledgeGraph } from './knowledge';
 import { readLearningProgress } from './learning-progress';
 import { lessonRevision } from './lesson-selection';
+import { saveLesson } from './lessons';
+import { writeMasteryRow } from './mastery';
 import { masteryScope } from './mastery-scope';
-import { readLesson } from '../reader/ipc';
-import { lessonContext } from '../reader/stored-lesson';
-import { saveCheckEvidence } from '../tutor/assessment';
-import { transaction } from './connection';
+
+it('reads the newest workspace-independent lesson and its check streak after a v6 upgrade', () => {
+  const db = migratedQueue();
+  try {
+    const address = { workspaceId: 'a', conceptId: 3, depth: 'low' } as const;
+    const body = { schema: 'delve.lesson/1', blocks: [{ type: 'prose', heading: 'Queue', text: 'New shared opening.' }] };
+    const fresh = saveLesson(db, { ...address, workspaceId: undefined, cacheKey: 'portable', schemaVersion: body.schema,
+      provider: 'codex', model: 'fixture', body });
+    const selectedRevision = lessonRevision(fresh.id, JSON.stringify(body));
+    const revision = 'a'.repeat(64);
+    transaction(db, () => writeMasteryRow(db, address, {
+      scope: masteryScope({ ...address, snapshotId: 1 }, selectedRevision), revision, lessonId: fresh.id,
+      state: JSON.stringify({ stage: 'understood', check: null, attempts: 2, correctAnswers: 2, applied: true, cycle: 0, prompts: [] }),
+    }));
+    recordEvidence(db, { ...address, workspaceId: 'b', status: 'demonstrated', source: 'check', masteryVerified: true });
+
+    expect(readLesson(db, address)).toMatchObject({
+      revision: selectedRevision, blocks: [{ text: 'New shared opening.' }], mastery: { stage: 'understood', correctAnswers: 2 },
+    });
+    expect(readLearningProgress(db, readWorkspaceGraph(db, 'a'), 'low').checks).toMatchObject([
+      { conceptId: 3, lessonRevision: selectedRevision, masteryRevision: revision, streak: 2, attempted: true },
+    ]);
+    expect(readLesson(db, { ...address, workspaceId: 'b' })).toMatchObject({
+      revision: selectedRevision, blocks: [{ text: 'New shared opening.' }], mastery: { stage: 'understood' },
+    });
+  } finally {
+    db.close();
+  }
+});
+
+it('recovers an unreadable migrated opening with or without a readable fallback', async () => {
+  const db = migratedQueue();
+  try {
+    const address = { workspaceId: 'a', conceptId: 3, depth: 'low' } as const;
+    const body = { schema: 'delve.lesson/1', blocks: [{ type: 'prose', heading: 'Queue', text: 'Readable shared opening.' }] };
+    const fallback = saveLesson(db, { ...address, workspaceId: undefined, cacheKey: 'fallback', schemaVersion: body.schema,
+      provider: 'codex', model: 'fixture', body });
+    db.prepare("UPDATE lessons SET body = '{}', created_at = '2100-01-01' WHERE id = 1").run();
+    recordEvidence(db, { ...address, workspaceId: 'b', status: 'demonstrated', source: 'check', masteryVerified: true });
+    expect(readLesson(db, address)).toMatchObject({ invalidLatest: true, blocks: [{ text: 'Readable shared opening.' }] });
+    db.prepare('DELETE FROM lessons WHERE id = ?').run(fallback.id);
+    expect(readLesson(db, address)).toMatchObject({ invalidLatest: true, revision: null, blocks: [], mastery: { stage: 'understood' } });
+    const turn = prepareTurn(db, { ...address, provider: 'codex', intent: { kind: 'teach' } });
+    expect(turn.selected.invalidLatest).toBe(true);
+    const check = { type: 'check', kind: 'prediction', prompt: 'A writer adds C after A and B. Which item comes out first?',
+      options: ['A', 'B', 'C', 'None'], expected: 0 };
+    const recovered = await executeTurn(db, async () => ({
+      lesson: { ...body, blocks: [...body.blocks, check] }, assessment: null, observation: null, recommendation: null,
+    }), turn, new AbortController().signal);
+    expect(recovered).toMatchObject({ invalidLatest: false, blocks: [{ text: 'Readable shared opening.' }, { type: 'check' }] });
+    expect(db.prepare("SELECT concept_id FROM lessons WHERE id = 1").get()?.concept_id).toBe(1);
+    expect(db.prepare("SELECT concept_id FROM lessons WHERE id <> 1").get()?.concept_id).toBe(3);
+  } finally {
+    db.close();
+  }
+});
+
+function migratedQueue(): DatabaseSync {
+  const db = new DatabaseSync(':memory:');
+  migrate(db, MIGRATIONS.slice(0, 6));
+  db.exec(`INSERT INTO workspaces (id,kind,name,source,created_at) VALUES ('a','git','A','/a','2020'), ('b','git','B','/b','2020');
+    INSERT INTO concepts (id,key,title,portable,workspace_id,created_at,updated_at) VALUES
+    (1,'ws/a/queue','Queue',0,'a','2020','2020'), (2,'ws/b/queue','Queue',0,'b','2020','2020'),
+    (3,'queues','Queues',1,NULL,'2020','2020');
+    INSERT INTO workspace_concepts (workspace_id,concept_id) VALUES ('a',1), ('b',2);
+    INSERT INTO snapshots VALUES (1,'a','abcd','2020');`);
+  seedLegacyLesson(db);
+  db.exec("UPDATE lessons SET created_at = '2020' WHERE id = 1");
+  migrate(db);
+  return db;
+}
 
 function seedLegacyLesson(db: DatabaseSync): void {
   const check = { type: 'check', kind: 'prediction', prompt: 'Which task is next?', options: ['A', 'B', 'C', 'D'], expected: 0 };

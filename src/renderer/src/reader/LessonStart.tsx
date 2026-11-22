@@ -8,10 +8,10 @@ import { lessonKey, useTutorJobs } from './TutorJobs';
 import { ExactRequest, PreviewMetadata } from './TutorPreview';
 
 export function LessonRecovery({ body, tutor }: {
-  body: Pick<ReaderLesson, 'invalidLatest' | 'revision' | 'mastery'>;
+  body: Pick<ReaderLesson, 'invalidLatest' | 'revision'>;
   tutor: Pick<LessonTutor, 'pending' | 'signedIn' | 'provider' | 'prepare'>;
 }) {
-  if (!body.invalidLatest || (!body.revision && body.mastery.stage !== 'understood')) return null;
+  if (!body.invalidLatest) return null;
   const disabled = tutor.pending || !tutor.signedIn;
   return <section className="reader-notice" role="status">
     <p>{body.revision ? 'The newest lesson could not be displayed. You can continue with the last readable version.'

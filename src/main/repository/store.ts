@@ -2,9 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import type { ChangeRef, ChangeBrief, GenerationResult, RepoPreview, RepoRequest, SavedRequest } from '../../shared/repository';
 import { DEPTHS, type Depth } from '../../shared/domain';
-import { listEvidence } from '../db/evidence';
-import { coversDepth, demonstratedEvidence } from '../../shared/evidence-depth';
-import { readWorkspaceGraph } from '../db/graph';
+import { portableProofAtDepth } from '../db/evidence';
+import { changeApplicationReason } from '../db/graph-suggestions';
 import { DomainError } from '../../shared/errors';
 import { addPrerequisiteInTransaction, conceptStorageKey, getConcept, getConceptByKey, upsertConceptInTransaction, type Concept } from '../db/concepts';
 import { nowIso, transaction, type Db } from '../db/connection';
@@ -100,58 +99,12 @@ function mergeBaseline(db: Db, workspaceId: string, snapshotId: number, proposal
   return mapped;
 }
 
-function knownAtDepth(db: Db, concept: Concept, depth: Depth): boolean {
-  return listEvidence(db, concept.id).some(e => e.masteryVerified
-    && (e.depth === depth || concept.portable && coversDepth(e.depth, depth)));
-}
-
-function replacementSuggestion(db: Db, workspaceId: string, depth: Depth, target: Concept) {
-  const { concepts: candidates, edges, evidence } = readWorkspaceGraph(db, workspaceId);
-  const deepest = demonstratedEvidence(evidence);
-  const exact = new Set(evidence.filter(e => e.depth === depth && e.status === 'demonstrated').map(e => e.conceptId));
-  const known = new Set(candidates.filter(c => {
-    const verified = deepest.get(c.id);
-    return exact.has(c.id) || (c.portable && verified && coversDepth(verified.depth, depth));
-  }).map(c => c.id));
-  const prerequisites = new Map<number, Set<number>>();
-  for (const { conceptId, prerequisiteId } of edges) {
-    assert.notEqual(conceptId, prerequisiteId);
-    const required = prerequisites.get(conceptId) ?? new Set<number>();
-    required.add(prerequisiteId);
-    prerequisites.set(conceptId, required);
-  }
-  const missing = candidates.filter(c => !known.has(c.id));
-  const ready = missing.filter(c => [...(prerequisites.get(c.id) ?? [])].every(id => known.has(id)));
-  const usages = missing.filter(c => !c.portable && prerequisites.get(c.id)?.has(target.id));
-  const related = new Set(usages.map(c => c.id));
-  const pending = [...related];
-  while (pending.length) {
-    for (const id of prerequisites.get(pending.pop()!) ?? []) {
-      if (known.has(id) || related.has(id)) continue;
-      related.add(id);
-      pending.push(id);
-    }
-  }
-  assert.ok(known.has(target.id));
-  const usage = ready.find(c => usages.includes(c));
-  if (usage) return { conceptId: usage.id, title: usage.title, reason: `Apply what you already know about ${target.title} in this repository.` };
-  const next = ready.find(c => related.has(c.id)) ?? ready[0];
-  if (next) return { conceptId: next.id, title: next.title, reason: `Continue with ${next.title} at the selected depth.` };
-  return null;
-}
-
-const changeApplicationReason = 'Review how this repository applies the concepts you already know.';
-
-function recommendation(db: Db, source: ApprovedSource, proposal: GraphProposal, concepts: Map<string, Concept>) {
+function recommendation(proposal: GraphProposal, concepts: Map<string, Concept>) {
   const key = proposal.recommendation.key;
   if (key === null) return null;
   const target = concepts.get(key);
   if (!target) invalid('The suggested first step refers to an unknown concept.');
-  const { depth } = source.request;
-  assert.ok(db.isTransaction && target.id > 0);
-  const original = { conceptId: target.id, title: target.title, reason: proposal.recommendation.reason };
-  if (proposal.schema === 'delve.change/1' || !target.portable || !knownAtDepth(db, target, depth)) return original;
-  return replacementSuggestion(db, source.request.workspaceId, depth, target) ?? original;
+  return { conceptId: target.id, title: target.title, reason: proposal.recommendation.reason };
 }
 
 function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: ChangeReply, concepts: Map<string, Concept>): ChangeBrief {
@@ -189,7 +142,7 @@ function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: Ch
     if (concept.portable && (foundations.has(key) || touchedIds.has(key))) addPrerequisiteInTransaction(db, change.id, concept.id);
   }
   const spans = bindConceptSpans(reply.spans, source.patches ?? [], touchedIds);
-  const suggested = recommendation(db, source, reply, concepts) ?? { conceptId: change.id, title: change.title,
+  const suggested = recommendation(reply, concepts) ?? { conceptId: change.id, title: change.title,
     reason: reply.recommendation.reason };
   return { conceptId: change.id, title: preview.title, summary: reply.summary, what: reply.what, why: reply.why,
     before: reply.before, after: reply.after, base: preview.base, commit: preview.commit, files: preview.files, spans, partial: preview.partial, mechanics, boundary, coverageNote: preview.coverageNote, touched, trace, excerpt,
@@ -212,7 +165,7 @@ function projectSavedChange(db: Db, result: GenerationResult, depth: Depth): Gen
   }
   const target = canonical.get(brief.recommendation.conceptId);
   const savedTarget = getConcept(db, target?.id ?? brief.recommendation.conceptId);
-  const mastered = savedTarget?.portable && knownAtDepth(db, savedTarget, depth);
+  const mastered = savedTarget?.portable && portableProofAtDepth(db, savedTarget.id, depth);
   if (!canonical.size && !mastered) return result;
   const touched = brief.touched.map(concept => canonical.get(concept.id) ?? concept);
   const spans = brief.spans?.map(span => ({ ...span, conceptId: canonical.get(span.conceptId)?.id ?? span.conceptId }));
@@ -284,7 +237,7 @@ export function persistGeneration(db: Db, source: ApprovedSource, proposal: Grap
       : bindChangeConcepts(db, source, snapshotId, proposal);
     const result: GenerationResult = proposal.schema === 'delve.change/1'
       ? { kind: 'change', brief: saveBrief(db, source, snapshotId, proposal, concepts) } : { kind: 'baseline' };
-    const next = result.kind === 'change' ? result.brief.recommendation : recommendation(db, source, proposal, concepts);
+    const next = result.kind === 'change' ? result.brief.recommendation : recommendation(proposal, concepts);
     if (!next) invalid('The suggested first step refers to an unknown concept.');
     const ref = selection.kind === 'pr' ? selection.ref : preview.commit;
     db.prepare(`INSERT INTO repository_generations (cache_key, workspace_id, snapshot_id, kind, ref, depth,

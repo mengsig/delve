@@ -4,7 +4,7 @@ import type { TutorRequest } from '../../shared/reader';
 import { transaction, type Db } from '../db/connection';
 import { saveLessonInTransaction } from '../db/lessons';
 import { appendEntries } from '../reader/conversation';
-import { storedLesson } from '../reader/stored-lesson';
+import { lessonContext, storedLesson } from '../reader/stored-lesson';
 import { freshCheckSchema, type Document } from '../reader/document';
 import { readLesson } from '../reader/ipc';
 import { saveCheckEvidence } from './assessment';
@@ -15,7 +15,7 @@ import { validateTurn, type Generate, type TutorReply } from './provider';
 function saveOpening(db: Db, turn: PreparedTurn, lesson: Document) {
   const { context, cacheKey, cacheModel, request } = turn;
   const source = context.snapshot ?? (context.demo ? 'Field study · 01' : undefined);
-  return saveLessonInTransaction(db, { ...context, snapshotId: context.snapshotId ?? undefined, cacheKey,
+  return saveLessonInTransaction(db, { ...context, conceptId: context.canonicalConceptId, snapshotId: context.snapshotId ?? undefined, cacheKey,
     model: cacheModel, provider: request.provider, schemaVersion: lesson.schema, body: { ...lesson, source } }).id;
 }
 
@@ -66,14 +66,15 @@ function commitReply(db: Db, turn: PreparedTurn, reply: TutorReply): void {
   }
   if (intent.kind === 'teach' || intent.kind === 'review' && !selected.document) {
     const id = saveOpening(db, turn, reply.lesson);
-    const current = loadMastery(db, context, storedLesson(db, context), false);
+    const updated = lessonContext(db, turn.request);
+    const current = loadMastery(db, updated, storedLesson(db, updated), false);
     assert.equal(current.lessonId, id);
     assert.ok(checkIn(reply.lesson));
     if (current.scope !== mastery.scope || intent.kind === 'review') {
-      saveMastery(db, context, current, { stage: 'checking', check: checkIn(reply.lesson),
+      saveMastery(db, updated, current, { stage: 'checking', check: checkIn(reply.lesson),
         cycle: intent.kind === 'review' ? mastery.cycle + 1 : 0 });
     }
-    if (tutor.observation) appendEntries(db, context, id, [{ ...tutor, text: '' }]);
+    if (tutor.observation) appendEntries(db, updated, id, [{ ...tutor, text: '' }]);
     return;
   }
   if (intent.kind === 'review') {

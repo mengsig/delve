@@ -6,11 +6,9 @@ import { LessonRecovery } from './LessonStart';
 import { LessonNotes } from './LessonNotes';
 import type { LessonTutor } from './Tutor';
 
-it('offers a retry when a verified concept has no readable saved lesson', () => {
-  const mastery: ReaderMastery = { stage: 'understood', revision: 'proof', attempts: 0, correctAnswers: 0,
-    maxAttempts: 4, requiredCorrectAnswers: 2, activeCheck: null, appliedPassed: false, needsAdaptation: false };
+it('offers a retry when the saved lesson cannot be read', () => {
   const tutor = { pending: false, signedIn: true, provider: 'codex' as const, prepare: vi.fn() };
-  const body = { invalidLatest: true, revision: null, mastery };
+  const body = { invalidLatest: true, revision: null };
   const markup = renderToStaticMarkup(createElement(LessonRecovery, { body, tutor }));
   expect(markup).toContain('<button>Retry lesson generation</button>');
   expect(markup).toContain('<button>Preview lesson request</button>');

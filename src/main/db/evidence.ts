@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { DEPTHS, type Depth } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
+import { coversDepth } from '../../shared/evidence-depth';
 import type { GraphEvidence } from '../../shared/graph';
 import { getConceptByKey } from './concepts';
 import { nowIso, transaction, type Db } from './connection';
@@ -115,6 +116,9 @@ export function listEvidence(db: Db, conceptId: number): Evidence[] {
     .all(conceptId) as unknown as EvidenceRow[];
   return rows.map((row) => ({ ...evidenceDetails(row), id: row.id, snapshotId: row.snapshot_id }));
 }
+
+export const portableProofAtDepth = (db: Db, conceptId: number, depth: Depth) =>
+  listEvidence(db, conceptId).some(e => e.masteryVerified && coversDepth(e.depth, depth));
 
 export function listWorkspaceEvidence(db: Db, workspaceId: string, includeChangeLessons = false): GraphEvidence[] {
   const rows = db.prepare(
