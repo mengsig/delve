@@ -8,7 +8,7 @@ import { errorMessage, useRead } from '../useRead';
 import { Conversation, LessonBlocks } from './Conversation';
 import { LessonHeading, LessonNotes } from './LessonNotes';
 import { useLessonDraft } from './LessonDraft';
-import { useOpenLesson } from './LessonStart';
+import { LessonRecovery, useOpenLesson } from './LessonStart';
 import { LessonRail } from './Mastery';
 import type { ReaderProps } from './ReaderHeader';
 import { ResponseDock } from './ResponseDock';
@@ -36,11 +36,7 @@ function Thread({ body, tutor, scope }: { body: ReaderLesson; tutor: LessonTutor
       <div><b>Delve tutor</b><small>Lesson conversation</small></div><LatestInstrumentLink body={body} compact /><small className="local-status">● &nbsp;Saved locally</small>
     </header>
     <Transcript scope={scope} lastMessage={body.messages.at(-1)?.id} pendingTurn={pending?.id}>
-      {body.invalidLatest && body.revision && <section className="reader-notice" role="status">
-        <p>The newest lesson could not be displayed. You can continue with the last readable version.</p>
-        <button disabled={tutor.pending || !tutor.signedIn} onClick={() => tutor.prepare({ kind: 'teach' })}>Retry lesson generation</button>
-        {tutor.provider !== 'demo' && <button disabled={tutor.pending || !tutor.signedIn} onClick={() => tutor.prepare({ kind: 'teach' }, true)}>Preview lesson request</button>}
-      </section>}
+      <LessonRecovery body={body} tutor={tutor} />
       {body.blocks.length > 0 && <section id="opening-lesson"><span className="message-author">Delve tutor</span>
         <LessonBlocks blocks={body.blocks} /></section>}
       {body.mastery.needsAdaptation && <section><strong>Saved question</strong><p>{body.mastery.activeCheck?.prompt}</p>

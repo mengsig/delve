@@ -18,8 +18,9 @@ export function lessonContext(db: Db, address: LessonAddress): LessonContext {
     WHERE wc.workspace_id = ? AND wc.concept_id = ? AND (original.portable = 1 OR original.workspace_id = w.id)`).get(workspaceId, conceptId);
   if (!row) throw new DomainError('CONCEPT_NOT_FOUND', 'This workspace does not contain the selected concept.');
   assert.ok(typeof row.id === 'number' && row.id > 0);
-  const binding = row.id === conceptId ? lessonBinding(db, address) : conceptId;
-  const snapshot = learningSnapshot(db, workspaceId, binding);
+  const snapshot = learningSnapshot(db, workspaceId, row.id);
+  const snapshotId = snapshot?.id ?? null;
+  const binding = lessonBinding(db, { ...address, conceptId: row.id, snapshotId });
   assert.ok(typeof row.key === 'string' && typeof row.title === 'string' && typeof row.summary === 'string');
   assert.ok(row.portable === 0 || row.portable === 1);
   assert.ok(!snapshot || (typeof snapshot.id === 'number' && typeof snapshot.commit_sha === 'string'));
@@ -27,7 +28,7 @@ export function lessonContext(db: Db, address: LessonAddress): LessonContext {
     workspaceId, conceptId: binding, canonicalConceptId: row.id, depth: address.depth, key: row.key, title: row.title, summary: row.summary,
     portable: row.portable === 1, topic: row.kind === 'topic',
     demo: isDemoWorkspace(db, workspaceId),
-    snapshotId: snapshot ? Number(snapshot.id) : null,
+    snapshotId,
     snapshot: snapshot ? String(snapshot.commit_sha) : null,
   };
 }

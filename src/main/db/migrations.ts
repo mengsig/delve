@@ -267,12 +267,15 @@ export const MIGRATIONS: readonly Migration[] = [
       AND c.title NOT LIKE 'Demo:%');
     CREATE TEMP TABLE migration_portable AS
     SELECT id, coalesce(delve_portable_alias(key, title), key) AS general_key,
-      coalesce(delve_portable_alias('', title), delve_normalized_concept(title)) AS normalized_title
+      coalesce(delve_portable_alias('', title), delve_normalized_concept(title)) AS normalized_title,
+      lower(trim(summary)) AS normalized_summary
     FROM concepts WHERE portable = 1 AND key NOT LIKE 'Demo:%';
     CREATE INDEX migration_portable_key ON migration_portable(general_key);
+    CREATE INDEX migration_portable_title ON migration_portable(normalized_title, normalized_summary);
     CREATE TEMP TABLE migration_groups AS
     SELECT general_key, min(id) AS sample_id, min(normalized_title) AS normalized_title,
       count(DISTINCT workspace_id) AS workspace_count,
+      CASE WHEN count(DISTINCT normalized_summary) = 1 AND min(normalized_summary) <> '' THEN min(normalized_summary) END AS shared_summary,
       (count(known_alias) = count(*) OR (count(DISTINCT normalized_summary) = 1 AND min(normalized_summary) <> '')) AS corroborated
     FROM migration_candidates
     GROUP BY general_key HAVING count(DISTINCT normalized_title) = 1 AND count(DISTINCT workspace_id) = count(*);
@@ -281,9 +284,21 @@ export const MIGRATIONS: readonly Migration[] = [
       SELECT CASE WHEN count(*) = 1 AND min(p.normalized_title) = groups.normalized_title THEN min(p.id) END
       FROM migration_portable p WHERE p.general_key = groups.general_key
     );
+    UPDATE migration_groups AS groups SET portable_id = (
+      SELECT CASE WHEN count(*) = 1 THEN min(p.id) END FROM migration_portable p
+      WHERE p.normalized_title = groups.normalized_title AND p.normalized_summary = groups.shared_summary
+    ) WHERE portable_id IS NULL
+      AND NOT EXISTS (SELECT 1 FROM migration_portable p WHERE p.general_key = groups.general_key);
+    DELETE FROM migration_groups WHERE portable_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM migration_candidates a JOIN migration_candidates b ON a.workspace_id = b.workspace_id AND a.id <> b.id
+      JOIN migration_groups other ON other.general_key = b.general_key
+      WHERE a.general_key = migration_groups.general_key AND other.portable_id = migration_groups.portable_id
+    );
     DELETE FROM migration_groups WHERE portable_id IS NULL AND (
       workspace_count < 2 OR NOT corroborated
       OR EXISTS (SELECT 1 FROM migration_portable p WHERE p.general_key = migration_groups.general_key)
+      OR EXISTS (SELECT 1 FROM migration_portable p
+        WHERE p.normalized_title = migration_groups.normalized_title AND p.normalized_summary = migration_groups.shared_summary)
       OR EXISTS (SELECT 1 FROM concepts c WHERE c.key = migration_groups.general_key)
     );
     INSERT INTO concepts (key, title, summary, portable, workspace_id, created_at, updated_at)

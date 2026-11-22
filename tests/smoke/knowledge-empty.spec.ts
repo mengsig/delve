@@ -19,7 +19,7 @@ test('explains how to start and shows portable evidence in the demo map', async 
   await queue.click();
   await page.getByLabel('Search', { exact: true }).clear();
   const usage = page.getByRole('region', { name: 'Used in' });
-  await expect(usage.getByRole('listitem')).toHaveText(['Archon', 'Relay']);
+  await expect(usage.getByRole('listitem')).toHaveText(['Archon (demo)', 'Relay (demo)']);
   await expect(page.getByText('Shared across repositories', { exact: true })).toBeVisible();
   await expect(page.getByText('Deepest verified depth: low.', { exact: true })).toBeVisible();
   await expect.poll(() => page.locator('.knowledge-map canvas').evaluate(canvas => {
@@ -32,10 +32,16 @@ test('explains how to start and shows portable evidence in the demo map', async 
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
     await page.screenshot({ path: `.archon/evidence/global-concepts-${theme}.png` });
   }
-  await page.getByLabel('Workspace area').selectOption({ label: 'Archon' });
+  await page.getByLabel('Workspace area').selectOption({ label: 'Archon (demo)' });
   await page.getByLabel('Search', { exact: true }).fill('Durable queue');
   await queue.click();
   await expect(page.locator('.knowledge-detail').getByRole('button', { name: 'Worker leases', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open lesson', exact: true }).click();
+  await page.getByRole('button', { name: 'Lesson notes' }).click();
+  const notes = page.getByRole('dialog', { name: 'Lesson notes' });
+  await expect(notes).toContainText('Understood at low depth in Relay (demo).');
+  await notes.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: /Back to Knowledge/ }).click();
   await page.getByRole('button', { name: '← Personal knowledge' }).click();
   await expect(page.getByRole('heading', { name: 'Your knowledge, connected' })).toBeVisible();
 });

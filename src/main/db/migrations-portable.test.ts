@@ -26,13 +26,24 @@ function seedLegacyLesson(db: DatabaseSync): void {
 }
 
 function expectLegacyReader(db: DatabaseSync, portable: number): void {
+  db.prepare(`INSERT INTO conversations (id,workspace_id,concept_id,depth,title,created_at,updated_at)
+    VALUES (2,'a',?,'low','Current chat','t','t')`).run(portable);
+  db.exec(`INSERT INTO messages (conversation_id,role,body,created_at) VALUES (2,'learner','{"text":"Newer question"}','t');`);
   const lesson = readLesson(db, { workspaceId: 'a', conceptId: portable, depth: 'low' });
   expect(lesson.source).toBe('abcd');
   expect(lesson.blocks).toContainEqual(expect.objectContaining({ text: 'The saved queue lesson.' }));
-  expect(lesson.messages).toMatchObject([{ text: 'Saved question' }]);
+  expect(lesson.messages).toMatchObject([{ text: 'Saved question' }, { text: 'Newer question' }]);
   expect(lesson.mastery).toMatchObject({ stage: 'checking', correctAnswers: 1 });
   const progress = readLearningProgress(db, readWorkspaceGraph(db, 'a'), 'low');
   expect(progress.checks).toMatchObject([{ conceptId: portable, snapshot: 'abcd', streak: 1, attempted: true }]);
+}
+
+function expectRelatedRemap(db: DatabaseSync, portable: number): void {
+  db.prepare('INSERT INTO snapshot_concepts (snapshot_id, concept_id) VALUES (2, ?)').run(portable);
+  const lesson = readLesson(db, { workspaceId: 'a', conceptId: portable, depth: 'low' });
+  expect(lesson).toMatchObject({ source: 'efab', blocks: [],
+    messages: [{ text: 'Saved question' }, { text: 'Newer question' }] });
+  expect(readLearningProgress(db, readWorkspaceGraph(db, 'a'), 'low').checks).toEqual([]);
 }
 
 function proveGlobalLearning(db: DatabaseSync, portable: number): void {
@@ -135,6 +146,7 @@ function proveGlobalLearning(db: DatabaseSync, portable: number): void {
       expect(getGlobalKnowledgeGraph(db).concepts.map(c => c.id)).not.toContain(1);
       expectLegacyReader(db, portable);
       proveGlobalLearning(db, portable);
+      expectRelatedRemap(db, portable);
       db.prepare("DELETE FROM workspaces WHERE id = 'a'").run();
       expect(db.prepare('SELECT count(*) AS n FROM migrated_evidence_archive').get()!.n).toBe(4);
       expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
@@ -142,3 +154,30 @@ function proveGlobalLearning(db: DatabaseSync, portable: number): void {
       db.close();
     }
   });
+
+it('preserves distinct punctuation and reuses a foundation under a different portable key', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    migrate(db, MIGRATIONS.slice(0, 6));
+    db.exec(`INSERT INTO workspaces (id,kind,name,source,created_at) VALUES ('a','git','A','/a','t'), ('b','git','B','/b','t');
+      INSERT INTO concepts (id,key,title,summary,portable,workspace_id,created_at,updated_at) VALUES
+      (1,'ws/a/c','C++','Templates',0,'a','t','t'), (2,'ws/b/c','C#','Generics',0,'b','t','t'),
+      (3,'c','C','A procedural language',1,NULL,'t','t'),
+      (4,'ws/a/bloom-filter','Bloom filter','Probabilistic set membership',0,'a','t','t'),
+      (5,'ws/b/bloom-filter','Bloom filter','Probabilistic set membership',0,'b','t','t'),
+      (6,'ds/bloom-filter','Bloom filter','Probabilistic set membership',1,NULL,'t','t');
+      INSERT INTO workspace_concepts (workspace_id,concept_id) VALUES ('a',1), ('b',2), ('a',4), ('b',5), ('a',6);
+      INSERT INTO evidence (concept_id,depth,status,source,note,workspace_id,recorded_at,mastery_verified) VALUES
+      (1,'low','demonstrated','check','C++ templates','a','t',1),
+      (6,'medium','demonstrated','check','False positives','a','t',1);`);
+    migrate(db);
+    expect(db.prepare('SELECT legacy_concept_id, portable_concept_id FROM concept_identity_links ORDER BY legacy_concept_id').all())
+      .toEqual([{ legacy_concept_id: 4, portable_concept_id: 6 }, { legacy_concept_id: 5, portable_concept_id: 6 }]);
+    const graph = readWorkspaceGraph(db, 'b');
+    expect(graph.concepts.map(c => c.id)).toEqual([2, 6]);
+    expect(graph.evidence).toMatchObject([{ conceptId: 6, note: 'False positives' }]);
+    expect(db.prepare('SELECT note FROM evidence WHERE concept_id = 1').get()?.note).toBe('C++ templates');
+  } finally {
+    db.close();
+  }
+});

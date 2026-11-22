@@ -7,11 +7,12 @@ const aliases = new Map([
 ]);
 
 export function normalizedConceptName(text: string): string {
-  return text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  return text.normalize('NFKC').toLowerCase().trim().replace(/\s+/gu, ' ');
 }
 
 export function portableAlias(key: string, title: string): string | undefined {
-  return aliases.get(normalizedConceptName(key)) ?? aliases.get(normalizedConceptName(title));
+  const lookup = (value: string) => aliases.get(normalizedConceptName(value).replace(/[()_-]+/g, ' ').trim().replace(/\s+/g, ' '));
+  return lookup(key) ?? lookup(title);
 }
 
 export const portableKeyGuide = 'For common foundations use these canonical keys: ' + [...new Set(aliases.values())].join(', ') + '.';

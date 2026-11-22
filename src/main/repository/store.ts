@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import type { ChangeRef, ChangeBrief, GenerationResult, RepoPreview, RepoRequest, SavedRequest } from '../../shared/repository';
 import { DEPTHS, type Depth } from '../../shared/domain';
 import { listEvidence } from '../db/evidence';
-import { coversDepth } from '../../shared/evidence-depth';
+import { coversDepth, demonstratedEvidence } from '../../shared/evidence-depth';
+import { readWorkspaceGraph } from '../db/graph';
 import { DomainError } from '../../shared/errors';
 import { addPrerequisiteInTransaction, conceptStorageKey, getConcept, getConceptByKey, upsertConceptInTransaction, type Concept } from '../db/concepts';
 import { nowIso, transaction, type Db } from '../db/connection';
@@ -104,18 +105,20 @@ function knownAtDepth(db: Db, concept: Concept, depth: Depth): boolean {
     && (e.depth === depth || concept.portable && coversDepth(e.depth, depth)));
 }
 
-function replacementSuggestion(db: Db, depth: Depth, proposal: GraphProposal, concepts: Map<string, Concept>, target: Concept) {
-  const candidates = [...new Map([...concepts.values()].map(c => [c.id, c])).values()];
-  const known = new Set(candidates.filter(c => knownAtDepth(db, c, depth)).map(c => c.id));
+function replacementSuggestion(db: Db, workspaceId: string, depth: Depth, target: Concept) {
+  const { concepts: candidates, edges, evidence } = readWorkspaceGraph(db, workspaceId);
+  const deepest = demonstratedEvidence(evidence);
+  const exact = new Set(evidence.filter(e => e.depth === depth && e.status === 'demonstrated').map(e => e.conceptId));
+  const known = new Set(candidates.filter(c => {
+    const verified = deepest.get(c.id);
+    return exact.has(c.id) || (c.portable && verified && coversDepth(verified.depth, depth));
+  }).map(c => c.id));
   const prerequisites = new Map<number, Set<number>>();
-  for (const edge of proposal.edges) {
-    const from = concepts.get(edge.concept);
-    const prior = concepts.get(edge.prerequisite);
-    assert.ok(from && prior);
-    if (from.id === prior.id) continue;
-    const required = prerequisites.get(from.id) ?? new Set<number>();
-    required.add(prior.id);
-    prerequisites.set(from.id, required);
+  for (const { conceptId, prerequisiteId } of edges) {
+    assert.notEqual(conceptId, prerequisiteId);
+    const required = prerequisites.get(conceptId) ?? new Set<number>();
+    required.add(prerequisiteId);
+    prerequisites.set(conceptId, required);
   }
   const missing = candidates.filter(c => !known.has(c.id));
   const ready = missing.filter(c => [...(prerequisites.get(c.id) ?? [])].every(id => known.has(id)));
@@ -147,9 +150,8 @@ function recommendation(db: Db, source: ApprovedSource, proposal: GraphProposal,
   const { depth } = source.request;
   assert.ok(db.isTransaction && target.id > 0);
   const original = { conceptId: target.id, title: target.title, reason: proposal.recommendation.reason };
-  if (!target.portable || !knownAtDepth(db, target, depth)) return original;
-  if (proposal.schema === 'delve.change/1') return null;
-  return replacementSuggestion(db, depth, proposal, concepts, target) ?? original;
+  if (proposal.schema === 'delve.change/1' || !target.portable || !knownAtDepth(db, target, depth)) return original;
+  return replacementSuggestion(db, source.request.workspaceId, depth, target) ?? original;
 }
 
 function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: ChangeReply, concepts: Map<string, Concept>): ChangeBrief {
@@ -188,7 +190,7 @@ function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: Ch
   }
   const spans = bindConceptSpans(reply.spans, source.patches ?? [], touchedIds);
   const suggested = recommendation(db, source, reply, concepts) ?? { conceptId: change.id, title: change.title,
-    reason: reply.recommendation.key === null ? reply.recommendation.reason : changeApplicationReason };
+    reason: reply.recommendation.reason };
   return { conceptId: change.id, title: preview.title, summary: reply.summary, what: reply.what, why: reply.why,
     before: reply.before, after: reply.after, base: preview.base, commit: preview.commit, files: preview.files, spans, partial: preview.partial, mechanics, boundary, coverageNote: preview.coverageNote, touched, trace, excerpt,
     recommendation: suggested };
@@ -290,6 +292,6 @@ export function persistGeneration(db: Db, source: ApprovedSource, proposal: Grap
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT coalesce(max(last_used), 0) + 1 FROM repository_generations))`)
       .run(cacheKey, workspaceId, snapshotId, selection.kind, ref, depth, provider, cacheModel(preview.model), proposal.schema,
         JSON.stringify(result), JSON.stringify(proposal), next.conceptId, next.reason, nowIso());
-    return result;
+    return projectSavedChange(db, result, depth);
   });
 }

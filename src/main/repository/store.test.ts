@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { RepoSelection } from '../../shared/repository';
 import { openDatabase, type Db } from '../db/connection';
 import { upsertConcept } from '../db/concepts';
-import { recordEvidence } from '../db/evidence';
+import { recordEvidence, resetEvidence } from '../db/evidence';
 import { readWorkspaceCoverage, readWorkspaceGraph } from '../db/graph';
 import { getGlobalKnowledgeGraph } from '../db/knowledge';
 import { addWorkspace } from '../db/workspaces';
@@ -96,6 +96,21 @@ it('opens a saved change with the current global evidence and teaches its reposi
   }
 });
 
+it('restores the original saved recommendation after portable evidence is reset', () => {
+  const selection = { kind: 'pr', ref: '20' } as const;
+  const selected = source(selection, previous);
+  const proxy = upsertConcept(db, { workspaceId, portable: true, key: 'nginx/proxy', title: 'Proxy' });
+  recordEvidence(db, { workspaceId, conceptId: proxy.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const reply = { ...change, recommendation: { key: proxy.key, reason: 'Learn about proxies.' } };
+  const result = persistGeneration(db, selected, reply);
+  if (result.kind !== 'change') throw new Error('Expected a change brief');
+  expect(result.brief.recommendation.conceptId).toBe(result.brief.conceptId);
+  resetEvidence(db, proxy.id, { workspaceId, depth: 'medium' });
+  const reopened = latestBrief(db, { ...selection, workspaceId, depth: 'medium', provider: 'codex' });
+  expect(reopened?.recommendation).toEqual({ conceptId: proxy.id, reason: 'Learn about proxies.', title: 'Proxy' });
+  expect(useCachedGeneration(db, selected)).toEqual({ kind: 'change', brief: reopened });
+});
+
 it('recommends the missing prerequisite of the linked usage before an unrelated ready concept', () => {
   const portable = upsertConcept(db, { workspaceId, portable: true, key: 'nginx/proxy', title: 'Proxy' });
   recordEvidence(db, { workspaceId, conceptId: portable.id, depth: 'medium', status: 'demonstrated',
@@ -107,6 +122,8 @@ it('recommends the missing prerequisite of the linked usage before an unrelated 
   ], edges: [...mapped.edges, { concept: 'web/route', prerequisite: 'http' }],
   recommendation: { key: 'nginx/proxy', reason: 'Study the proxy first.' } };
   persistGeneration(db, source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline), proposal);
+  persistGeneration(db, source({ kind: 'baseline', commit: previous, paths: ['src/ports.ts'] }, previous),
+    { ...mapped, recommendation: proposal.recommendation });
   const graph = readWorkspaceGraph(db, workspaceId);
   expect(graph.suggestions?.medium?.conceptId).toBe(graph.concepts.find(c => c.key === 'http')?.id);
 });
