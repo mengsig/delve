@@ -38,12 +38,14 @@ const leaseContext = [
   /^arrival order (?:doesn't|does not) (?:matter|decide the winner)$/,
 ];
 
+const claimQuestion = /^does (?:the |an? )?(?:current|expired) claim (?:matter|win)\?$/;
+
 function leaseDecision(statement: string): Decision | undefined {
   const normalized = statement.replace(validityWords, (_, word: string) =>
     word === 'active' || word === 'current' ? 'current claim' : 'expired claim');
   let chosen: Decision | undefined;
-  for (const sentence of normalized.split(/(?<=[.?!])\s+/)) {
-    if (!chosen && sentence.endsWith('?')) continue;
+  for (const sentence of normalized.split(/(?<=[.?!])\s*/)) {
+    if (!chosen && claimQuestion.test(sentence)) continue;
     const clause = sentence.replace(/\.$/, '');
     if (leaseContext.some(pattern => pattern.test(clause))) continue;
     const decision = explicitChoice(clause);

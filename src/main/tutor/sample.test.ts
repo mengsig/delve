@@ -102,6 +102,9 @@ const expiredWins = 'An expired claim cannot authorize a write.';
 
 it.each([
   ['lease', 'Does the active claim matter? The expired claim wins.', expiredWins],
+  ['lease', 'Does the active claim matter?The expired claim wins.', expiredWins],
+  ['lease', 'The active claim wins, but does the queue need to wait? The expired claim wins.', offlineLimit],
+  ['lease', 'I would accept the expired claim; why would anyone wait? The active claim wins.', offlineLimit],
   ['lease', "The active claim wins over the expired claim. Arrival order doesn't matter.", matchesKeyIdea],
   ['lease', 'The newer token should be accepted.', offlineLimit],
   ['lease', 'The latest claim wins.', offlineLimit],
