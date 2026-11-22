@@ -253,3 +253,28 @@ test('serializes header and keyboard navigation while a Knowledge workspace swit
     await release.dispose();
   }
 });
+
+test('opens Progress for the mastered path when the active workspace contains only change concepts', async ({ desktop }) => {
+  const db = openDatabase(join(desktop.directory, 'delve.sqlite'));
+  const reviewed = addWorkspace(db, { kind: 'topic', title: 'Reviewed systems' });
+  const concept = upsertConcept(db, { key: 'acknowledgment', title: 'Acknowledgment', workspaceId: reviewed.id, portable: true });
+  recordEvidence(db, { conceptId: concept.id, workspaceId: reviewed.id, depth: 'medium',
+    status: 'demonstrated', source: 'check', masteryVerified: true });
+  const origin = addWorkspace(db, { kind: 'topic', title: 'Change notes' });
+  transaction(db, () => upsertConceptInTransaction(db, { key: 'retry-notes', title: 'Retry notes', workspaceId: origin.id, portable: false }, false));
+  db.close();
+
+  const page = await desktop.restart();
+  const identity = page.locator('#active-workspace strong');
+  await expect(identity).toHaveText(origin.name);
+  await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  await page.getByLabel('Workspace area').selectOption({ label: 'All workspaces' });
+  await expect(page.getByRole('heading', { name: 'Path mastered' })).toBeVisible();
+  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveAttribute('aria-valuetext', '1 of 1');
+  await page.getByRole('button', { name: 'View progress' }).click();
+  await expect(page.getByRole('heading', { name: 'Your field record.' })).toBeVisible();
+  await expect(identity).toHaveText(reviewed.name, { timeout: 2500 });
+  await page.getByRole('button', { name: /Back to Knowledge/i }).click();
+  await expect(identity).toHaveText(origin.name);
+  await expect(page.getByRole('heading', { name: 'Path mastered' })).toBeVisible();
+});

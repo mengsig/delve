@@ -184,7 +184,8 @@ function EndOfPath({ model, areas, activeId, retryProgress, onProgress }: Conten
   const progressAvailable = areas.every(a => a.progress.available);
   const guided = model.matches.filter(concept => model.places.get(concept.id)?.progress.onAtlas);
   const complete = guided.length > 0 && guided.every(concept => model.states.get(concept.id) === 'mastered');
-  const matches = model.matches.map(c => model.places.get(c.id)?.area);
+  const progressConcepts = complete ? guided : model.matches;
+  const matches = progressConcepts.map(c => model.places.get(c.id)?.area);
   const area = matches.find(candidate => candidate?.workspaceId === activeId) ?? matches[0];
   if (!progressAvailable) return <div className="knowledge-path-end"><h3>Progress unavailable</h3>
     <p>Reload this area to find a lesson.</p><button onClick={retryProgress}>Retry area progress</button></div>;
