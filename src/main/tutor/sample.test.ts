@@ -103,6 +103,13 @@ it.each([
   ['lease', 'The expired claim wins.', 'An expired claim cannot authorize a write'],
   ['lease', 'The stale token should be accepted.', 'An expired claim cannot authorize a write'],
   ['lease', 'I compare the claim to the worker’s start time.', 'how would it identify the current owner?'],
+  ['lease', 'The active claim wins over the expired claim.', 'Choosing the current claim matches the commit rule'],
+  ['lease', 'The expired claim wins over the active claim.', 'An expired claim cannot authorize a write'],
+  ['lease', 'I would save the result from the current lease instead of the expired lease.', 'Choosing the current claim matches the commit rule'],
+  ['lease', 'I would save the result from the expired lease instead of the current lease.', 'An expired claim cannot authorize a write'],
+  ['lease', 'I would write the result from the expired claim. B still holds the active claim.', 'An expired claim cannot authorize a write'],
+  ['lease', 'I compare the active claim to the worker’s start time.', 'Which values would your rule compare'],
+  ['lease', 'The expired claim should never be accepted.', 'Which values would your rule compare'],
   ['lease', 'The expired claim.', 'how would it identify the current owner?'],
   ['lease', 'Maybe the lease? I’m unsure which result they should save.', 'how would it identify the current owner?'],
   ['exposure', 'I turned the ISO up to make the cyclist sharper.', 'Shortening the shutter time'],
@@ -128,8 +135,8 @@ it('saves the keyed grade and corrects a learner who trusts an expired claim', a
   const { mastery } = prepareTurn(db, request);
   const check = freshCheckSchema.parse(mastery.check);
   const saved = await submit(request, { kind: 'answer', revision: lesson.mastery.revision!, answer: check.expected,
-    reasoning: 'The stale token should be accepted.' });
+    reasoning: 'I would write the result from the expired claim. B still holds the active claim.' });
   expect(saved.mastery).toMatchObject({ attempts: 1, correctAnswers: 1 });
-  expect(saved.messages.at(-2)?.text).toContain('The stale token should be accepted.');
+  expect(saved.messages.at(-2)?.text).toContain('I would write the result from the expired claim. B still holds the active claim.');
   expect(saved.messages.at(-1)).toMatchObject({ correct: true, reasoningFeedback: expect.stringContaining('An expired claim cannot authorize a write') });
 });
