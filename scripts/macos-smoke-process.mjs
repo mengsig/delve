@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { closeSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
+
+const MARKER_LOG_BYTES = 1024 * 1024;
+const DIAGNOSTIC_LOG_BYTES = 16 * 1024;
 
 function launch(executable, log, env) {
   const logFd = openSync(log, 'w');
@@ -17,22 +20,49 @@ function launch(executable, log, env) {
   }
 }
 
-function reportFailure(pid, log) {
-  console.error(`Delve process group at failure (PGID ${pid ?? 'unknown'}):`);
-  if (pid !== undefined) {
-    try {
-      const listing = execFileSync('ps', ['-axo', 'pid,ppid,pgid,stat,command'], {
-        encoding: 'utf8', timeout: 1_000, killSignal: 'SIGKILL',
-      });
-      const [header, ...rows] = listing.trimEnd().split('\n');
-      const members = rows.filter(row => Number(row.trim().split(/\s+/, 3)[2]) === pid);
-      console.error([header, ...members].join('\n'));
-    } catch (error) {
-      console.error('Could not list process group:', error);
-    }
-  }
+function readLog(log, limit, tail = false) {
+  const fd = openSync(log, 'r');
   try {
-    console.error('Delve stdout and stderr:\n' + readFileSync(log, 'utf8'));
+    const stat = fstatSync(fd);
+    assert.ok(stat.isFile(), 'Delve logs must be written to a regular file');
+    assert.ok(Number.isSafeInteger(stat.size) && stat.size >= 0, 'Delve log size must be a valid byte count');
+    const buffer = Buffer.alloc(Math.min(stat.size, limit));
+    const offset = tail ? stat.size - buffer.length : 0;
+    const count = readSync(fd, buffer, 0, buffer.length, offset);
+    return { text: buffer.toString('utf8', 0, count), truncated: stat.size > limit };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function assertLogMarker(log, marker, message) {
+  const { text, truncated } = readLog(log, MARKER_LOG_BYTES);
+  assert.ok(text.includes(marker), truncated ? `${message} (searched the first ${MARKER_LOG_BYTES} bytes)` : message);
+}
+
+function snapshotGroup(pid) {
+  if (pid === undefined) return 'Delve process group at failure (PGID unknown)';
+  const title = `Delve process group at failure (PGID ${pid}):`;
+  try {
+    const listing = execFileSync('ps', ['-axo', 'pid,ppid,pgid,stat,comm'], {
+      encoding: 'utf8', timeout: 1_000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024,
+    });
+    const [header, ...rows] = listing.trimEnd().split('\n');
+    const members = rows.filter(row => Number(row.trim().split(/\s+/, 3)[2]) === pid);
+    const omitted = members.length > 40 ? `\n${members.length - 40} other group members omitted` : '';
+    return [title, header, ...members.slice(0, 40)].join('\n') + omitted;
+  } catch (error) {
+    return `${title}\nCould not list process group: ${error.code ?? error.message}`;
+  }
+}
+
+function reportFailure(snapshot, log, killedGroup) {
+  if (snapshot) console.error(snapshot);
+  if (killedGroup !== undefined) console.error(`Sent SIGKILL to Delve process group ${killedGroup}.`);
+  try {
+    const { text, truncated } = readLog(log, DIAGNOSTIC_LOG_BYTES, true);
+    const label = truncated ? ` (last ${DIAGNOSTIC_LOG_BYTES} bytes)` : '';
+    console.error(`Delve stdout and stderr${label}:\n${text}`);
   } catch (error) {
     console.error('Could not read Delve output:', error);
   }
@@ -42,14 +72,31 @@ async function killGroup(child, exited) {
   if (child.pid === undefined) return;
   assert.ok(Number.isSafeInteger(child.pid) && child.pid > 1, 'Delve must have a valid process group ID');
   assert.notEqual(child.pid, process.pid, 'Delve must be outside the smoke runner process group');
+  let killedGroup;
   try {
     process.kill(-child.pid, 'SIGKILL');
-    console.error(`Sent SIGKILL to Delve process group ${child.pid}.`);
+    killedGroup = child.pid;
   } catch (error) {
     if (error.code !== 'ESRCH') throw error;
   }
   const status = await Promise.race([exited, delay(1_000, null, { ref: false })]);
   assert.notEqual(status, null, `Delve (PID ${child.pid}) did not exit within one second of process group SIGKILL`);
+  return killedGroup;
+}
+
+async function cleanupFailure(child, exited, log) {
+  let snapshot;
+  let killedGroup;
+  try {
+    snapshot = snapshotGroup(child.pid);
+  } finally {
+    try {
+      killedGroup = await killGroup(child, exited);
+    } finally {
+      child.unref();
+      reportFailure(snapshot, log, killedGroup);
+    }
+  }
 }
 
 export async function smoke(executable, log, env, startupMarker, expectedExitCode,
@@ -64,21 +111,18 @@ export async function smoke(executable, log, env, startupMarker, expectedExitCod
       const [code, signal] = earlyExit;
       throw new Error(`Delve exited during startup (${signal ?? code}).`);
     }
-    assert.ok(readFileSync(log, 'utf8').includes(startupMarker), `Delve did not reach ${startupMarker}`);
+    assertLogMarker(log, startupMarker, `Delve did not reach ${startupMarker}`);
 
     assert.ok(child.kill('SIGTERM'), 'Delve must still be running when SIGTERM is sent');
     const shutdown = await Promise.race([exited, delay(shutdownMs, null, { ref: false })]);
     assert.notEqual(shutdown, null, `Delve did not exit within ${shutdownMs}ms of SIGTERM`);
     assert.deepEqual(shutdown, [expectedExitCode, null], 'Delve must exit with the expected code after SIGTERM');
-    assert.ok(readFileSync(log, 'utf8').includes('[delve] received SIGTERM'), 'Delve did not handle SIGTERM');
+    assertLogMarker(log, '[delve] received SIGTERM', 'Delve did not handle SIGTERM');
   } catch (error) {
-    reportFailure(child.pid, log);
     try {
-      await killGroup(child, exited);
+      await cleanupFailure(child, exited, log);
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], 'Delve smoke and process group cleanup both failed', { cause: cleanupError });
-    } finally {
-      child.unref();
     }
     throw error;
   }

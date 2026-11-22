@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -7,9 +7,10 @@ import { smoke } from '../../scripts/macos-smoke-process.mjs';
 
 const app = `#!/usr/bin/env node
 const { spawn } = require('node:child_process');
-const { writeFileSync } = require('node:fs');
+const { writeFileSync, writeSync } = require('node:fs');
 process.on('SIGTERM', () => {
-  console.log('fixture received SIGTERM');
+  if (process.env.FIXTURE_EXITS !== 'true') writeSync(1, 'x'.repeat(256 * 1024) + '\\n');
+  writeSync(1, 'fixture received SIGTERM\\n');
   if (process.env.FIXTURE_EXITS === 'true') process.exit(7);
 });
 const helper = spawn(process.execPath, ['-e', 'setTimeout(() => process.exit(91), 6000)'], { stdio: 'ignore' });
@@ -69,6 +70,11 @@ it.skipIf(process.platform === 'win32').each([
     expect(output).toMatch(new RegExp(`^\\s*${pids[1]}\\s+`, 'm'));
     expect(output).toContain('fixture received SIGTERM');
     expect(output).toContain(`Sent SIGKILL to Delve process group ${pids[0]}`);
+    if (!exits) {
+      expect(statSync(log).size).toBeGreaterThan(256 * 1024);
+      expect(output).toContain('Delve stdout and stderr (last 16384 bytes)');
+      expect(output.length).toBeLessThan(20_000);
+    }
     await expect.poll(() => runningPids(pids), { timeout: 500 }).toEqual([]);
   } finally {
     diagnostics.mockRestore();
