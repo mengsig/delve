@@ -44,6 +44,25 @@ async function verifyPositionAcrossFilters(page: Page, lastTitle: string) {
   await expect(current).toContainText(lastTitle);
 }
 
+async function verifyLessonAndBack(page: Page, title: string) {
+  const selected = page.locator('.knowledge-list-select:focus');
+  const lesson = page.getByRole('button', { name: `Open lesson: ${title}` });
+  await lesson.focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect(selected).toContainText(title);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.knowledge-detail')).toContainText(title);
+  await lesson.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: title, level: 1 })).toBeVisible();
+  await page.getByRole('button', { name: /Back to Knowledge/i }).click();
+  await page.getByLabel('Group by workspace').focus();
+  await page.keyboard.press('Tab');
+  await expect(selected).toContainText(title);
+  await page.keyboard.press('Tab');
+  await expect(lesson).toBeFocused();
+}
+
 test('navigates the virtualized learned list by keyboard', async ({ desktop: { page, directory, application } }) => {
   seedLearned(directory);
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
@@ -90,18 +109,5 @@ test('navigates the virtualized learned list by keyboard', async ({ desktop: { p
   await page.keyboard.press('End');
   await expect(page.getByRole('button', { name: `Open lesson: ${lastTitle}` })).toBeFocused();
   await verifyPositionAcrossFilters(page, lastTitle);
-  await page.getByRole('button', { name: `Open lesson: ${lastTitle}` }).focus();
-  await page.keyboard.press('Shift+Tab');
-  await expect(selected).toContainText(lastTitle);
-  await page.keyboard.press('Enter');
-  await expect(page.locator('.knowledge-detail')).toContainText(lastTitle);
-  await page.getByRole('button', { name: `Open lesson: ${lastTitle}` }).focus();
-  await page.keyboard.press('Enter');
-  await expect(page.getByRole('heading', { name: lastTitle, level: 1 })).toBeVisible();
-  await page.getByRole('button', { name: /Back to Knowledge/i }).click();
-  await page.getByLabel('Group by workspace').focus();
-  await page.keyboard.press('Tab');
-  await expect(selected).toContainText(lastTitle);
-  await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: `Open lesson: ${lastTitle}` })).toBeFocused();
+  await verifyLessonAndBack(page, lastTitle);
 });
