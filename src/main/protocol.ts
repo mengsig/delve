@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { extname, isAbsolute, join, resolve, sep } from 'node:path';
+import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { protocol } from 'electron';
 import { instrumentResponse } from './instrument-origin';
 import { APP_HOST, APP_ORIGIN, APP_SCHEME, CONTENT_SECURITY_POLICY } from './security';
@@ -26,8 +26,10 @@ export function resolveAppPath(root: string, url: string): string | null {
   const parsed = new URL(url);
   if (parsed.host !== APP_HOST) return null;
   const pathname = decodeURIComponent(parsed.pathname);
-  const file = resolve(root, `.${pathname === '/' ? '/index.html' : pathname}`);
-  return file.startsWith(root + sep) ? file : null;
+  const normalizedRoot = resolve(root);
+  const file = resolve(normalizedRoot, `.${pathname === '/' ? '/index.html' : pathname}`);
+  const pathFromRoot = relative(normalizedRoot, file);
+  return pathFromRoot && pathFromRoot !== '..' && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot) ? file : null;
 }
 
 /** Serves the built renderer from `root` with a strict CSP header. */

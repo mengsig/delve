@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, parse, resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveAppPath } from './protocol';
 import { CONTENT_SECURITY_POLICY, isAppUrl } from './security';
@@ -22,7 +22,7 @@ describe('isAppUrl', () => {
 });
 
 describe('resolveAppPath', () => {
-  const root = join('/', 'opt', 'delve', 'renderer');
+  const root = resolve('/', 'opt', 'delve', 'renderer');
 
   it('maps app URLs into the renderer folder', () => {
     expect(resolveAppPath(root, 'app://delve/')).toBe(join(root, 'index.html'));
@@ -34,5 +34,21 @@ describe('resolveAppPath', () => {
     // The URL parser folds dot segments first, so this stays inside the root.
     expect(resolveAppPath(root, 'app://delve/%2e%2e/%2e%2e/etc/passwd')).toBe(join(root, 'etc', 'passwd'));
     expect(resolveAppPath(root, 'app://evil/index.html')).toBeNull();
+    expect(resolveAppPath(root, 'app://delve/..%2Frenderer-other%2Fsecret')).toBeNull();
+    expect(resolveAppPath(root, 'app://delve/%2e%2e%2f')).toBeNull();
+  });
+
+  it('normalizes the root before checking containment', () => {
+    expect(resolveAppPath(`${root}${sep}..${sep}renderer${sep}`, 'app://delve/')).toBe(resolve(root, 'index.html'));
+    expect(resolveAppPath(parse(root).root, 'app://delve/index.html')).toBe(resolve(parse(root).root, 'index.html'));
+  });
+
+  it.skipIf(process.platform !== 'win32')('handles root-relative and drive-letter Windows paths', () => {
+    const rootRelative = `${sep}opt${sep}delve${sep}renderer`;
+    for (const windowsRoot of [rootRelative, resolve(rootRelative), `${resolve(rootRelative)}${sep}`]) {
+      expect(resolveAppPath(windowsRoot, 'app://delve/')).toBe(resolve(windowsRoot, 'index.html'));
+      expect(resolveAppPath(windowsRoot, 'app://delve/..%5C..%5Csecret')).toBeNull();
+      expect(resolveAppPath(windowsRoot, 'app://evil/index.html')).toBeNull();
+    }
   });
 });
