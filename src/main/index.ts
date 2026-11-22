@@ -21,6 +21,7 @@ import { ConnectionSession } from './connections/session';
 import { createTransferLink, getGlobalKnowledgeGraph } from './db/knowledge';
 import { transaction } from './db/connection';
 import { DomainError } from '../shared/errors';
+import { reportStartupFailure, showErrorDialog } from './error-dialog';
 
 // electron-vite sets this in development only; an empty value means "not set".
 const devServerUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'] || undefined;
@@ -82,8 +83,8 @@ function createWindow(labs: LabHost, shutdown: Shutdown): BrowserWindow {
   const url = devServerUrl ?? `${APP_ORIGIN}/index.html`;
   window.loadURL(url).catch((error: unknown) => {
     if (shutdown.signal.aborted) return;
-    dialog.showErrorBox('Delve could not start', `Failed to load ${url}: ${String(error)}`);
-    shutdown.quit(1);
+    console.error('[delve] renderer failed to load', error);
+    void reportStartupFailure(`Failed to load ${url}: ${String(error)}`, shutdown);
   });
   return window;
 }
@@ -181,6 +182,7 @@ async function start(links: LearnInbox, shutdown: Shutdown): Promise<void> {
   const handlers = buildHandlers(db, tutor, labs, learning, links, connections, detect, shutdown.signal);
   registerIpc(ipcMain, handlers, (url) => isAppUrl(url, devServerUrl), shutdown.signal);
   createWindow(labs, shutdown);
+  console.error('[delve] main ready');
   app.on('activate', () => {
     if (!shutdown.signal.aborted && BrowserWindow.getAllWindows().length === 0) createWindow(labs, shutdown);
   });
@@ -198,8 +200,8 @@ if (!app.requestSingleInstanceLock()) {
     catch (error) {
       const message = error instanceof Error ? error.message : 'Invalid learn link.';
       void app.whenReady().then(() => {
-        if (!shutdown.signal.aborted) return dialog.showMessageBox({ type: 'warning', title: 'Learn link', message });
-      });
+        return showErrorDialog({ type: 'warning', title: 'Learn link', message }, shutdown.signal);
+      }).catch(error => { console.error('[delve] could not show learn link error', error); });
     }
   };
   const receiveArgs = (args: string[]) => args.filter(arg => /^delve:\/\//i.test(arg)).slice(0, 16).forEach(receive);
@@ -220,7 +222,6 @@ if (!app.requestSingleInstanceLock()) {
   });
   start(links, shutdown).catch((error: unknown) => {
     console.error('[delve] startup failed', error);
-    dialog.showErrorBox('Delve could not start', String(error));
-    shutdown.quit(1);
+    void reportStartupFailure(String(error), shutdown);
   });
 }
