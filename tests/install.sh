@@ -279,8 +279,29 @@ invoke_installer || fail 'macOS install failed'
 expect_output 'Next:'
 invoke_installer || fail 'macOS reinstall failed'
 expect_output 'Delve v0.1.0 is already installed: reinstalled'
+installed_home=$home
+ln -s "$case_dir" "$root/mac-home-alias"
+home=$root/mac-home-alias/home
+if invoke_installer --uninstall; then fail 'macOS uninstall accepted a symlink above HOME'; fi
+expect_output 'contains a symlink'
+[ -f "$app/Contents/program" ] || fail 'macOS uninstall removed files through the symlink'
+home=$installed_home
 invoke_installer --uninstall || fail 'macOS uninstall failed'
 expect_absent "$app"
+
+invoke_installer || fail 'macOS install for foreign file test failed'
+printf 'foreign bundle file\n' > "$app/Contents/keep"
+invoke_installer --uninstall || fail 'macOS uninstall with a foreign file failed'
+expect_absent "$app/Contents/program"
+[ "$(cat "$app/Contents/keep")" = 'foreign bundle file' ] || fail 'macOS uninstall deleted foreign content'
+expect_output "Left $app/Contents and its remaining contents"
+expect_output 'Delve uninstall is incomplete.'
+[ -f "$home/.local/share/delve/mac-install-dir" ] || fail 'macOS uninstall lost receipt while recorded directories remained'
+rm "$app/Contents/keep"
+invoke_installer --uninstall || fail 'macOS uninstall retry after removing foreign file failed'
+expect_absent "$app"
+expect_absent "$home/.local/share/delve/mac-install-dir"
+expect_output 'Delve uninstalled.'
 
 invoke_installer || fail 'macOS install after uninstall failed'
 printf 'foreign bundle file\n' > "$app/Contents/keep"

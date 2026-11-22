@@ -90,7 +90,11 @@ remove_entry() {
         return
       fi
       if ! rmdir "$1" 2>/dev/null; then
-        leave "$1 and its remaining contents"
+        if [ "$1" = "$share" ]; then
+          leave "$1 and its remaining contents"
+        else
+          defer_removal "$1 and its remaining contents"
+        fi
         return
       fi
       ;;
@@ -187,13 +191,13 @@ remove_mac_bundle() {
 }
 
 uninstall_mac() {
-  if ! safe_directory "$share"; then leave "$share (unsafe path)"; return; fi
+  safe_directory "$share" || die "$share contains a symlink or is not a directory. Left existing files in place."
   if [ ! -e "$mac_location" ] && [ ! -L "$mac_location" ]; then
     printf 'No macOS installation record found.\n'
     return
   fi
   read_mac_receipt
-  if ! safe_directory "$recorded_dir"; then leave "$recorded_dir (unsafe path)"; return; fi
+  safe_directory "$recorded_dir" || die "$recorded_dir contains a symlink or is not a directory. Left existing files in place."
   if [ -n "$recorded_version" ]; then
     remove_mac_bundle
   elif [ -e "$recorded_dir/Delve.app" ] || [ -L "$recorded_dir/Delve.app" ]; then
