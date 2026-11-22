@@ -8,15 +8,22 @@ import { smoke } from '../../scripts/macos-smoke-process.mjs';
 const app = `#!/usr/bin/env node
 const { spawn } = require('node:child_process');
 const { writeFileSync, writeSync } = require('node:fs');
+const mode = process.env.FIXTURE_MODE;
 process.on('SIGTERM', () => {
-  if (process.env.FIXTURE_EXITS !== 'true') writeSync(1, 'x'.repeat(256 * 1024) + '\\n');
+  if (mode === 'timeout') writeSync(1, 'x'.repeat(256 * 1024) + '\\n');
   writeSync(1, 'fixture received SIGTERM\\n');
-  if (process.env.FIXTURE_EXITS === 'true') process.exit(7);
+  if (mode === 'wrong exit') process.exit(7);
+  if (mode === 'clean') {
+    writeSync(1, '[delve] received SIGTERM\\n');
+    helper.once('exit', () => process.exit(0));
+    helper.kill('SIGTERM');
+  }
 });
-const helper = spawn(process.execPath, ['-e', 'setTimeout(() => process.exit(91), 6000)'], { stdio: 'ignore' });
+const helper = spawn(process.execPath, ['-e', 'setTimeout(() => process.exit(91), 8000)'], { stdio: 'ignore' });
 writeFileSync(process.env.FIXTURE_PIDS, JSON.stringify([process.pid, helper.pid]));
-console.log('fixture app ready');
-setTimeout(() => process.exit(91), 6000);
+if (mode === 'clean') writeSync(1, 'x'.repeat(17 * 64 * 1024 - 4));
+writeSync(1, 'fixture app ready\\n');
+setTimeout(() => process.exit(91), 8000);
 `;
 
 function runningPids(pids) {
@@ -50,9 +57,12 @@ function stopFixture(pidFile) {
 }
 
 it.skipIf(process.platform === 'win32').each([
-  { failure: 'Delve did not exit within 750ms of SIGTERM', exits: false },
-  { failure: 'Delve must exit with the expected code after SIGTERM', exits: true },
-])('stops the app process group on "$failure"', async ({ failure, exits }) => {
+  { title: 'kills the group and bounds diagnostics on shutdown timeout', mode: 'timeout',
+    failure: 'Delve did not exit within 1000ms of SIGTERM' },
+  { title: 'kills the remaining helper after an unexpected exit', mode: 'wrong exit',
+    failure: 'Delve must exit with the expected code after SIGTERM' },
+  { title: 'accepts startup and shutdown markers after more than 1 MiB of output', mode: 'clean' },
+])('$title', async ({ failure, mode }) => {
   const directory = mkdtempSync(join(tmpdir(), 'delve-mac-smoke-test-'));
   const executable = join(directory, 'Delve');
   const log = join(directory, 'launch.log');
@@ -60,9 +70,16 @@ it.skipIf(process.platform === 'win32').each([
   const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
     writeFileSync(executable, app, { mode: 0o700 });
-    const env = { ...process.env, FIXTURE_PIDS: pidFile, FIXTURE_EXITS: String(exits) };
-    await expect(smoke(executable, log, env, 'fixture app ready', 0, { startupMs: 1_500, shutdownMs: 750 }))
-      .rejects.toThrow(failure);
+    const env = { ...process.env, FIXTURE_PIDS: pidFile, FIXTURE_MODE: mode };
+    const result = smoke(executable, log, env, 'fixture app ready', 0, { startupMs: 1_500, shutdownMs: 1_000 });
+    if (!failure) {
+      await expect(result).resolves.toBeUndefined();
+      expect(statSync(log).size).toBeGreaterThan(1024 * 1024);
+      expect(diagnostics).not.toHaveBeenCalled();
+      expect(runningPids(readFixturePids(pidFile))).toEqual([]);
+      return;
+    }
+    await expect(result).rejects.toThrow(failure);
 
     const pids = readFixturePids(pidFile);
     const output = diagnostics.mock.calls.flat().join('\n');
@@ -70,7 +87,7 @@ it.skipIf(process.platform === 'win32').each([
     expect(output).toMatch(new RegExp(`^\\s*${pids[1]}\\s+`, 'm'));
     expect(output).toContain('fixture received SIGTERM');
     expect(output).toContain(`Sent SIGKILL to Delve process group ${pids[0]}`);
-    if (!exits) {
+    if (mode === 'timeout') {
       expect(statSync(log).size).toBeGreaterThan(256 * 1024);
       expect(output).toContain('Delve stdout and stderr (last 16384 bytes)');
       expect(output.length).toBeLessThan(20_000);
@@ -84,4 +101,4 @@ it.skipIf(process.platform === 'win32').each([
       rmSync(directory, { recursive: true, force: true });
     }
   }
-}, 5_000);
+}, 7_000);
