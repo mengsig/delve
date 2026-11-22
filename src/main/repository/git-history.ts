@@ -69,6 +69,16 @@ interface GitHistoryBatch {
   warning?: string;
 }
 
+async function unreadableCommit(reader: GitReader, tips: string[], skip: number): Promise<string> {
+  assert.ok(Number.isSafeInteger(skip) && skip >= 0);
+  assert.ok(tips.length > 0 && tips.every(tip => OBJECT_ID.test(tip)));
+  const result = await reader.run(['log', '--no-notes', '--no-show-signature', '--no-color',
+    '--author-date-order', `--skip=${skip}`, '--max-count=1', '--format=%H', ...tips, '--'], 1024);
+  const id = completedOutput(result, 'Could not identify the unreadable Git commit.').toString('utf8').trim();
+  assert.ok(OBJECT_ID.test(id), 'truncated history must identify a commit at the same offset');
+  return id;
+}
+
 export interface GitHistorySource {
   branches: string[];
   warnings: string[];
@@ -84,9 +94,12 @@ async function readGitHistoryBatch(reader: GitReader, tips: string[], labels: Ma
   if (!log.truncated) completedOutput(log, 'Could not read Git history.');
   const history = commitNodes(nulRecords(log.output), labels);
   const nodes = history.slice(0, COMMIT_BATCH);
+  if (log.truncated && nodes.length === 0) {
+    const id = await unreadableCommit(reader, tips, skip);
+    return { nodes, next: null, warning: `Git commit ${id} exceeds the metadata read limit. Reduce its commit metadata to view older history.` };
+  }
   const more = log.truncated || history.length > COMMIT_BATCH;
-  return { nodes, next: more ? skip + Math.max(1, nodes.length) : null,
-    warning: log.truncated ? 'Some Git commit metadata exceeded the read limit.' : undefined };
+  return { nodes, next: more ? skip + nodes.length : null };
 }
 
 export async function openGitHistory(path: string, branch?: string, commits = true): Promise<GitHistorySource> {

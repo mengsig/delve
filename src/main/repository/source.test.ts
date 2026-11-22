@@ -205,6 +205,42 @@ describe('Git change read boundaries', () => {
   });
 });
 
+describe('repository explorer metadata limits', () => {
+  it('stops at an oversized first commit and identifies it', async () => {
+    commit('Older commit', '--allow-empty');
+    await writeFile(join(root, 'message'), 'x'.repeat(2 * 1024 * 1024 + 1024));
+    git('commit', '--quiet', '--allow-empty', '-F', join(root, 'message'));
+    const oversized = git('rev-parse', 'HEAD');
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const page = await history.advance(() => 1);
+    expect(page.nodes).toEqual([]);
+    expect(page.next).toBeNull();
+    expect(page.warning).toContain(oversized);
+    expect(page.warning).toContain('Reduce its commit metadata');
+  });
+
+  it('preserves earlier pages and stops before an oversized later commit', async () => {
+    commit('Older commit', '--allow-empty');
+    await writeFile(join(root, 'message'), 'x'.repeat(2 * 1024 * 1024 + 1024));
+    git('commit', '--quiet', '--allow-empty', '-F', join(root, 'message'));
+    const oversized = git('rev-parse', 'HEAD');
+    for (let i = 0; i < 35; i++) commit(`Readable ${i}`, '--allow-empty');
+    const expected = git('log', '--format=%H', '--max-count=35').split('\n');
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const pages = [];
+    let next: number | null = 0;
+    while (next !== null && pages.length < 5) {
+      const page = await history.advance(() => pages.length + 1);
+      pages.push(page);
+      next = page.next;
+    }
+    expect(next).toBeNull();
+    expect(pages.flatMap(page => page.nodes.map(node => node.ref))).toEqual(expected);
+    expect(pages.at(-1)?.warning).toContain(oversized);
+  }, 30_000);
+
+});
+
 describe('repository explorer', () => {
   it('uses full non-HEAD branch ancestry and filters rows before paging', async () => {
     await writeFile(join(repo, 'shared.txt'), 'shared\n');
