@@ -8,7 +8,7 @@ import { findExecutable } from '../providers/which';
 const PROCESS_ENV = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
   'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR'];
 const GITHUB_ENV = ['GH_CONFIG_DIR', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy'];
-const GIT_NULL_FILE = '/dev/null';
+export const GIT_NULL_FILE = '/dev/null';
 
 function commandEnv(authenticated: boolean): NodeJS.ProcessEnv {
   const { PATH, Path } = process.env;
@@ -80,6 +80,7 @@ export async function sourceCommand(bin: 'git' | 'gh', args: string[], options: 
   });
 }
 
+// hooksPath is a directory lookup and must use the OS device path, not Git's file alias.
 const GIT_SAFETY = ['--no-pager', '-c', `core.hooksPath=${devNull}`, '-c', 'core.fsmonitor=false',
   '-c', `core.attributesFile=${GIT_NULL_FILE}`, '-c', 'maintenance.auto=false', '-c', 'gc.auto=0',
   '-c', 'diff.suppressBlankEmpty=false', '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=never'];
