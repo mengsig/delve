@@ -90,20 +90,23 @@ The demo tutor runs entirely offline. The Archon demo includes an illustrative b
 
 ## Global knowledge
 
-Open **Knowledge** in the header or search for it with Ctrl/⌘-K to see concepts across your
-topics and repositories. Shared concepts appear once as bridges; workspace colours, prerequisite
-lines and transfer links show how ideas connect. Filter by workspace, mastery or depth, search, focus
-a neighbourhood, or switch to the virtualized list of everything you have understood. Select a
-concept to open its lesson, review it, or show it in its workspace Atlas.
+Open **Knowledge** in the header or through Ctrl/⌘-K. The map starts in your workspace’s area when
+it contains concepts. Choose **All workspaces** above the map to see bridges and transfers. The guide
+selects an eligible lesson at your reading depth and explains which prerequisites you already know.
+Start it directly from the guide. If your tutor needs to generate an opening, you can inspect the
+exact request and grant it once with the same button.
 
-**Find connections** previews the exact request before a tutor proposes transfer links. Suggestions
-include a reason and model provenance, and you can remove them. Your graph and view settings are
-stored locally; an approved request sends the displayed concept information to your selected provider.
-The built-in demo workspaces are excluded from your personal knowledge record.
+Drag to pan, scroll to zoom, or choose **Fit map**. With the map focused, arrow keys preview
+concepts, Enter selects, Shift + arrows pan, +/− zoom, and Home fits. **Find a concept** searches the
+current area and filters by state or verified depth. **Learned list** shows dated evidence across
+depths and can group it by workspace. Open **Connections & details** to focus the neighbourhood,
+inspect prerequisites and transfers, review a concept, or visit its Atlas. **Back to Knowledge**
+returns to your original workspace, map selection, filters and camera.
 
-![Knowledge graph in light theme](docs/images/knowledge-light.png)
-
-![Knowledge graph in dark theme](docs/images/knowledge-dark.png)
+**Find connections** previews the exact request before a tutor proposes transfer links. Each
+suggestion includes a reason and model provenance, and you can remove it. Your graph and view
+settings are stored locally. The built-in demo has a separate map you can explore from an empty
+personal record.
 
 ## Interactive lessons
 

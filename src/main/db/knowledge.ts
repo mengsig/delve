@@ -40,7 +40,7 @@ interface LinkRow {
 const LINK_SELECT = `SELECT id, from_concept_id AS fromConceptId, to_concept_id AS toConceptId, reason, provider, model,
   workspace_id AS workspaceId, created_at AS createdAt FROM transfer_links`;
 
-function groupMemberships(db: Db): Map<number, KnowledgeMembership[]> {
+function groupMemberships(db: Db, demo: boolean): Map<number, KnowledgeMembership[]> {
   const demoIds = new Set(listWorkspaces(db).workspaces.filter(matchesDemo).map(workspace => workspace.id));
   const rows = db.prepare(
     `SELECT DISTINCT wc.concept_id AS conceptId, w.id AS workspaceId, w.name AS workspaceName
@@ -52,7 +52,7 @@ function groupMemberships(db: Db): Map<number, KnowledgeMembership[]> {
   ).all() as unknown as MembershipRow[];
   const byConcept = new Map<number, KnowledgeMembership[]>();
   for (const { conceptId, workspaceId, workspaceName } of rows) {
-    if (demoIds.has(workspaceId)) continue;
+    if (demoIds.has(workspaceId) !== demo) continue;
     const list = byConcept.get(conceptId) ?? [];
     list.push({ workspaceId, workspaceName });
     byConcept.set(conceptId, list);
@@ -112,8 +112,8 @@ function masteryStateOf(conceptId: number, verified: boolean, stages: ReturnType
  * Every concept in every workspace, once, with workspace memberships, verified mastery and bridge status.
  * Concepts with no membership (orphans) are omitted; edges are kept only between listed concepts.
  */
-export function getGlobalKnowledgeGraph(db: Db): GlobalKnowledgeGraph {
-  const memberships = groupMemberships(db);
+export function getGlobalKnowledgeGraph(db: Db, demo = false): GlobalKnowledgeGraph {
+  const memberships = groupMemberships(db, demo);
   const mastery = summarizeMastery(db);
   const stages = summarizeLessonStages(db);
   const conceptRows = db.prepare('SELECT id, key, title, summary, portable FROM concepts ORDER BY id').all() as unknown as ConceptRow[];

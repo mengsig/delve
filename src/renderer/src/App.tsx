@@ -6,7 +6,7 @@ import { call } from './api';
 import { ContinueActivity, WorkspaceBar } from './atlas/WorkspaceBar';
 import { paletteCommands } from './commands';
 import { Header } from './Header';
-import { routeForActivity, useDesktopNavigation, type DesktopNavigation, type Route } from './navigation';
+import { routeForActivity, useDesktopNavigation, type DesktopNavigation, type Route, type Screen } from './navigation';
 import { atlasView, workspaceDepth, type AtlasView } from './preferences';
 import { useRecentActivity } from './recentActivity';
 import { ReadState } from './ReadState';
@@ -34,11 +34,11 @@ function useShortcuts(nav: DesktopNavigation) {
       const target = event.target;
       if (target instanceof HTMLElement && (target.isContentEditable || target.matches('input, textarea, select'))) return;
       event.preventDefault();
-      nav.back();
-    } else if (event.key === 'Escape' && nav.route.screen !== 'atlas') {
+      if (!event.repeat) nav.back();
+    } else if (event.key === 'Escape' && (nav.route.screen !== 'atlas' || nav.returnToKnowledge)) {
       const target = event.target;
       if (target instanceof HTMLElement && target.matches('textarea, select')) return target.blur();
-      nav.back();
+      if (!event.repeat) nav.back();
     }
   });
   useEffect(() => {
@@ -87,6 +87,24 @@ function DesktopJobs({ nav }: { nav: DesktopNavigation }) {
   </>;
 }
 
+const backDestinations: Record<Screen, string> = {
+  atlas: 'Atlas', changes: 'Changes', lesson: 'lesson', progress: 'Progress',
+  knowledge: 'Knowledge', baseline: 'repository map', setup: 'workspace setup', 'first-run': 'Getting started',
+};
+
+function KnowledgeScreen({ nav }: { nav: DesktopNavigation }) {
+  const { active, route, depth, back, parentScreen, openFromKnowledge, setError } = nav;
+  if (route.screen !== 'knowledge') throw new Error('The Knowledge view requires a Knowledge route.');
+  return <Knowledge active={active} depth={depth} historyView={route.view}
+    onOpen={(workspaceId, conceptId, target, readingDepth) => openFromKnowledge(workspaceId,
+      target === 'atlas' ? { screen: 'atlas', conceptId } : { screen: 'lesson', conceptId, review: target === 'review' },
+      readingDepth)}
+    onProgress={workspaceId => void openFromKnowledge(workspaceId, { screen: 'progress' }, depth)
+      .catch(cause => setError(errorMessage(cause)))}
+    onBack={back} backLabel={'← Back to ' + backDestinations[parentScreen ?? 'atlas']}
+    onDepth={nav.changeDepth} onAdd={() => nav.visit({ screen: 'setup' })} />;
+}
+
 function Desktop({ initial }: { initial: WorkspaceList }) {
   const nav = useDesktopNavigation(initial);
   const palette = useShortcuts(nav);
@@ -123,10 +141,7 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
         <LearnLink onAccepted={accepted} />
         <DesktopJobs nav={nav} />
         <div className="screen" key={active?.id}>
-          {route.screen === 'knowledge' ? <Knowledge onOpen={(workspaceId, conceptId, target, depth) => {
-            void nav.select(workspaceId, target === 'atlas' ? { screen: 'atlas', conceptId } : { screen: 'lesson', conceptId, review: target === 'review' }, depth)
-              .catch(cause => nav.setError(errorMessage(cause)));
-          }} /> : setup ? <AddWorkspaceForm onOpenSwitcher={palette.show} onAdded={added} onCancel={active ? nav.back : undefined}
+          {route.screen === 'knowledge' ? <KnowledgeScreen nav={nav} /> : setup ? <AddWorkspaceForm onOpenSwitcher={palette.show} onAdded={added} onCancel={active ? nav.back : undefined}
             firstRun={route.screen === 'first-run' || !active} />
             : <Study {...destinations} nav={nav} workspace={active} study={study} onSwitch={palette.show}
               onSelect={id => void nav.select(id, { screen: 'progress' }).catch(cause => nav.setError(errorMessage(cause)))} />}

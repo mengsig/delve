@@ -51,7 +51,7 @@ async function captureThemes(page: Page, name: string) {
 
 async function verifyLearnedLessonActions(page: Page) {
   await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
-  await page.getByRole('button', { name: 'Everything I’ve learned' }).click();
+  await page.getByRole('button', { name: 'Learned list' }).click();
   const openLesson = page.getByRole('button', { name: 'Open lesson: Queues and workers' }).first();
   await openLesson.focus();
   await withinBudget(page, 'Open a learned concept lesson by keyboard', 1, async () => {
@@ -61,9 +61,9 @@ async function verifyLearnedLessonActions(page: Page) {
   await page.keyboard.press(shortcut);
   await page.getByRole('combobox', { name: /search/i }).fill('Knowledge');
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('heading', { name: 'Knowledge.' })).toBeVisible();
-  await expect(page.getByLabel('State')).toHaveValue('verified');
-  await page.getByRole('button', { name: 'Everything I’ve learned' }).click();
+  await expect(page.getByRole('heading', { name: 'Knowledge map' })).toBeVisible();
+  await expect(page.getByLabel('State')).toHaveValue('mastered');
+  await expect(page.getByRole('button', { name: 'Show map' })).toBeVisible();
   await withinBudget(page, 'Open a learned concept lesson by pointer', 1, async () => {
     await page.getByRole('button', { name: 'Open lesson: Queues and workers' }).first().click();
     await expect(page.getByRole('heading', { name: 'Queues and workers', level: 1 })).toBeVisible();
@@ -78,10 +78,10 @@ test('opens the global graph, finds a shared learned concept and opens its lesso
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
   await withinBudget(page, 'Open Knowledge from the header', 1, async () => {
     await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Knowledge.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Knowledge map' })).toBeVisible();
   });
-  await expect(page.getByText(/shared$/)).toBeVisible();
-  await page.getByLabel('State').selectOption('verified');
+  await page.getByRole('button', { name: 'Find a concept' }).click();
+  await page.getByLabel('State').selectOption('mastered');
   await page.getByLabel('Search', { exact: true }).fill('Queues and workers');
   await page.getByRole('button', { name: 'Queues and workers', exact: true }).click();
   for (const name of ['Distributed systems', 'Reliable services', 'service-repo']) await expect(page.locator('.knowledge-detail')).toContainText(name);
@@ -98,23 +98,23 @@ test('opens the global graph, finds a shared learned concept and opens its lesso
   })).toBe(true);
   await page.evaluate(() => window.scrollTo(0, 0));
   await captureThemes(page, 'knowledge');
-  await page.getByRole('button', { name: 'Everything I’ve learned' }).click();
+  await page.getByRole('button', { name: 'Learned list' }).click();
   await expect(page.locator('.knowledge-list')).toContainText('Transfers: Retry strategies');
   await captureThemes(page, 'learned-after');
   await page.getByLabel('Group by workspace').check();
   await expect(page.locator('.knowledge-list-select').filter({ hasText: 'Queues and workers' })).toHaveCount(3);
   await page.locator('.knowledge-list-select').filter({ hasText: 'Queues and workers' }).first().click();
   await expect(page.locator('.knowledge-detail')).toContainText('Queues and workers');
-  await page.getByRole('button', { name: 'Show graph' }).click();
+  await page.getByRole('button', { name: 'Show map' }).click();
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(960, 640));
   await page.setViewportSize({ width: 960, height: 611 });
   await expect(page.getByRole('searchbox', { name: 'Search' })).toBeVisible();
-  for (const name of ['Workspace', 'State', 'Depth']) await expect(page.getByRole('combobox', { name, exact: true })).toBeVisible();
+  for (const name of ['Workspace area', 'State', 'Verified depth']) await expect(page.getByRole('combobox', { name, exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open lesson', exact: true })).toBeVisible();
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
   await page.setViewportSize({ width: 1280, height: 800 });
   await verifyConnections(page, directory, shared.id, backpressure.id);
-  await page.getByLabel('State').selectOption('verified');
+  await page.getByLabel('State').selectOption('mastered');
   await withinBudget(page, 'Open a review of the selected concept', 1, async () => {
     await page.getByRole('button', { name: 'Review', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Review what will be sent' })).toBeVisible();

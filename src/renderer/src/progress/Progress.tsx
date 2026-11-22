@@ -23,6 +23,8 @@ interface Props {
   onDepth: (depth: Depth) => void;
   onSelect: (id: string) => void;
   onBack: () => void;
+  backLabel?: string;
+  onExplore: () => void;
   onEvidence: () => void;
 }
 
@@ -50,7 +52,7 @@ function PathCoverage({ progress, currentId, depth, onDepth }: Pick<Props, 'prog
   </section>;
 }
 
-export function Progress({ workspace, graph, depth, progress, currentId, onDepth, workspaces, onSelect, onBack, onEvidence }: Props) {
+export function Progress({ workspace, graph, depth, progress, currentId, onDepth, workspaces, onSelect, onBack, backLabel = '← Back to atlas', onExplore, onEvidence }: Props) {
   const coverage = useRead(readCoverage);
   useBackgroundTutorCompletion(coverage.refresh);
   const [notice, setNotice] = useState('');
@@ -60,7 +62,7 @@ export function Progress({ workspace, graph, depth, progress, currentId, onDepth
     coverage.refresh();
   }
   return <>
-    <button className="back" onClick={onBack}>← Back to atlas</button>
+    <button className="back" onClick={onBack}>{backLabel}</button>
     <div className="intro">
       <span className="eyebrow">Profile / Local learner</span>
       <h1>Your field record.</h1>
@@ -72,7 +74,7 @@ export function Progress({ workspace, graph, depth, progress, currentId, onDepth
       : <ReadState label="Workspace coverage" retry={coverage.refresh}
         message={coverage.result.status === 'error' ? coverage.result.message : undefined} />}
     <div className="grid2 progress-notes">
-      <EvidenceLedger graph={graph} workspaceName={workspace.name} onSelect={onSelect} onReset={evidenceChanged} onExplore={onBack} />
+      <EvidenceLedger graph={graph} workspaceName={workspace.name} onSelect={onSelect} onReset={evidenceChanged} onExplore={onExplore} />
       <section className="note">
         <span className="eyebrow">Privacy / Local record</span>
         <h3>Your learning record stays here.</h3>

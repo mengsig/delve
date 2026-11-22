@@ -44,7 +44,7 @@ export function LessonNotes({ props, body, tutor, skip, review, busy }: NotesPro
 export function LessonHeading({ props, title, children }: { props: ReaderProps & { onBackToChange?: () => void }; title: string; children?: React.ReactNode }) {
   return <header className="lesson-heading">
     <div className="lesson-breadcrumb"><button onClick={props.onBackToChange ?? props.onBack}>
-      {props.onBackToChange ? '← Back to change brief' : '← Back to atlas'}</button> <span>/</span> Study · Lesson</div>
+      {props.onBackToChange ? '← Back to change brief' : props.backLabel ?? '← Back to atlas'}</button> <span>/</span> Study · Lesson</div>
     <h1>{title}</h1>
     <div className="lesson-tools"><label className="depth-picker"><Icon name="layer" />
       <select aria-label="Reading depth" value={props.depth} onChange={event => {

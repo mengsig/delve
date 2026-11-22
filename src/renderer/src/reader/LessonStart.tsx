@@ -41,7 +41,7 @@ export function useOpenLesson(body: ReaderLesson, tutor: LessonTutor, review = f
 
 interface StartProps extends LessonAddress {
   title: string;
-  signedIn: boolean;
+  signedIn: boolean | undefined;
   provider: TutorRequest['provider'];
   open: (id: number) => void;
 }
@@ -52,19 +52,22 @@ export function LessonStart({ title, open, workspaceId, conceptId, depth, provid
     const address = { workspaceId, conceptId, depth };
     const lesson = await call('reader:lesson', address);
     const intent = openingIntent(lesson);
-    if (!intent || !signedIn) return null;
+    if (!intent) return { kind: 'saved' as const };
+    if (signedIn === undefined) return { kind: 'checking' as const };
+    if (!signedIn) return { kind: 'sign-in' as const };
     const request = { ...address, provider, intent };
-    return { request, data: await call('tutor:preview', request) };
+    return { kind: 'preview' as const, request, data: await call('tutor:preview', request) };
   }, [workspaceId, conceptId, depth, provider, signedIn]);
   const { result, refresh } = useRead(query);
   const [, checkPermission] = useState(0);
   if (result.status === 'error') return <div role="alert">{result.message} <button onClick={refresh}>Retry next lesson</button></div>;
-  const prepared = result.status === 'ready' && result.value;
+  const prepared = result.status === 'ready' && result.value.kind === 'preview' && result.value;
+  const needsTutor = result.status === 'ready' && result.value.kind === 'sign-in';
   const running = queue.jobs.get(lessonKey({ workspaceId, conceptId, depth }));
   const active = running?.phase === 'running' || running?.phase === 'cancelling';
   const consent = prepared && !active && provider !== 'demo' && !hasTutorApproval(workspaceId, provider);
   function start() {
-    if (result.status !== 'ready') return;
+    if (result.status !== 'ready' || result.value.kind === 'checking') return;
     if (prepared && !active && provider !== 'demo' && !consent && !hasTutorApproval(workspaceId, provider)) {
       checkPermission(previous => previous + 1);
       return;
@@ -73,9 +76,10 @@ export function LessonStart({ title, open, workspaceId, conceptId, depth, provid
     open(conceptId);
   }
   return <div className="next-start">
+    {needsTutor && <p className="smallprint">Sign in to a tutor to generate this lesson. Tutor settings are in Lesson notes.</p>}
     {consent && <div className="next-preview"><PreviewMetadata provider={provider} data={prepared.data} />
       <ExactRequest data={prepared.data} /></div>}
-    <button className="primary-btn" disabled={result.status === 'loading'} onClick={start}>
-      {consent ? 'Allow once & start ' : 'Start '}{title} <span aria-hidden="true">→</span></button>
+    <button className="primary-btn" disabled={result.status === 'loading' || result.value.kind === 'checking'} onClick={start}>
+      {consent ? 'Allow once & start ' : needsTutor ? 'Open ' : 'Start '}{title} <span aria-hidden="true">→</span></button>
   </div>;
 }

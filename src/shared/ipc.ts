@@ -18,7 +18,7 @@ export interface IpcContract extends RepositoryContract, ReaderContract, TutorCo
   'providers:detect': { request: null; response: ProviderStatus[] };
   'graph:read': { request: { workspaceId: string; includeChangeLessons?: boolean; depth?: Depth }; response: WorkspaceGraph };
   'workspaces:head': { request: { workspaceId: string }; response: WorkspaceHead };
-  'knowledge:read': { request: null; response: GlobalKnowledgeGraph };
+  'knowledge:read': { request: { demo: true } | null; response: GlobalKnowledgeGraph };
   'knowledge:remove-link': { request: { id: number }; response: boolean };
   'connections:preview': { request: { provider: ProviderId; conceptId: number }; response: ConnectionPreview };
   'connections:run': { request: { token: string; consent: true }; response: ConnectionResult };

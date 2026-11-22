@@ -119,7 +119,7 @@ export function Lesson(props: LessonProps) {
   const [version, update] = useState(0);
   const concept = props.graph.concepts.find(node => node.id === props.conceptId);
   if (!concept || props.graph.workspaceId !== props.workspace.id) return <>
-    <button className="back" onClick={props.onBack}>← Back to atlas</button><p role="alert">This workspace does not contain the selected concept.</p>
+    <button className="back" onClick={props.onBack}>{props.backLabel ?? '← Back to atlas'}</button><p role="alert">This workspace does not contain the selected concept.</p>
   </>;
   return <Reader key={[props.workspace.id, props.conceptId, props.depth, props.graph.snapshot, version].join('/')} props={props} title={concept.title} reload={() => update(value => value + 1)} />;
 }

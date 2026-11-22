@@ -27,7 +27,7 @@ export function graphHandlers(db: Db, cacheRoot: string): Pick<IpcHandlers,
       if (!workspace) throw new DomainError('WORKSPACE_NOT_FOUND', 'That workspace no longer exists.');
       return readWorkspaceHead(workspace, cacheRoot, isDemoWorkspace(db, workspaceId));
     },
-    'knowledge:read': () => getGlobalKnowledgeGraph(db),
+    'knowledge:read': scope => getGlobalKnowledgeGraph(db, scope?.demo),
     'knowledge:remove-link': ({ id }) => deleteTransferLink(db, id),
     'progress:read': () => readWorkspaceCoverage(db),
     'evidence:reset': ({ workspaceId, conceptId, depth }) => resetEvidence(db, conceptId, { workspaceId, depth }) === 1,

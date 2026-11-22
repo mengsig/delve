@@ -66,9 +66,12 @@ export function buildLearningProgress(graph: StudyGraph, depth: Depth): Learning
     concepts, byId, preferredId: graph.suggestions?.[depth]?.conceptId };
 }
 
+export function canStartNext(concept: ConceptProgress): boolean {
+  return concept.onAtlas && concept.state !== 'mastered' && concept.unmet.length === 0;
+}
+
 export function eligibleNext(progress: LearningProgress, excludeConceptId?: number): ConceptProgress | undefined {
-  const eligible = progress.concepts.filter(concept => concept.onAtlas && concept.id !== excludeConceptId
-    && concept.state !== 'mastered' && concept.unmet.length === 0);
+  const eligible = progress.concepts.filter(concept => concept.id !== excludeConceptId && canStartNext(concept));
   const dependents = excludeConceptId === undefined ? [] : eligible.filter(concept => concept.prerequisites.includes(excludeConceptId));
   const pool = dependents.length ? dependents : eligible;
   return pool.find(concept => concept.id === progress.preferredId)

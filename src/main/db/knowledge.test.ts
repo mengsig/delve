@@ -72,6 +72,9 @@ describe('global knowledge graph', () => {
     expect(getGlobalKnowledgeGraph(db).concepts).toEqual([]);
     const learned = upsertConcept(db, { key: 'real', title: 'Real concept', portable: true, workspaceId: alpha });
     expect(getGlobalKnowledgeGraph(db).concepts.map(concept => concept.id)).toEqual([learned.id]);
+    const sample = getGlobalKnowledgeGraph(db, true);
+    expect(sample.concepts.map(c => c.title)).toContain('Worker leases');
+    expect(sample.concepts.flatMap(c => c.memberships.map(w => w.workspaceId))).not.toContain(alpha);
   });
 
 });
