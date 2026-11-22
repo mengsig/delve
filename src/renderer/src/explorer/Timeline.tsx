@@ -83,7 +83,7 @@ function TimelineFeedback({ history, filters, onRefresh }: { history: ReturnType
   const pullStatusExplained = pullOnly && ['empty', 'local', 'unavailable'].some(status => status === page?.pullStatus);
   const isFiltered = Boolean(filters.author || filters.branch || filters.search || filters.kind);
   return <>
-    {empty && !pullStatusExplained && <p className="timeline-message" role="status">
+    {empty && !pullStatusExplained && (isFiltered || !page?.warning) && <p className="timeline-message" role="status">
       {isFiltered ? 'No changes match these filters. Clear the filters to see more history.'
         : 'No commits or pull requests are available. After a change is committed, refresh history.'}
     </p>}

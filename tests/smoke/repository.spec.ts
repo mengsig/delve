@@ -195,6 +195,34 @@ test('accepts a folder dropped into the initial repository field and offers a re
   });
 });
 
+test('shows readable commits and names the missing parent in History', async ({ desktop }, info) => {
+  const { repo, head } = createRepository(desktop.directory);
+  await desktop.page.evaluate(async path => {
+    const result = await (globalThis as unknown as { delve: DelveApi }).delve.invoke('workspaces:add', { kind: 'git', path });
+    if (!result.ok) throw new Error(result.error.message);
+  }, repo);
+  const missing = 'a'.repeat(40);
+  const tree = execFileSync('git', ['-C', repo, 'rev-parse', head + '^{tree}'], { encoding: 'utf8' }).trim();
+  function writeCommit(parent: string, title: string, seconds: number) {
+    const author = `Fixture <fixture@example.invalid> ${seconds} +0000`;
+    const input = `tree ${tree}\nparent ${parent}\nauthor ${author}\ncommitter ${author}\n\n${title}\n`;
+    return execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'], { input, encoding: 'utf8' }).trim();
+  }
+  const boundary = writeCommit(missing, 'Add dispatch retries', 1700000000);
+  const latest = writeCommit(boundary, 'Explain retry limits', 1700000001);
+  execFileSync('git', ['-C', repo, 'update-ref', 'refs/heads/main', latest]);
+
+  const page = await desktop.restart();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  const history = page.getByRole('region', { name: 'History', exact: true });
+  await expect(history.getByRole('option')).toHaveText([/Explain retry limits/, /Add dispatch retries/]);
+  await expect(history).toContainText(`Git commit ${missing} is missing or damaged.`);
+  await expect(history).toContainText('git fsck');
+  await expect(history).not.toContainText('No commits or pull requests are available');
+  await capture(page, info, 's17-missing-parent');
+});
+
 test.describe('model rejection', () => {
   test.use({ providerMode: 'model-rejected' });
 

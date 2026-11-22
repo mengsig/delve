@@ -205,6 +205,50 @@ describe('Git change read boundaries', () => {
   });
 });
 
+describe('repository explorer damaged and shallow history', () => {
+  it('keeps readable commits in order and stops at a missing parent', async () => {
+    const base = commit('Base', '--allow-empty');
+    const tree = git('rev-parse', `${base}^{tree}`);
+    const missing = 'a'.repeat(40);
+    git('update-ref', 'refs/heads/intact', base);
+    const object = `tree ${tree}\nparent ${missing}\nparent ${base}\nauthor Fixture User <fixture@example.invalid> 1700000000 +0000\n`
+      + 'committer Fixture User <fixture@example.invalid> 1700000000 +0000\n\nBoundary\n';
+    const boundary = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'],
+      { input: object, encoding: 'utf8' }).trim();
+    git('update-ref', 'refs/heads/main', boundary);
+    const expected = [boundary];
+    for (let i = 0; i < 35; i++) expected.unshift(commit(`Readable ${i}`, '--allow-empty'));
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const pages = [];
+    let next: number | null = 0;
+    while (next !== null && pages.length < 5) {
+      const page = await history.advance(() => pages.length + 1);
+      pages.push(page);
+      next = page.next;
+    }
+    expect(next).toBeNull();
+    expect(pages.flatMap(page => page.nodes.map(node => node.ref))).toEqual(expected);
+    expect(pages.flatMap(page => page.nodes).at(-1)?.parents).toEqual([missing, base]);
+    expect(pages.at(-1)?.warning).toContain(missing);
+    expect(pages.at(-1)?.warning).toContain('git fsck');
+  }, 30_000);
+
+  it('keeps available shallow commits and explains how to fetch older history', async () => {
+    commit('Older', '--allow-empty');
+    const middle = commit('Middle', '--allow-empty');
+    const head = commit('Head', '--allow-empty');
+    const shallow = join(root, 'shallow-history.git');
+    git('clone', '--depth=2', '--no-local', repo, shallow);
+    const shallowWorkspace = { ...workspace, source: shallow };
+    const history = await openRepositoryHistory(shallowWorkspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const page = await history.advance(() => 1);
+    expect(page.nodes.map(node => node.ref)).toEqual([head, middle]);
+    expect(page.next).toBeNull();
+    expect(page.warning).toContain('shallow');
+    expect(page.warning).toContain('git fetch --unshallow');
+  });
+});
+
 describe('repository explorer metadata limits', () => {
   it('stops at an oversized first commit and identifies it', async () => {
     commit('Older commit', '--allow-empty');

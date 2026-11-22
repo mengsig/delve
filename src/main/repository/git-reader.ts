@@ -49,7 +49,7 @@ interface TreeFile extends SourceFile {
 }
 
 export interface GitReader {
-  run: (args: string[], maxBytes?: number) => ReturnType<typeof gitSource>;
+  run: (args: string[], maxBytes?: number, graftFile?: string) => ReturnType<typeof gitSource>;
 }
 
 export async function gitReader(path: string): Promise<GitReader> {
@@ -66,7 +66,7 @@ export async function gitReader(path: string): Promise<GitReader> {
   assert.ok(isAbsolute(directory));
   assert.ok(directory === path || directory === marker);
   return {
-    run: (args, maxBytes) => gitSource(['--bare', `--git-dir=${directory}`, '--literal-pathspecs', ...args], { maxBytes }),
+    run: (args, maxBytes, graftFile) => gitSource(['--bare', `--git-dir=${directory}`, '--literal-pathspecs', ...args], { maxBytes, graftFile }),
   };
 }
 
