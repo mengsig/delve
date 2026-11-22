@@ -5,6 +5,7 @@ it('keeps a README and ordinary source even when the repository has many docs', 
   const files = [
     ...Array.from({ length: 20 }, (_, index) => ({ path: `docs/how-to-${index}.md`, bytes: 1 })),
     { path: 'lib/queue.ts', bytes: 1 }, { path: 'lib/worker.ts', bytes: 1 },
+    { path: 'docs/badge.png', bytes: 1 }, { path: '.github/config.yaml', bytes: 1 },
     { path: 'README.md', bytes: 1 },
   ];
   const selected = [...defaultFiles(files)];
