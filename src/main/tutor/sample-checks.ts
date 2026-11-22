@@ -46,7 +46,7 @@ export function demoCheck(turn: PreparedTurn, position: number, cycle: number, f
     const cases = id === 'lease' ? leaseCases(caseId) : exposureCases(100 + caseId * 10);
     const next = (position + cycle + cases.length - 1) % cases.length;
     const byDepth = id === 'lease' ? { high: 3, medium: 0, low: 2 } : { high: 0, medium: 1, low: 4 };
-    const transfer = focus === 'arrival' || focus === 'shutter' ? 1 : focus === 'claim' ? 0 : next;
+    const transfer = focus === 'expired' || focus === 'shutter' ? 1 : focus === 'claim' ? 0 : next;
     const preferred = turn.request.intent.kind === 'adapt' ? byDepth[context.depth] : transfer;
     const current = mastery.check?.prompt ?? '';
     const index = scenarioShape(cases[preferred]![0]) === scenarioShape(current)

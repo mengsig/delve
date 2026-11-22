@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 
-type Feedback = { focus?: 'arrival' | 'claim' | 'shutter'; feedback: string };
-type Decision = 'current' | 'expired' | 'arrival';
+type Feedback = { focus?: 'expired' | 'claim' | 'shutter'; feedback: string };
+type Decision = 'current' | 'expired';
 
-const offlineLimit = 'I can’t judge this reasoning offline. ';
+const offlineLimit = 'Delve can’t judge this reasoning offline. ';
 const leaseModel = 'The writer compares the submitted claim with its active generation at commit time. Even the first result can carry an expired claim.';
 const shutterModel = 'At the same subject speed, a shorter exposure records a shorter motion trail. At a fixed shutter time, changing ISO changes recorded brightness while motion trails keep their length.';
 
@@ -21,11 +21,7 @@ function chosenClaim(decision: string): string | undefined {
   return namedClaim.exec(claim)?.[1];
 }
 
-// Match the entire explanation. An unrecognized qualification or second statement keeps it unassessed.
-function leaseDecision(statement: string): Decision | undefined {
-  if (/^(?:the first result wins|arrival order decides which result is accepted)$/.test(statement)) return 'arrival';
-  const normalized = statement.replace(validityWords, (_, word: string) =>
-    word === 'active' || word === 'current' ? 'current claim' : 'expired claim');
+function explicitChoice(normalized: string): Decision | undefined {
   const [decision, alternative, ...more] = normalized.split(/\s+(?:over|instead of|rather than)\s+/);
   if (!decision || more.length) return;
   const chosen = chosenClaim(decision);
@@ -35,11 +31,32 @@ function leaseDecision(statement: string): Decision | undefined {
   return rejected && rejected !== chosen ? chosen : undefined;
 }
 
+// These sentences describe the scenario or dismiss timing. Neither selects a winner.
+const leaseContext = [
+  /^(?:worker )?[ab] (?:still )?holds (?:the|an?) (?:current|expired) claim$/,
+  /^(?:worker )?[ab] (?:reports|arrives|finishes|reported|arrived|finished) first$/,
+  /^arrival order (?:doesn't|does not) (?:matter|decide the winner)$/,
+];
+
+function leaseDecision(statement: string): Decision | undefined {
+  const normalized = statement.replace(validityWords, (_, word: string) =>
+    word === 'active' || word === 'current' ? 'current claim' : 'expired claim');
+  let chosen: Decision | undefined;
+  for (const sentence of normalized.split(/(?<=[.?!])\s+/)) {
+    if (!chosen && sentence.endsWith('?')) continue;
+    const clause = sentence.replace(/\.$/, '');
+    if (leaseContext.some(pattern => pattern.test(clause))) continue;
+    const decision = explicitChoice(clause);
+    if (!decision || chosen) return;
+    chosen = decision;
+  }
+  return chosen;
+}
+
 function leaseFeedback(statement: string): Feedback {
   switch (leaseDecision(statement)) {
     case 'current': return { focus: 'claim', feedback: 'That matches the key idea. ' + leaseModel };
-    case 'expired': return { focus: 'claim', feedback: 'An expired claim cannot authorize a write. ' + leaseModel };
-    case 'arrival': return { focus: 'arrival', feedback: 'Arrival order cannot authorize a write. ' + leaseModel };
+    case 'expired': return { focus: 'expired', feedback: 'An expired claim cannot authorize a write. ' + leaseModel };
     default: return { feedback: offlineLimit + leaseModel };
   }
 }

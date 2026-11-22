@@ -96,28 +96,56 @@ it('teaches from a missed journal replay decision, then opens review with a diff
   expect(review.messages.at(-1)?.blocks?.find(block => block.type === 'example')).not.toMatchObject({ setup: next });
 });
 
-const offlineLimit = 'I can’t judge this reasoning offline.';
+const offlineLimit = 'Delve can’t judge this reasoning offline.';
+const matchesKeyIdea = 'That matches the key idea.';
+const expiredWins = 'An expired claim cannot authorize a write.';
 
 it.each([
-  ['lease', 'Does the active claim matter? The expired claim wins.', offlineLimit],
-  ['lease', "The active claim wins over the expired claim. Arrival order doesn't matter.", offlineLimit],
+  ['lease', 'Does the active claim matter? The expired claim wins.', expiredWins],
+  ['lease', "The active claim wins over the expired claim. Arrival order doesn't matter.", matchesKeyIdea],
   ['lease', 'The newer token should be accepted.', offlineLimit],
   ['lease', 'The latest claim wins.', offlineLimit],
   ['lease', 'The current claim?', offlineLimit],
   ['lease', 'Maybe the active claim wins.', offlineLimit],
   ['lease', 'Accept the current claim if it arrives first.', offlineLimit],
   ['lease', 'The expired claim should be accepted, but B still holds the active claim.', offlineLimit],
-  ['lease', 'I would write the result from the expired claim. B still holds the active claim.', offlineLimit],
+  ['lease', 'I would write the result from the expired claim. B still holds the active claim.', expiredWins],
   ['lease', 'I compare the active claim to the worker’s start time.', offlineLimit],
   ['lease', 'The expired claim should never be accepted.', offlineLimit],
-  ['lease', 'The active claim wins over the expired claim.', 'That matches the key idea.'],
-  ['lease', 'The expired claim wins over the active claim.', 'An expired claim cannot authorize a write.'],
-  ['lease', 'I would save the result from the current lease instead of the expired lease.', 'That matches the key idea.'],
-  ['lease', 'I would save the result from the expired lease instead of the current lease.', 'An expired claim cannot authorize a write.'],
-  ['lease', 'The first result wins.', 'Arrival order cannot authorize a write.'],
-  ['exposure', 'A shorter exposure reduces motion blur.', 'That matches the key idea.'],
+  ['lease', 'The active claim wins over the expired claim.', matchesKeyIdea],
+  ['lease', 'The expired claim wins over the active claim.', expiredWins],
+  ['lease', 'I would save the result from the current lease instead of the expired lease.', matchesKeyIdea],
+  ['lease', 'I would save the result from the expired lease instead of the current lease.', expiredWins],
+  ['lease', 'The expired claim wins.', expiredWins],
+  ['lease', 'The stale token should be accepted.', expiredWins],
+  ['lease', 'A reported first. The active token wins.', matchesKeyIdea],
+  ['lease', 'The active claim wins. The expired claim should be accepted.', offlineLimit],
+  ['lease', 'The expired claim wins?', offlineLimit],
+  ['lease', 'Does the expired claim win? Maybe the active claim wins.', offlineLimit],
+  ['lease', 'Does the expired claim win? The active claim wins?', offlineLimit],
+  ['lease', 'The active claim wins. Or does it?', offlineLimit],
+  ['lease', 'The active claim wins. Maybe arrival order matters.', offlineLimit],
+  ['lease', 'The active claim wins and the expired claim wins.', offlineLimit],
+  ['lease', 'B holds the current claim.', offlineLimit],
+  ['lease', 'The older token wins.', offlineLimit],
+  ['lease', 'newer token', offlineLimit],
+  ['lease', 'The first result wins.', offlineLimit],
+  ['lease', 'I went with whoever reported first, since completion order determines the winner.', offlineLimit],
+  ['lease', 'B has the newer claim now. A’s lease has already expired.', offlineLimit],
+  ['lease', 'The first worker wins, but the newer token should be checked too.', offlineLimit],
+  ['lease', "I compare the active claim to the worker's start time.", offlineLimit],
+  ['lease', 'I compare the claim to the worker’s start time.', offlineLimit],
+  ['lease', 'The expired claim.', offlineLimit],
+  ['lease', 'Maybe the lease? I’m unsure which result they should save.', offlineLimit],
+  ['exposure', 'A shorter exposure reduces motion blur.', matchesKeyIdea],
   ['exposure', 'A longer exposure reduces motion blur.', 'At the same subject speed'],
   ['exposure', 'A shorter exposure reduces motion blur, or maybe ISO does.', offlineLimit],
+  ['exposure', 'I turned the ISO up to make the cyclist sharper.', offlineLimit],
+  ['exposure', 'ISO can’t change the blur. A faster shutter cuts the motion trail.', offlineLimit],
+  ['exposure', 'I raised the ISO to make it brighter without adding blur.', offlineLimit],
+  ['exposure', 'I would increase ISO for brightness at the same shutter speed, without changing blur.', offlineLimit],
+  ['exposure', 'A longer shutter time reduces motion blur.', 'At the same subject speed'],
+  ['exposure', 'I know ISO affects it, but I’m unsure what changes.', offlineLimit],
   ['iso', 'Maybe ISO? I also changed the shutter.', offlineLimit],
   ['fence', 'Should the writer save the result?', offlineLimit],
 ] as const)('keeps the keyed grade and gives conservative offline feedback for %s: %s', (id, reasoning, prefix) => {
@@ -138,7 +166,7 @@ it.each([
   }
 });
 
-it('saves the keyed grade and model reasoning for a mixed explanation', async () => {
+it('saves the keyed grade and corrects an explicit stale-wins decision', async () => {
   const request = requestFor('lease', 'high');
   const lesson = await submit(request, { kind: 'teach' });
   const { mastery } = prepareTurn(db, request);
@@ -147,5 +175,5 @@ it('saves the keyed grade and model reasoning for a mixed explanation', async ()
     reasoning: 'I would write the result from the expired claim. B still holds the active claim.' });
   expect(saved.mastery).toMatchObject({ attempts: 1, correctAnswers: 1 });
   expect(saved.messages.at(-2)?.text).toContain('I would write the result from the expired claim. B still holds the active claim.');
-  expect(saved.messages.at(-1)).toMatchObject({ correct: true, reasoningFeedback: expect.stringContaining(offlineLimit) });
+  expect(saved.messages.at(-1)).toMatchObject({ correct: true, reasoningFeedback: expect.stringContaining(expiredWins) });
 });
