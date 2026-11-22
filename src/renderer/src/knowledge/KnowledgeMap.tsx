@@ -108,7 +108,7 @@ interface DrawEdge { from: Point; to: Point; transfer: boolean }
 interface DrawData { nodes: DrawNode[]; edges: DrawEdge[] }
 interface Bounds { left: number; top: number; right: number; bottom: number }
 
-function prepareDrawData(graph: GlobalKnowledgeGraph, points: Point[]): DrawData {
+export function prepareDrawData(graph: GlobalKnowledgeGraph, points: Point[]): DrawData {
   const byId = new Map(points.map(point => [point.id, point]));
   const nodes: DrawNode[] = [];
   const edges: DrawEdge[] = [];
@@ -156,7 +156,7 @@ function useGraphDrawing(canvas: RefObject<HTMLCanvasElement | null>, data: Draw
   }, [canvas]);
 }
 
-function drawGraph(canvas: HTMLCanvasElement, data: DrawData, view: Viewport,
+export function drawGraph(canvas: HTMLCanvasElement, data: DrawData, view: Viewport,
   visible: Set<number>, focus: Set<number> | null, selected: number | null) {
   const rect = canvas.getBoundingClientRect();
   if (!rect.width || !rect.height) return;

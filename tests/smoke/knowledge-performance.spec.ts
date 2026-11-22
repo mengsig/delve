@@ -115,10 +115,11 @@ test('renders and pans 2000 concepts and 5000 edges within budget', async ({ des
   expect(inputs.wheels).toBeGreaterThan(0);
   await expect.poll(() => page.evaluate(() => localStorage.getItem('delve.knowledge.viewport'))).not.toBe(initialView);
   console.log('Knowledge frame timing (ms):', JSON.stringify({ pan, zoom }));
-  if (process.env.KNOWLEDGE_FRAME_BUDGET === '1') {
-    for (const timing of [pan, zoom]) {
-      expect(timing.p95).toBeLessThan(33);
-      expect(timing.max).toBeLessThan(50);
+  const strictBudget = process.env.KNOWLEDGE_FRAME_BUDGET === '1';
+  if (strictBudget || process.env.CI) {
+    for (const [interaction, timing] of Object.entries({ pan, zoom })) {
+      expect(timing.p95, `${interaction} p95 frame gap (ms)`).toBeLessThan(strictBudget ? 33 : 100);
+      expect(timing.max, `${interaction} maximum frame gap (ms)`).toBeLessThan(strictBudget ? 50 : 250);
     }
   }
 });
