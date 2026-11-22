@@ -21,7 +21,7 @@ export function useWorkspaceStudy(workspaceId: string | undefined, depth: Depth)
   const [committed, setCommitted] = useState<{ graph: WorkspaceGraph; depth: Depth; checks: Map<number, CommittedCheckProgress> }>();
   const current = useRef({ lastReady, workspaceId, depth });
   useLayoutEffect(() => { current.current = { lastReady, workspaceId, depth }; }, [lastReady, workspaceId, depth]);
-  useBackgroundTutorCompletion(workspaceId, depth, refresh);
+  useBackgroundTutorCompletion(refresh);
   useRepositoryCompletion(workspaceId ?? '', refresh);
   useRepositoryCompletion(workspaceId ?? '', head.refresh);
   useEffect(() => {

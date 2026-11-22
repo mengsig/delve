@@ -71,20 +71,35 @@ function useApproval(address: LessonAddress, provider: Provider, refresh: () => 
 }
 
 function useAddressJob(address: LessonAddress, onLesson: (lesson: ReaderLesson, intent: TutorIntent) => void) {
-  const { jobs, setVisible, dismiss } = useTutorJobs();
+  const { jobs, setVisible, dismiss, reportFailure } = useTutorJobs();
   const key = lessonKey(address);
   const job = jobs.get(key);
-  const apply = useEffectEvent(() => {
-    if (job?.phase !== 'ready') return;
-    onLesson(job.lesson, job.request.intent);
+  const [completedBeforeOpening] = useState(() => job?.phase === 'ready' ? job.id : undefined);
+  const apply = useEffectEvent((id: string, lesson: ReaderLesson) => {
+    if (job?.phase !== 'ready' || job.id !== id) return;
+    onLesson(lesson, job.request.intent);
     dismiss(job);
+  });
+  const failedRead = useEffectEvent((id: string, cause: unknown) => {
+    if (job?.phase === 'ready' && job.id === id) reportFailure(job.request, job.title,
+      new IpcCallError('RELOAD_LESSON', 'Could not load the saved lesson. ' + errorMessage(cause)));
   });
 
   useEffect(() => {
     setVisible(key);
     return () => setVisible(previous => previous === key ? undefined : previous);
   }, [key, setVisible]);
-  useEffect(() => { apply(); }, [job]);
+  useEffect(() => {
+    if (job?.phase !== 'ready') return;
+    if (job.id !== completedBeforeOpening) { apply(job.id, job.lesson); return; }
+    const { workspaceId, conceptId, depth } = job.request;
+    let current = true;
+    void call('reader:lesson', { workspaceId, conceptId, depth }).then(
+      lesson => { if (current) apply(job.id, lesson); },
+      cause => { if (current) failedRead(job.id, cause); },
+    );
+    return () => { current = false; };
+  }, [job, completedBeforeOpening]);
 
   return job;
 }
@@ -170,11 +185,12 @@ export function TutorTurnStatus({ tutor, onBackground, reload }: { tutor: Lesson
   const message = review.error || failure?.message;
   if (!message || review.preview) return null;
   const intent = lastIntent ?? failure?.request.intent;
+  const reloadSaved = failure?.code === 'RELOAD_LESSON';
   const stale = ['LESSON_CHANGED', 'STALE_PREVIEW'].includes(review.code || failure?.code || '');
   return <div className="reader-turn-status" role="alert"><span>{stale ? 'The question changed. Review the current check.' :
-    (intent?.kind === 'answer' ? 'Your answer hasn’t been saved. ' : '') + message}</span>
-    {stale && <button onClick={reload}>Load current check</button>}
-    {!stale && intent && failure?.code !== 'PROVIDER_QUOTA' && <button type="button" onClick={() =>
+    (intent?.kind === 'answer' && !reloadSaved ? 'Your answer hasn’t been saved. ' : '') + message}</span>
+    {(stale || reloadSaved) && <button onClick={reload}>Load current check</button>}
+    {!stale && !reloadSaved && intent && failure?.code !== 'PROVIDER_QUOTA' && <button type="button" onClick={() =>
       tutor.prepare(intent)}>Retry</button>}
   </div>;
 }

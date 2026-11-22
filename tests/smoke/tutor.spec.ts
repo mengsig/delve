@@ -119,6 +119,35 @@ test('shows the exact opening request before sending, then cancels, retries and 
   await expect(page.getByRole('meter', { name: 'Correct checks in a row' })).toHaveJSProperty('value', 1);
 });
 
+test('numeric shortcuts reveal long choices before Enter submits them at minimum size', async ({ desktop: { page, directory } }) => {
+  const prompt = 'Read the routing table. ' + 'Two entries match the destination and their lengths differ. '.repeat(64) + 'Which route wins?';
+  const options = check.options.map(option => option + '. ' + 'Compare the prefix length. '.repeat(4));
+  const longCheck = { ...check, prompt, options };
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify({
+    ...envelope, lesson: { schema: 'delve.lesson/1', source: null, blocks: [explanation, longCheck] },
+  }));
+  await page.setViewportSize({ width: 960, height: 611 });
+  await add(page).click();
+  await typeTopic(page, 'Routing tables');
+  await start(page).click();
+  const last = page.locator('.answer-options button').last();
+  await expect(last).toBeAttached();
+  const box = page.locator('.choice-scroll');
+  await box.evaluate(node => { node.scrollTop = 0; });
+  await expect(last).not.toBeInViewport();
+  await page.keyboard.press('4');
+  await expect(last).toBeFocused();
+  await expect(last).toHaveAttribute('aria-pressed', 'true');
+  await expect(last).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole('button', { name: 'Check answer' })).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole('meter', { name: 'Correct checks in a row' })).toBeInViewport({ ratio: 1 });
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(611);
+  await page.keyboard.press('Enter');
+  const consent = page.getByRole('region', { name: 'Review what will be sent' });
+  await consent.getByText('Exact request').click();
+  await expect(consent.getByLabel('Exact provider request')).toContainText('"selectedIndex": 3');
+});
+
 test('keeps an approved turn running in the background and reopens the lesson', async ({ desktop: { page, directory } }) => {
   const gate = join(directory, 'gate');
   writeOpening(directory);

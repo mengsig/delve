@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 type Feedback = { focus?: 'arrival' | 'claim' | 'iso' | 'shutter'; feedback: string };
 
 const arrival = /\b(?:(?:arrival|completion) order|(?:the )?first (?:one|result|worker|write|writer|to (?:finish|report|arrive))|who(?:ever)? (?:arrives|reports|finishes) first|(?:arriv(?:e[ds]?|ing)|finish(?:ed|es|ing)?|report(?:ed|s|ing)?|got back) first)\b/;
-const ownership = /\b(?:(?:current|active|valid|newer|latest|updated|stale|expired) (?:lease|claim|generation|token)|(?:lease|claim|generation|token) (?:(?:is|was|has) )?(?:already )?(?:current|active|valid|stale|expired|does not match)|(?:generation|claim number|token) (?:must match|has to match|matches|decides))\b/;
+const activeClaim = /\b(?:current|active|valid|newer|latest|updated) (?:lease|claim|generation|token)\b/;
+const staleClaim = /\b(?:old(?:er)?|expired|stale|outdated) (?:lease|claim|generation|token)\b|\b(?:lease|claim|generation|token) (?:is |was |has )?(?:already )?(?:stale|expired)\b/;
+const accepts = /\b(?:wins?|won|accept(?:s|ed)?|commit(?:s|ted)?|sav(?:es?|ed)|authorizes?|permits?)\b/;
+const claimsOwnership = /\b(?:holds?|owns?|has|matches|checks?|compares?|verified|checked|owner|holder)\b/;
+const rejects = /\b(?:reject|ignore|discard)\w*\b/;
 const claimComparison = /\b(?:compare|match|check|verify)(?:s|ed|ing)?\b[^.!?;]*\b(?:generation|claim|lease|ownership|token)\b/;
 const arrivalDecision = /\b(?:matters?|mattered|decides?|wins?|won|gets? (?:accepted|saved|committed)|should be (?:accepted|saved|committed)|is what counts|determines?|pick(?:ed)?|chos[eo]|go with|went with|should get|take)\b/;
 const negation = /\b(?:no|not|never|neither|cannot|can't|doesn't|don't|isn't|wasn't)\b/;
@@ -21,14 +25,19 @@ const unchangedMotion = /\b(?:unchanged|stays? the same|without (?:adding|increa
 const effect = /\b(?:affects?|controls?|changes?|shortens?|lengthens?|reduces?|limits?|cuts?|freez\w+|stops?|keeps?|gives?|makes?|mak(?:ing|e)|helps?|decides?|determines?|moves?|brightens?|darkens?|adjusts?|boosts?|compensates?|restores?|unchanged|stays? (?:the same|fixed))\b/;
 
 function leaseFeedback(clauses: string[]): Feedback | undefined {
+  if (clauses.some(clause => staleClaim.test(clause) && accepts.test(clause) && !negation.test(clause)
+    && !uncertainty.test(clause) && !rejects.test(clause))) {
+    return { focus: 'claim', feedback: 'An expired claim cannot authorize a write. The writer accepts a claim only when it matches the active generation.' };
+  }
   const order = clauses.filter(clause => arrival.test(clause) && arrivalDecision.test(clause));
   const favorsOrder = order.some(clause => !negation.test(clause) && !uncertainty.test(clause));
   const rejectsOrder = order.some(clause =>
     /\b(?:does not|doesn't|never|cannot|can't|does not always) (?:matter|decide|win|determine)\b/.test(clause));
   const claim = clauses.some(clause => {
     if (uncertainty.test(clause)) return false;
-    if (/\b(?:generation|claim) (?:does not|doesn't) match\b/.test(clause)) return true;
-    return !negation.test(clause) && (ownership.test(clause) || claimComparison.test(clause));
+    if (/\b(?:generation|claim) (?:does not|doesn't) match\b/.test(clause)) return rejects.test(clause);
+    if (negation.test(clause) || staleClaim.test(clause) || rejects.test(clause)) return false;
+    return activeClaim.test(clause) && (claimsOwnership.test(clause) || claimComparison.test(clause));
   });
   if (favorsOrder) {
     if (claim || rejectsOrder) return;

@@ -2,6 +2,9 @@ import { expect, type Locator, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { openDatabase } from '../../src/main/db/connection';
+import { upsertConcept, addPrerequisite } from '../../src/main/db/concepts';
+import { addWorkspace, listWorkspaces, switchWorkspace } from '../../src/main/db/workspaces';
 import { test } from './desktop';
 import { withinBudget } from './action-budget';
 
@@ -47,9 +50,9 @@ const consent = (page: Page) => page.getByRole('region', { name: 'Review what wi
 const checkAnswer = (page: Page) => page.getByRole('button', { name: 'Check answer' });
 const complete = (page: Page) => page.getByRole('region', { name: 'Lesson complete' });
 
-async function mapRepository(page: Page, directory: string) {
+async function mapRepository(page: Page, directory: string, shared = false) {
   const repo = repository(directory);
-  writeFileSync(join(directory, 'reply.json'), JSON.stringify({ schema: 'delve.map/1', concepts,
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify({ schema: 'delve.map/1', concepts: shared ? [{ ...concepts[0], portable: true }, concepts[1]] : concepts,
     edges: [{ concept: 'permissions', prerequisite: 'agents' }], recommendation: { key: 'agents', reason: 'Start here.' } }));
   await page.locator('#source-input').fill(repo);
   await page.getByRole('button', { name: 'Add and build map' }).click();
@@ -125,8 +128,20 @@ test('submits a fresh check in five clicks with one-time consent and empty reaso
   await expect(page.getByRole('meter', { name: 'Correct checks in a row' })).toHaveJSProperty('value', 1);
 });
 
-test('updates the workspace total when the final answer finishes in the background', async ({ desktop: { page, directory } }) => {
-  await mapRepository(page, directory);
+function addSharedStudy(directory: string) {
+  const db = openDatabase(join(directory, 'delve.sqlite'));
+  try {
+    const origin = listWorkspaces(db).activeId;
+    expect(origin).toBeTruthy();
+    const { id: workspaceId } = addWorkspace(db, { kind: 'topic', title: 'Distributed computing' });
+    const shared = upsertConcept(db, { ...concepts[0]!, workspaceId, portable: true });
+    const next = upsertConcept(db, { key: 'delegation', title: 'Delegation', workspaceId, portable: false });
+    addPrerequisite(db, next.id, shared.id);
+    switchWorkspace(db, origin!);
+  } finally { db.close(); }
+}
+
+async function backgroundFinalAnswer(page: Page, directory: string) {
   await page.getByLabel('Field guide').getByRole('button', { name: /Agents, tasks, and runs/ }).click();
   await consent(page).getByRole('button', { name: 'Always allow for this workspace' }).click();
   await expect(page.getByRole('heading', { name: openingCheck.prompt })).toBeVisible();
@@ -134,17 +149,56 @@ test('updates the workspace total when the final answer finishes in the backgrou
   await page.getByRole('button', { name: 'The run', exact: true }).click();
   await checkAnswer(page).click();
   await expect(page.getByRole('heading', { name: firstCheck.prompt })).toBeVisible();
-  const gate = join(directory, 'gate');
-  writeFileSync(gate, '');
+  writeFileSync(join(directory, 'gate'), '');
   reply(directory, [explanation], true, 'The root and its helper belong to the same run.');
   await page.getByRole('button', { name: firstCheck.options[firstCheck.expected]!, exact: true }).click();
   await checkAnswer(page).click();
   await page.getByRole('button', { name: 'Continue in background' }).click();
-  const meter = page.locator('.windowbar').getByRole('meter', { name: /Workspace mastery/ });
-  await expect(meter).toHaveJSProperty('value', 0);
-  unlinkSync(gate);
-  await expect(meter).toHaveJSProperty('value', 1);
-  await expect(page.getByRole('region', { name: 'Tutor activity' })).toContainText('Tutor response ready');
+}
+
+const activeMeter = (page: Page) => page.locator('.windowbar').getByRole('meter', { name: /Workspace mastery/ });
+const activity = (page: Page) => page.getByRole('region', { name: 'Tutor activity' });
+
+test('reopening a completed background answer reads the current record after a reset', async ({ desktop: { page, directory } }) => {
+  await mapRepository(page, directory);
+  await backgroundFinalAnswer(page, directory);
+  await page.getByRole('navigation').getByRole('button', { name: 'Progress' }).click();
+  await expect(activeMeter(page)).toHaveJSProperty('value', 0);
+  unlinkSync(join(directory, 'gate'));
+  await expect(activeMeter(page)).toHaveJSProperty('value', 1);
+  await expect(activity(page)).toContainText('Tutor response ready');
+  await page.getByText(/^Inspect .* learning records$/).click();
+  const record = page.getByRole('listitem').filter({ hasText: 'Agents, tasks, and runs' }).filter({ hasText: 'medium' });
+  await record.getByRole('button', { name: 'Reset record' }).click();
+  await record.getByRole('button', { name: 'Confirm reset' }).click();
+  await expect(activeMeter(page)).toHaveJSProperty('value', 0);
+  await activity(page).getByRole('button', { name: 'Open lesson' }).click();
+  await expect(activity(page)).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: openingCheck.prompt })).toBeVisible();
+  await expect(page.getByRole('meter', { name: 'Correct checks in a row' })).toHaveJSProperty('value', 0);
+  await expect(complete(page)).toHaveCount(0);
+});
+
+test('refreshes the visible shared learning path and all coverage rows after background mastery', async ({ desktop }) => {
+  const { directory } = desktop;
+  await mapRepository(desktop.page, directory, true);
+  addSharedStudy(directory);
+  const page = await desktop.restart();
+  await backgroundFinalAnswer(page, directory);
+  await page.getByRole('group', { name: 'Your workspaces' }).getByRole('button', { name: /^Distributed computing/ }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Progress' }).click();
+  const path = page.getByRole('region', { name: 'Workspace learning path' });
+  const coverage = page.getByRole('table');
+  await expect(activeMeter(page)).toHaveJSProperty('value', 0);
+  await expect(path.getByRole('meter', { name: 'Delegation' })).toHaveAttribute('aria-valuetext', 'Locked');
+  unlinkSync(join(directory, 'gate'));
+  await expect(activity(page)).toContainText('Tutor response ready');
+  await expect(activeMeter(page)).toHaveJSProperty('value', 1);
+  await expect(path.getByRole('meter', { name: 'Agents, tasks, and runs' })).toHaveJSProperty('value', 2);
+  await expect(path.getByRole('meter', { name: 'Delegation' })).toHaveAttribute('aria-valuetext', 'Ready');
+  for (const workspace of ['aether-fixture', 'Distributed computing']) {
+    await expect(coverage.getByRole('meter', { name: workspace + ' · medium depth' })).toHaveJSProperty('value', 1);
+  }
 });
 
 test('keeps practice primary after a skipped check', async ({ desktop: { page, directory } }) => {

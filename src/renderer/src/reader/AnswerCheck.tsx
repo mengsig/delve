@@ -4,6 +4,8 @@ import type { ActiveMasteryCheck, TutorIntent } from '../../../shared/reader';
 import { EnvironmentActivity } from '../lab/EnvironmentActivity';
 import type { LessonDraft } from './TutorJobs';
 
+const revealInChoiceList = { block: 'nearest', inline: 'nearest', behavior: 'instant', container: 'nearest' } as const;
+
 interface Props {
   check: ActiveMasteryCheck;
   revision: string;
@@ -35,7 +37,9 @@ export function AnswerCheck({ check, revision, draft, change, disabled, submit, 
       if (options[index] === undefined) return;
       event.preventDefault();
       change({ choice: index });
-      group.current?.querySelectorAll('button')[index]?.focus({ preventScroll: true });
+      const button = group.current?.querySelectorAll('button')[index];
+      button?.focus({ preventScroll: true });
+      button?.scrollIntoView(revealInChoiceList);
     } else if (event.key === 'Enter' && selected !== undefined && target instanceof Node && group.current?.contains(target)) {
       event.preventDefault();
       send();

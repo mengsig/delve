@@ -100,6 +100,10 @@ it.each([
   ['lease', 'I went with whoever reported first, since completion order determines the winner.', 'Even the first result can carry an expired claim'],
   ['lease', 'B has the newer claim now. A’s lease has already expired.', 'its active generation'],
   ['lease', 'The first worker wins, but the newer token should be checked too.', 'how would it identify the current owner?'],
+  ['lease', 'The expired claim wins.', 'An expired claim cannot authorize a write'],
+  ['lease', 'The stale token should be accepted.', 'An expired claim cannot authorize a write'],
+  ['lease', 'I compare the claim to the worker’s start time.', 'how would it identify the current owner?'],
+  ['lease', 'The expired claim.', 'how would it identify the current owner?'],
   ['lease', 'Maybe the lease? I’m unsure which result they should save.', 'how would it identify the current owner?'],
   ['exposure', 'I turned the ISO up to make the cyclist sharper.', 'Shortening the shutter time'],
   ['exposure', 'ISO can’t change the blur. A faster shutter cuts the motion trail.', 'Shutter duration controls'],
@@ -116,4 +120,16 @@ it.each([
   const reply = demoTurn(turn);
   expect(reply).toMatchObject({ assessment: true, reasoningFeedback: expect.stringContaining(feedback) });
   assertFreshCheck(mastery, checkIn(reply.lesson)!);
+});
+
+it('saves the keyed grade and corrects a learner who trusts an expired claim', async () => {
+  const request = requestFor('lease', 'high');
+  const lesson = await submit(request, { kind: 'teach' });
+  const { mastery } = prepareTurn(db, request);
+  const check = freshCheckSchema.parse(mastery.check);
+  const saved = await submit(request, { kind: 'answer', revision: lesson.mastery.revision!, answer: check.expected,
+    reasoning: 'The stale token should be accepted.' });
+  expect(saved.mastery).toMatchObject({ attempts: 1, correctAnswers: 1 });
+  expect(saved.messages.at(-2)?.text).toContain('The stale token should be accepted.');
+  expect(saved.messages.at(-1)).toMatchObject({ correct: true, reasoningFeedback: expect.stringContaining('An expired claim cannot authorize a write') });
 });

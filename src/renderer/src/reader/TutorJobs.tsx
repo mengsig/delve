@@ -122,15 +122,15 @@ export function TutorJobsProvider({ children }: { children: ReactNode }) {
   return <TutorJobsContext.Provider value={useTutorActivity()}>{children}</TutorJobsContext.Provider>;
 }
 
-export function useBackgroundTutorCompletion(workspaceId: string | undefined, depth: LessonAddress['depth'], refresh: () => void) {
+export function useBackgroundTutorCompletion(refresh: () => void) {
   const { jobs, visible } = useTutorJobs();
   const previous = useRef(new Set<string>());
   useEffect(() => {
     const ready = new Set([...jobs.values()].filter(job => job.phase === 'ready' && job.key !== visible
-      && job.request.workspaceId === workspaceId && job.request.depth === depth).map(job => job.id));
+      && job.request.intent.kind !== 'ask').map(job => job.id));
     if ([...ready].some(id => !previous.current.has(id))) refresh();
     previous.current = ready;
-  }, [jobs, visible, workspaceId, depth, refresh]);
+  }, [jobs, visible, refresh]);
 }
 
 export function useTutorJobs() {

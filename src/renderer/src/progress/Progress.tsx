@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { DEPTHS, type Depth, type Workspace } from '../../../shared/domain';
 import type { WorkspaceGraph } from '../../../shared/graph';
 import { call } from '../api';
+import { useBackgroundTutorCompletion } from '../reader/TutorJobs';
 import { ReadState } from '../ReadState';
 import { useRead } from '../useRead';
 import { Coverage } from './Coverage';
@@ -51,6 +52,7 @@ function PathCoverage({ progress, currentId, depth, onDepth }: Pick<Props, 'prog
 
 export function Progress({ workspace, graph, depth, progress, currentId, onDepth, workspaces, onSelect, onBack, onEvidence }: Props) {
   const coverage = useRead(readCoverage);
+  useBackgroundTutorCompletion(coverage.refresh);
   const [notice, setNotice] = useState('');
   function evidenceChanged() {
     setNotice('Learning record reset. Coverage is updating.');
