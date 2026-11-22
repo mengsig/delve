@@ -51,36 +51,12 @@ async function measureFrames(page: Page, action: () => Promise<void>) {
   return { frames: samples.length, p95: samples[Math.floor(samples.length * .95)], max: samples.at(-1) };
 }
 
-test('renders and pans 2000 concepts and 5000 edges within budget', async ({ desktop: { page, directory } }) => {
-  seedLargeGraph(directory);
-  const started = Date.now();
-  await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
-  const canvas = page.locator('.knowledge-map canvas');
-  await expect.poll(() => canvas.evaluate(element => {
-    const image = element as HTMLCanvasElement;
-    return image.getContext('2d')!.getImageData(0, 0, image.width, image.height).data.some((value, index) => index % 4 === 3 && value > 0);
-  })).toBe(true);
-  expect(Date.now() - started).toBeLessThan(5000);
-  await page.waitForTimeout(1000);
-  const box = await canvas.boundingBox();
-  expect(box).not.toBeNull();
-  if (nativePointer) {
-    await xdotool('xdotool', ['mousemove', String(Math.round(box!.x + 100)), String(Math.round(box!.y + 100)), 'click', '1']);
-    await page.waitForTimeout(300);
-  }
-  const initialView = await page.evaluate(() => localStorage.getItem('delve.knowledge.viewport'));
-  await canvas.evaluate(element => {
-    const counts = { downs: 0, moves: 0, wheels: 0 };
-    (window as unknown as { graphInputCounts: typeof counts }).graphInputCounts = counts;
-    element.addEventListener('pointerdown', () => { counts.downs += 1; });
-    element.addEventListener('pointermove', event => { if ((event as PointerEvent).buttons) counts.moves += 1; });
-    element.addEventListener('wheel', () => { counts.wheels += 1; });
-  });
+async function measureInteraction(page: Page, x: number, y: number, offset: { x: number; y: number }) {
   const move = async (x: number, y: number) => {
-    if (nativePointer) await xdotool('xdotool', ['mousemove', String(Math.round(x)), String(Math.round(y))]);
+    if (nativePointer) await xdotool('xdotool', ['mousemove', String(Math.round(x + offset.x)), String(Math.round(y + offset.y))]);
     else await page.mouse.move(x, y);
   };
-  await move(box!.x + 100, box!.y + 100);
+  await move(x, y);
   if (nativePointer) await page.waitForTimeout(100);
   if (nativePointer) await xdotool('xdotool', ['mousedown', '1']);
   else await page.mouse.down();
@@ -88,7 +64,7 @@ test('renders and pans 2000 concepts and 5000 edges within budget', async ({ des
     const start = Date.now();
     while (Date.now() - start < 2000) {
       const progress = (Date.now() - start) / 2000;
-      await move(box!.x + 100 + 200 * progress, box!.y + 100 + 80 * progress);
+      await move(x + 200 * progress, y + 80 * progress);
       await new Promise(resolve => setTimeout(resolve, 16));
     }
   });
@@ -101,6 +77,37 @@ test('renders and pans 2000 concepts and 5000 edges within budget', async ({ des
       await new Promise(resolve => setTimeout(resolve, 100));
     }
   });
+  return { pan, zoom };
+}
+
+test('renders and pans 2000 concepts and 5000 edges within budget', async ({ desktop: { page, directory, application } }) => {
+  seedLargeGraph(directory);
+  const started = Date.now();
+  await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  const canvas = page.locator('.knowledge-map canvas');
+  await expect.poll(() => canvas.evaluate(element => {
+    const image = element as HTMLCanvasElement;
+    return image.getContext('2d')!.getImageData(0, 0, image.width, image.height).data.some((value, index) => index % 4 === 3 && value > 0);
+  })).toBe(true);
+  expect(Date.now() - started).toBeLessThan(5000);
+  await page.waitForTimeout(1000);
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  const offset = await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentBounds());
+  const x = box!.x + 100; const y = box!.y + 100;
+  if (nativePointer) {
+    await xdotool('xdotool', ['mousemove', String(Math.round(x + offset.x)), String(Math.round(y + offset.y)), 'click', '1']);
+    await page.waitForTimeout(300);
+  }
+  const initialView = await page.evaluate(() => localStorage.getItem('delve.knowledge.viewport'));
+  await canvas.evaluate(element => {
+    const counts = { downs: 0, moves: 0, wheels: 0 };
+    (window as unknown as { graphInputCounts: typeof counts }).graphInputCounts = counts;
+    element.addEventListener('pointerdown', () => { counts.downs += 1; });
+    element.addEventListener('pointermove', event => { if ((event as PointerEvent).buttons) counts.moves += 1; });
+    element.addEventListener('wheel', () => { counts.wheels += 1; });
+  });
+  const { pan, zoom } = await measureInteraction(page, x, y, offset);
   const inputs = await page.evaluate(() => (window as unknown as { graphInputCounts: { downs: number; moves: number; wheels: number } }).graphInputCounts);
   console.log('Knowledge input events:', JSON.stringify(inputs));
   expect(inputs.downs).toBe(1);
