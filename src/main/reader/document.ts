@@ -69,6 +69,17 @@ const written = z.object({
   type: checkType, kind: writtenKind, prompt: richText, options: z.never().optional(), expected: expectedText,
 }).refine(b => new Set(b.expected.map(answer => answer.trim().toLowerCase())).size === b.expected.length,
   'Expected responses must be distinct.');
+
+const normalizeOption = (option: string) => option.normalize('NFKC').toLowerCase()
+  .replace(/\p{Default_Ignorable_Code_Point}/gu, '').trim().replace(/\s+/g, ' ');
+const predictionFields = z.strictObject({
+  type: checkType, kind: z.literal('prediction'), prompt: richText,
+  options: z.array(richLabel).length(4), expected: z.int().min(0).max(3),
+});
+export const freshCheckSchema = predictionFields.refine(({ options }) => {
+  const normalized = new Set(options.map(normalizeOption));
+  return normalized.size === 4 && !normalized.has('');
+}, 'The check needs four distinct, nonblank choices.');
 const unknown = z.object({ type: z.literal('unknown'), name: label });
 
 function normalizeDiagram({ type, nodes, edges }: z.infer<typeof diagramFields>) {
@@ -151,8 +162,7 @@ const generationBlock = z.union([
     packSchema,
     bundleConfigSchema.extend({ bundle: bundleConfigSchema.shape.bundle.omit({ sha256: true }) }),
   ]).nullable().optional() }),
-  z.strictObject({ ...choice.shape, kind: choiceKind }),
-  z.strictObject({ type: checkType, kind: writtenKind, prompt: richText, expected: expectedText }),
+  freshCheckSchema,
 ]);
 
 const generationWire = z.strictObject({

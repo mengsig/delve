@@ -1,8 +1,8 @@
 # Guided lesson mastery
 
-A guided lesson explains the concept, then opens a check. Learners can ask for another explanation,
-example, or diagram while a question is active. Tutor replies keep the same check and revision until
-the learner submits an answer, skips, or opens a new lesson revision.
+A guided lesson explains the concept and asks the learner to predict an outcome or choose an action
+in a scenario with four choices. Learners can ask for an explanation, example, or diagram while
+a check is active. Asking keeps the current check and its revision.
 
 | Depth | Consecutive correct answers | Attempts per round |
 | --- | ---: | ---: |
@@ -10,20 +10,26 @@ the learner submits an answer, skips, or opens a new lesson revision.
 | Medium | 2 | 5 |
 | Low | 3 | 6 |
 
-At least one correct answer in the streak must be a written application of the concept. Delve
-grades choices against the saved key. The tutor evaluates written answers against the check’s
-reference and explains its assessment. A miss resets the streak. After any nonterminal answer, the
-tutor teaches the relevant connection and gives a fresh written check in a different situation.
+At least one correct answer in the streak must apply the concept to a specific situation. Delve
+grades the selected choice locally against its saved key. Learners can submit up to 4,000 characters
+of optional reasoning. The tutor explains the choice, addresses the reasoning when present, and uses
+it to pick a fresh scenario when another check is due. A correct choice earns credit even when the
+explanation needs correction. A miss resets the streak and its application pass. Conversation and
+instrument practice can guide teaching without changing the check's grade or progress.
 
-When the budget runs out, the learner can review or skip. Review starts a fresh round with a
-written applied check and resets its attempt budget. Learners can also review an understood or
-skipped lesson. Skip finishes the lesson without recording demonstrated mastery. Delve offers
-the next lesson as a recommendation only after mastery. After a skip, continuing practice is the primary action; the next lesson is available only through an explicit “Move on anyway” link.
+When the budget runs out, the learner can review or skip. Review resets the attempt budget and starts
+with a fresh scenario. Learners can also review an understood or skipped lesson. Skip pauses practice
+without awarding mastery.
 
-Delve saves the current question, stage, and attempt counts locally with the lesson source and
-depth. It writes a grade, transcript, and evidence in one transaction. An answer approved for an
-earlier question cannot change a newer one. Resetting mastery clears its active progress and
-invalidates previous approvals. Verified mastery at the same depth carries across source revisions
-and shared workspaces; a new review round still requires fresh checks. Earlier evidence from one-off
-checks and activities remains recorded and appears as **Revisit** in the atlas. Curated sample evidence can demonstrate how
-mastery transfers across demo workspaces.
+The exact provider preview includes the selected answer, reasoning, trusted verdict and answer
+reference. Approval binds these values to the active check revision. Delve saves the learner's words,
+tutor feedback, next check, progress and evidence in one transaction. Cancellation, failed feedback
+and stale submissions leave the saved progress intact. Reset invalidates previous approvals.
+
+Saved `delve.lesson/1` lessons, transcripts, grades and inherited mastery remain readable at their
+original scope. Saved checks with two to four choices retain their wording and order. A saved written
+check or a check with more than four choices gets a replacement at the same depth. Preparing that
+replacement uses the regular provider preview and approval flow, or the local demo. A successful
+replacement updates only the active check and its revision. If preparation fails, the original
+lesson stays readable and the learner can retry. A separate generation cache version keeps legacy
+checks available for reading while fresh generation uses the current format.

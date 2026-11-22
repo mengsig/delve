@@ -63,6 +63,13 @@ export function validateTurn(turn: PreparedTurn, output: TutorReply): TutorReply
   }
   const check = checkIn(reply.lesson);
   if (check && blocks.at(-1) !== check) invalidReply('The tutor placed a check outside the end of its response.');
+  if (intent.kind === 'adapt') {
+    if (!check || blocks.length !== 1 || reply.observation !== null || reply.assessment !== null || reply.recommendation !== null) {
+      invalidReply('Adaptation must replace only the active check.');
+    }
+    assertFreshCheck(turn.mastery, check);
+    return reply;
+  }
   if (!blocks.some(b => ['prose', 'example', 'analogy', 'callout', 'diagram', 'code', 'comparison', 'trace'].includes(b.type))) {
     invalidReply('The response is missing teaching content.');
   }
@@ -70,13 +77,13 @@ export function validateTurn(turn: PreparedTurn, output: TutorReply): TutorReply
     invalidReply('The opening lesson needs an explanation.');
   }
   if (turn.response && (!reply.observation || reply.assessment === null)) invalidReply('The tutor did not explain its assessment.');
-  if (turn.response?.correct != null && reply.assessment !== turn.response.correct) invalidReply('The assessment disagrees with the recorded answer key.');
+  if (turn.response && reply.assessment !== turn.response.correct) invalidReply('The assessment disagrees with the recorded answer key.');
   if (!turn.response && reply.assessment !== null) invalidReply('Only a submitted check answer can be assessed.');
-  const afterGrade = reply.assessment === null ? null : nextGrade(turn.mastery, reply.assessment);
+  const afterGrade = turn.response ? nextGrade(turn.mastery, turn.response.correct) : null;
   const needsCheck = intent.kind === 'teach' || intent.kind === 'review' || afterGrade?.stage === 'checking';
   if (needsCheck && !check) invalidReply('The tutor did not provide the required check.');
   if (!needsCheck && check) invalidReply('The tutor placed a check outside the active lesson sequence.');
-  if (check && intent.kind !== 'teach') assertFreshCheck(turn.mastery, check);
+  if (check) assertFreshCheck(turn.mastery, check);
   if (reply.recommendation) {
     const allowed = afterGrade?.stage === 'understood' || intent.kind === 'ask' && canRecommend(turn.mastery);
     if (!allowed) invalidReply('The tutor recommended another step before the lesson was understood or skipped.');

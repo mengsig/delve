@@ -2,16 +2,18 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { DomainError } from '../../shared/errors';
+import { masteryLimits } from '../../shared/mastery-limits';
 import type { ReaderMastery } from '../../shared/reader';
 import type { Db } from '../db/connection';
 import { listEvidence } from '../db/evidence';
 import { readMasteryRow, writeMasteryRow } from '../db/mastery';
+import { masteryScope } from '../db/mastery-scope';
 import type { LessonContext } from '../reader/demo';
-import { documentSchema, type Document } from '../reader/document';
+import { documentSchema, freshCheckSchema, type Document } from '../reader/document';
 import type { SelectedLesson } from '../reader/stored-lesson';
 
 export type MasteryCheck = Extract<Document['blocks'][number], { type: 'check' }>;
-export const masteryLimits = { high: [2, 4], medium: [2, 5], low: [3, 6] } as const;
+export { masteryLimits };
 const cycleSchema = z.object({
   stage: z.enum(['teaching', 'checking', 'review', 'understood', 'skipped']),
   check: z.unknown(),
@@ -46,6 +48,9 @@ export function checkIn(document: Document | null): MasteryCheck | null {
   return document?.blocks.find(block => block.type === 'check') ?? null;
 }
 
+export const needsCheckAdaptation = (check: MasteryCheck) => !check.options || check.options.length > 4;
+const isApplication = (check: MasteryCheck) => !check.options || freshCheckSchema.safeParse(check).success;
+
 function decodeCycle(raw: string): Cycle {
   const fields = cycleSchema.parse(JSON.parse(raw));
   const check = fields.check === null ? null : checkIn(documentSchema.parse({ schema: 'delve.lesson/1', blocks: [fields.check] }));
@@ -56,7 +61,7 @@ function decodeCycle(raw: string): Cycle {
 
 export function loadMastery(db: Db, context: LessonContext, selected: SelectedLesson, inherited: boolean): Mastery {
   const [requiredCorrectAnswers, maxAttempts] = masteryLimits[context.depth];
-  const scope = hash([context.workspaceId, context.conceptId, context.depth, context.snapshotId, selected.revision]);
+  const scope = masteryScope(context, selected.revision);
   const saved = readMasteryRow(db, context, scope);
   const check = checkIn(selected.document);
   const stage = inherited ? 'understood' : check ? 'checking' : 'teaching';
@@ -72,16 +77,19 @@ export function loadMastery(db: Db, context: LessonContext, selected: SelectedLe
 
 export function publicMastery(mastery: Mastery): ReaderMastery {
   const { stage, revision, check, attempts, maxAttempts, correctAnswers, requiredCorrectAnswers } = mastery;
-  return { stage, revision, attempts, maxAttempts, correctAnswers, requiredCorrectAnswers, activeCheck: check && {
-    kind: check.options ? 'recognition' : 'applied', prompt: check.prompt, ...(check.options ? { options: check.options } : {}),
-  } };
+  assert.equal(stage === 'checking', check !== null);
+  assert.ok(correctAnswers <= attempts && attempts <= maxAttempts);
+  return { stage, revision, attempts, maxAttempts, correctAnswers, requiredCorrectAnswers,
+    appliedPassed: mastery.applied || stage === 'understood', needsAdaptation: check !== null && needsCheckAdaptation(check),
+    activeCheck: check && { kind: isApplication(check) ? 'applied' : 'recognition', prompt: check.prompt,
+      ...(check.options ? { options: check.options } : {}) } };
 }
 
 export const canRecommend = ({ stage }: Pick<Mastery, 'stage'>) => stage === 'understood' || stage === 'skipped';
 
 export function requireMasteryRevision(mastery: Mastery, revision: string, stages: readonly ReaderMastery['stage'][]): void {
   if (mastery.revision !== revision || !stages.includes(mastery.stage)) {
-    throw new DomainError('LESSON_CHANGED', 'Reopen the lesson to try its current check or review.');
+    throw new DomainError('LESSON_CHANGED', 'The question changed. Review the current check.');
   }
 }
 
@@ -92,7 +100,7 @@ export function nextGrade(mastery: Mastery, correct: boolean): Grade {
   assert.ok(mastery.attempts < mastery.maxAttempts, 'an exhausted cycle must be reviewed first');
   const attempts = mastery.attempts + 1;
   const correctAnswers = correct ? mastery.correctAnswers + 1 : 0;
-  const applied = correct && (mastery.applied || !mastery.check.options);
+  const applied = correct && (mastery.applied || isApplication(mastery.check));
   const stage = applied && correctAnswers >= mastery.requiredCorrectAnswers ? 'understood'
     : attempts === mastery.maxAttempts ? 'review' : 'checking';
   return { stage, attempts, correctAnswers, applied };
@@ -103,8 +111,8 @@ export function assertFreshCheck(mastery: Mastery, check: MasteryCheck): void {
   if (mastery.prompts.length >= 512) {
     throw new DomainError('INVALID_TUTOR_REPLY', 'This lesson has exhausted its fresh questions. Reset its learning record to start again.');
   }
-  if (check.options !== undefined || !words.length || mastery.prompts.some(previous => repeatsQuestion(words, previous))) {
-    throw new DomainError('INVALID_TUTOR_REPLY', 'The tutor must provide a fresh written applied check. Retry this turn.');
+  if (!freshCheckSchema.safeParse(check).success || !words.length || mastery.prompts.some(previous => repeatsQuestion(words, previous))) {
+    throw new DomainError('INVALID_TUTOR_REPLY', 'The tutor must provide a fresh applied check with four distinct choices and a valid answer key. Retry this turn.');
   }
 }
 

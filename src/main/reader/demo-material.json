@@ -5,30 +5,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "Why keep a durable queue?",
+        "prompt": "A task was accepted just before a restart. Why is a durable queue useful?",
         "options": [
           "Make polling faster",
-          "Retain work across restarts"
+          "Retain work across restarts",
+          "Reconstruct work from the worker count",
+          "Avoid writing results to disk"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
         "prompt": "The process restarts. Where should pending work come from?",
         "options": [
           "Persisted queue",
-          "Last wake-up signal"
+          "Last wake-up signal",
+          "The old worker’s local memory",
+          "The most recent dashboard rows"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
         "prompt": "After process death, which artifact proves acceptance?",
         "options": [
           "A committed task row",
-          "A sent wake-up signal"
+          "A sent wake-up signal",
+          "An entry in the in-memory dispatcher",
+          "A free slot in the worker pool"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       }
     }
   },
@@ -38,30 +47,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "Why put a deadline on a claim?",
+        "prompt": "A worker stops reporting and still holds its claim. What can a deadline help the dispatcher do?",
         "options": [
           "Count completed jobs",
-          "Recover abandoned work"
+          "Recover abandoned work",
+          "Detect a successful write",
+          "Check the worker’s local time"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
-        "prompt": "Whose clock decides that a claim has expired?",
+        "prompt": "A worker and scheduler disagree about the time. Whose clock decides whether the claim has expired?",
         "options": [
           "The worker’s display",
-          "The scheduler’s clock"
+          "The scheduler’s clock",
+          "The last result writer’s clock",
+          "Whichever clock is ahead"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
         "prompt": "At exactly the stored deadline, is the old claim eligible for replacement here?",
         "options": [
           "No: only now > deadline",
-          "Yes: now ≥ deadline"
+          "Yes: now ≥ deadline",
+          "Only if the worker acknowledges",
+          "Only on a scheduler restart"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       }
     }
   },
@@ -71,30 +89,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "Why give ownership an expiry?",
+        "prompt": "A worker disappears before reporting a result. What does letting its claim expire accomplish?",
         "options": [
           "Let abandoned work move on",
-          "Prevent every duplicate execution"
+          "Prevent every duplicate execution",
+          "Mark the task completed",
+          "Keep the same worker assigned forever"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
-        "prompt": "Two workers finished. Which result may become durable?",
+        "prompt": "Worker A’s claim expires, then B takes over. Both finish. Which result may become durable?",
         "options": [
           "The first to report",
-          "The current lease holder’s"
+          "The current lease holder’s",
+          "Both, in arrival order",
+          "The older claim’s result"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
-        "prompt": "Which predicate belongs in the atomic result write?",
+        "prompt": "A task is reassigned during a result write. Which predicate can safely guard the atomic write?",
         "options": [
           "Task ID and active generation",
-          "Task ID and worker start time"
+          "Task ID and worker start time",
+          "Task ID and payload size",
+          "Task ID and time of arrival"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       }
     }
   },
@@ -104,30 +131,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "Why fence writes?",
+        "prompt": "An old worker finishes after a new owner takes over. What protection does a write fence give?",
         "options": [
           "Keep an old owner from replacing a newer result",
-          "Stop old workers from using CPU"
+          "Stop old workers from using CPU",
+          "Reduce the time spent executing the task",
+          "Make both workers’ results publish together"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
-        "prompt": "Which comparison protects a write after reassignment?",
+        "prompt": "A worker submits a result after its task was reassigned. Which comparison protects the write?",
         "options": [
           "Task name matches",
-          "Active generation matches"
+          "Active generation matches",
+          "Result size matches",
+          "Report timestamp is newer"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
         "prompt": "The guarded update touched zero rows. What should the old worker infer?",
         "options": [
           "Its claim is stale",
-          "Its payload is already current"
+          "Its payload is already current",
+          "The queue needs a restart",
+          "The write was merged into the new lease"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       }
     }
   },
@@ -137,30 +173,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "Why keep a journal?",
+        "prompt": "The dashboard restarts with an empty timeline. What can a saved journal help it do?",
         "options": [
           "Predict future task duration",
-          "Reconstruct accepted transitions"
+          "Reconstruct accepted transitions",
+          "Discover which worker is currently using the most CPU",
+          "Retry every job from the beginning"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
         "prompt": "During replay, the same event appears twice. What matters?",
         "options": [
           "Its stable ID",
-          "Its screen position"
+          "Its screen position",
+          "Its position in the current response",
+          "The replay worker’s process ID"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
-        "prompt": "When can a replay cursor advance?",
+        "prompt": "An event was read but the application crashed while applying it. When can the replay cursor safely advance?",
         "options": [
           "After applying the event",
-          "As soon as the event is read"
+          "As soon as the event is read",
+          "When a new event arrives",
+          "After a replay process acquires a lock"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       }
     }
   },
@@ -170,30 +215,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "What is recovery trying to preserve?",
+        "prompt": "A dispatcher restarts while a task is still running. What should recovery preserve?",
         "options": [
           "Only the latest process ID",
-          "Pending work and live ownership"
+          "Pending work and live ownership",
+          "Only the most recent completed result",
+          "Only queued work without owners"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
         "prompt": "After restart, which task is eligible for reassignment?",
         "options": [
           "Any visible task",
-          "One with an expired claim"
+          "One with an expired claim",
+          "The task submitted most recently",
+          "A task that already has a saved result"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
         "prompt": "A recovery scan sees a live unexpired claim. What happens?",
         "options": [
           "Bump its generation on every scan",
-          "Leave its generation intact"
+          "Leave its generation intact",
+          "Mark the task complete",
+          "Drop the task from the queue"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       }
     }
   },
@@ -203,30 +257,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "Why delay another delivery attempt?",
+        "prompt": "A receiver has started returning temporary failures. What does delaying another attempt give it?",
         "options": [
           "Erase the earlier failure",
-          "Let the receiver recover"
+          "Let the receiver recover",
+          "A second copy of every job",
+          "An automatic confirmation"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
-        "prompt": "When should a failed delivery be retried?",
+        "prompt": "A job has another attempt scheduled for later. When should the retry loop send it?",
         "options": [
           "After its scheduled delay",
-          "Continuously"
+          "Continuously",
+          "Immediately after each dashboard refresh",
+          "Once a new worker is hired"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
         "prompt": "Which fields must survive a retry-loop restart?",
         "options": [
           "Attempt count and next eligible time",
-          "Only the latest exception text"
+          "Only the latest exception text",
+          "Only the last receiver address",
+          "Only the last worker’s log line"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       }
     }
   },
@@ -236,30 +299,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "What does the delivery loop connect?",
+        "prompt": "A completed result is ready to be sent to its receiver. What does the delivery loop connect?",
         "options": [
           "Logs to the user interface",
-          "Queued work to the receiver"
+          "Queued work to the receiver",
+          "Worker generations to lease expiry",
+          "Dashboard filters to the journal cursor"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
-        "prompt": "What should remove a job from pending delivery?",
+        "prompt": "A worker sent bytes but has not heard back. What should remove the job from pending delivery?",
         "options": [
           "Sending bytes",
-          "Confirmed acknowledgment"
+          "Confirmed acknowledgment",
+          "A local progress message",
+          "Elapsed time with no reply"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
-        "prompt": "What prevents replay after success?",
+        "prompt": "The dispatcher restarts after the receiver confirms success. What prevents replay?",
         "options": [
           "A persisted acknowledgment",
-          "A worker-local success flag"
+          "A worker-local success flag",
+          "A fresh worker claim",
+          "An earlier unconfirmed send"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       }
     }
   },
@@ -269,30 +341,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "What does available light describe?",
+        "prompt": "The rider moves from shade to bright sun while the camera settings stay fixed. What changed first?",
         "options": [
           "Illumination reaching the scene",
-          "The crop of the final image"
+          "The crop of the final image",
+          "The size of the sensor",
+          "The shutter duration"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
         "prompt": "With fixed camera settings, doubling the light does what?",
         "options": [
           "Brightens the exposure",
-          "Freezes the subject"
+          "Freezes the subject",
+          "Widens the field of view",
+          "Doubles the shutter time"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
         "prompt": "The scene light doubles at fixed settings. What changes?",
         "options": [
           "One stop more exposure",
-          "Two stops more exposure"
+          "Two stops more exposure",
+          "Half a stop more exposure",
+          "No exposure change"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       }
     }
   },
@@ -302,30 +383,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "Which choice changes framing?",
+        "prompt": "The rider is too centered in the composition. Which change affects framing?",
         "options": [
           "Move the rider toward the edge",
-          "Raise ISO one stop"
+          "Raise ISO one stop",
+          "Shorten the exposure",
+          "Use a lower ISO at the same aperture and shutter time"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
-        "prompt": "Does a tighter crop shorten the exposure time?",
+        "prompt": "You crop the rider’s photo more tightly afterward. What happens to the exposure duration it recorded?",
         "options": [
-          "Yes",
-          "No"
+          "It shortens",
+          "It stays the same",
+          "It doubles",
+          "It follows the width of the crop"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
-        "prompt": "A digital crop changes which of these?",
+        "prompt": "A client requests a digital crop around the rider. Which property actually changes?",
         "options": [
           "Exposure duration",
-          "Image composition"
+          "Image composition",
+          "Sensor gain",
+          "Shutter speed"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       }
     }
   },
@@ -335,30 +425,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "What makes the moving rider look smeared?",
+        "prompt": "A moving rider smears while a parked bike stays sharp. What causes the smear?",
         "options": [
           "Low ISO alone",
-          "Motion during the exposure"
+          "Motion during the exposure",
+          "The parked bike reflects less light",
+          "A wider crop in the viewfinder"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
-        "prompt": "The rider is sharp but dark. Keep the shutter time and…",
+        "prompt": "The rider is sharp but dark. At fixed aperture, how can you brighten the image and keep the shutter time?",
         "options": [
           "Raise ISO",
-          "Lower ISO"
+          "Lower ISO",
+          "Lengthen the exposure",
+          "Shorten the exposure"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
         "prompt": "In this scene, 1/125 s at ISO 200 becomes 1/500 s. Which ISO restores displayed brightness?",
         "options": [
           "ISO 400",
-          "ISO 800"
+          "ISO 800",
+          "ISO 100",
+          "ISO 1600"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       }
     }
   },
@@ -368,30 +467,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "Which control changes the time recorded?",
+        "prompt": "A moving rider looks blurred. Which camera control changes how long the motion is recorded?",
         "options": [
           "ISO",
-          "Shutter speed"
+          "Shutter speed",
+          "Crop width",
+          "Color balance"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
-        "prompt": "For a sharper moving rider, choose…",
+        "prompt": "At fixed aperture, which setting gives the shortest motion trail for a rider at the same speed?",
         "options": [
           "1/30 s",
-          "1/500 s"
+          "1/500 s",
+          "1/15 s",
+          "1/125 s"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
         "prompt": "At fixed subject speed, going from 1/125 to 1/500 gives…",
         "options": [
           "Half the motion trail",
-          "One quarter of the motion trail"
+          "One quarter of the motion trail",
+          "Four times the motion trail",
+          "The same motion trail"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       }
     }
   },
@@ -401,30 +509,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "Which adjustment changes brightness without changing exposure time?",
+        "prompt": "A sharp photo is too dark, and shutter time must stay fixed. Which adjustment can brighten it at fixed aperture?",
         "options": [
           "ISO",
-          "Shutter time"
+          "Shutter time",
+          "Panning speed",
+          "Crop size"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
         "prompt": "Higher ISO with the same shutter time will…",
         "options": [
           "Shorten motion trails",
-          "Change recorded brightness"
+          "Change recorded brightness",
+          "Reduce the time the shutter is open",
+          "Change the subject’s speed"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
-        "prompt": "Can raising ISO recover photons lost to a faster shutter?",
+        "prompt": "Shutter time drops while aperture and scene light stay fixed. What can raising ISO do?",
         "options": [
-          "No, it changes recorded brightness",
-          "Yes, it increases incoming light"
+          "Brighten the rendered image",
+          "Increase incoming light",
+          "Open the shutter wider",
+          "Restore the shorter motion trail to its previous length"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       }
     }
   },
@@ -434,30 +551,39 @@
     "checks": {
       "high": {
         "type": "check",
-        "prompt": "What moves in a panning shot?",
+        "prompt": "The photographer wants to pan as the rider passes. How should the camera move?",
         "options": [
           "The camera follows the subject",
-          "The camera stays fixed"
+          "The camera stays fixed",
+          "Point away from the rider during exposure",
+          "Follow the background past the rider"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "medium": {
         "type": "check",
-        "prompt": "While panning, follow…",
+        "prompt": "Buildings streak behind a sharp rider in a panning shot. What did the camera follow?",
         "options": [
           "The rider",
-          "The background"
+          "The background",
+          "The direction of the lane markings",
+          "Any subject moving at the same ground speed"
         ],
-        "expected": 0
+        "expected": 0,
+        "kind": "prediction"
       },
       "low": {
         "type": "check",
         "prompt": "How do you minimize displacement of the rider in frame?",
         "options": [
           "Match only the distance to the road",
-          "Match the rider’s angular speed"
+          "Match the rider’s angular speed",
+          "Keep the camera stationary",
+          "Match the rider’s brightness"
         ],
-        "expected": 1
+        "expected": 1,
+        "kind": "prediction"
       }
     }
   }

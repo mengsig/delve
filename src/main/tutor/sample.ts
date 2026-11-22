@@ -3,7 +3,8 @@ import { demoDocument, demoMaterial, demoReply } from '../reader/demo';
 import type { Document } from '../reader/document';
 import type { PreparedTurn } from './prompt';
 import type { TutorReply } from './provider';
-import { canRecommend, nextGrade, type MasteryCheck } from './mastery';
+import { canRecommend, nextGrade } from './mastery';
+import { demoCheck } from './sample-checks';
 
 function sampleExample(turn: PreparedTurn): Document['blocks'][number] {
   const { context } = turn;
@@ -20,58 +21,52 @@ function sampleExample(turn: PreparedTurn): Document['blocks'][number] {
     steps: [item.mechanics, item.detail], takeaway: item.checks[context.depth].options[item.checks[context.depth].expected]! };
 }
 
-function appliedCheck(turn: PreparedTurn, position: number, cycle: number): MasteryCheck {
-  const { context } = turn;
-  const { id, item } = demoMaterial(context.key);
-  assert.ok(Number.isSafeInteger(position) && position >= 0 && position <= turn.mastery.maxAttempts);
-  assert.ok(Number.isSafeInteger(cycle) && cycle >= 0);
-  const value = 20 + cycle * 10 + position;
-  const block = { type: 'check', kind: 'prediction' } as const;
+function reasoningFeedback(key: string, reasoning: string | undefined) {
+  if (!reasoning?.trim()) return null;
+  const { id, item } = demoMaterial(key);
+  const text = reasoning.trim().replace(/[.!?]+$/, '');
   if (id === 'lease') {
-    if (position % 3 === 0) return { ...block,
-      prompt: `A is replaced by B with generation ${value}. A reports before B. Why can A's report be rejected even though B has yet to finish?`,
-      expected: ['A is no longer the current lease holder', 'A has a stale generation', 'A has an old generation'] };
-    if (position % 3 === 1) return { ...block,
-      prompt: `The active claim is generation ${value}. A result arrives with generation ${value - 1}. Should the writer commit it? Give the reason.`,
-      expected: ['Reject it because the generation does not match', 'Reject the stale generation', 'No, the generation is stale'] };
-    return { ...block,
-      prompt: `A result and a reassignment both reach storage. The new claim is generation ${value}. What should the result writer check atomically before committing?`,
-      expected: ['The result generation matches the active generation', 'Match the generation to the current lease', 'Compare the active generation'] };
+    if (/^(?:(?:I thought |I think )?arrival order (?:matters|mattered|decides)|(?:the )?first (?:result|worker|writer) (?:wins|always wins|should win))$/i.test(text)) {
+      return { focus: 'arrival', feedback: 'You looked at arrival order. Even the first result can carry an expired claim; compare it with the active generation.' };
+    }
+    const currentClaim = /^(?:because )?B (?:still )?(?:holds|has) the current (?:lease|claim)$/i;
+    const matchesCurrent = /^(?:because )?(?:the generation (?:is stale|does not match)|the active generation (?:must match|matches|decides))$/i;
+    const ownerFromClaim = /^(?:I think )?B owns the task (?:now )?because (?:its|B's) claim is current$/i;
+    if (currentClaim.test(text) || matchesCurrent.test(text) || ownerFromClaim.test(text)) {
+      return { focus: 'claim', feedback: 'Your reasoning uses the claim and its active generation to identify the owner. That comparison is what protects the write.' };
+    }
   }
   if (id === 'exposure') {
-    const initial = 100 + 10 * value;
-    if (position % 3 === 0) return { ...block,
-      prompt: `A rider still blurs at 1/${initial} s. At the same aperture, which exposure control would you change first to freeze more movement, and in which direction?`,
-      expected: ['Use a faster shutter speed', 'Shorten the exposure time', 'Increase shutter speed'] };
-    if (position % 3 === 1) return { ...block,
-      prompt: `A 1/${initial * 2} s exposure gives sharp detail but a dark frame. Aperture is fixed. How would you brighten the image without reintroducing motion blur?`,
-      expected: ['Raise ISO and keep the shutter time', 'Increase the ISO', 'Raise ISO'] };
-    return { ...block,
-      prompt: `Two photos use the same shutter time of 1/${initial} s. One uses much higher ISO. Why do the motion trails stay the same length?`,
-      expected: ['The shutter time determines motion blur', 'ISO does not change the shutter time', 'The exposure duration is the same'] };
+    if (/^(?:because )?(?:raising |higher |changing )?ISO (?:freezes motion|reduces (?:motion )?blur|shortens the motion trail)$/i.test(text)) {
+      return { focus: 'iso', feedback: 'ISO changes displayed brightness. Shortening the shutter time is what limits the distance the rider moves during exposure.' };
+    }
+    if (/^(?:because )?(?:a (?:faster shutter|shorter exposure) (?:limits|reduces) (?:motion|blur|motion blur)|ISO (?:only )?changes (?:the )?brightness)$/i.test(text)) {
+      return { focus: 'shutter', feedback: 'You separated brightness from motion. ISO changes the rendered brightness, and shutter duration controls how much movement appears.' };
+    }
   }
-  const scenarios = Object.values(item.checks);
-  const scenario = scenarios[position % scenarios.length]!;
-  const framing = position < scenarios.length ? 'Apply the rule and explain your reasoning.' : 'Name the decision and the property that makes it safe.';
-  return { ...block, prompt: `Case ${value}. ${scenario.prompt} ${framing}`,
-    expected: [scenario.options[scenario.expected]!, item.mechanics, item.detail] };
+  if ([item.mechanics, item.detail].some(rule => rule.replace(/[.!?]+$/, '').toLowerCase() === text.toLowerCase())) {
+    return { feedback: 'You identified the rule that governs the scenario. ' + item.detail };
+  }
+  return { feedback: id === 'lease' ? 'Which claim would your rule allow the writer to accept, and how would it identify the current owner?'
+    : id === 'exposure' ? 'Which camera setting does your explanation change, and what would happen to the motion trail?'
+      : 'How would your reasoning change what happens in this example?' };
 }
-
-const normalize = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 function assessDemo(turn: PreparedTurn, response: NonNullable<PreparedTurn['response']>): TutorReply {
   const { context, mastery, nextConcepts } = turn;
   const { item } = demoMaterial(context.key);
-  assert.ok(mastery.check && response.reference.length > 0);
+  const [reference] = response.reference;
+  assert.ok(mastery.check && reference !== undefined);
   assert.equal(turn.request.intent.kind, 'answer');
-  const answer = normalize(response.answer);
-  const correct = response.correct ?? response.reference.some(reference => answer === normalize(reference));
-  const observation = correct ? 'You connected the decision to the underlying rule.'
-    : '“' + response.answer + '” does not satisfy the rule: ' + item.mechanics + ' The right answer is “' + response.reference[0] + '”.';
+  const { correct } = response;
+  const rationale = reasoningFeedback(context.key, response.reasoning);
+  const selection = correct ? '“' + response.answer + '” is correct. ' + item.mechanics
+    : '“' + response.answer + '” does not fit this case. The correct choice is “' + reference + '”. ' + item.mechanics;
+  const observation = [selection, rationale?.feedback].filter(Boolean).join(' ');
   const blocks: Document['blocks'] = [{ type: 'prose', heading: correct ? 'Why that works' : 'Let’s look at the decision again',
     text: item.mechanics }, sampleExample(turn)];
   const next = nextGrade(mastery, correct);
-  if (next.stage === 'checking') blocks.push(appliedCheck(turn, next.attempts, mastery.cycle));
+  if (next.stage === 'checking') blocks.push(demoCheck(turn, next.attempts, mastery.cycle, rationale?.focus));
   const targetKey = context.key.endsWith(':lease') ? 'recovery' : context.key.endsWith(':exposure') ? 'pan' : null;
   const target = nextConcepts.find(c => c.key.endsWith(':' + targetKey));
   const recommendation = !canRecommend(next) ? null : target
@@ -86,8 +81,11 @@ export function demoTurn(turn: PreparedTurn): TutorReply {
   const base = { assessment: null, recommendation: null, observation: null };
   if (request.intent.kind === 'teach') return { ...base, lesson: demoDocument(context) };
   if (response) return assessDemo(turn, response);
+  if (request.intent.kind === 'adapt') {
+    return { ...base, lesson: { schema: 'delve.lesson/1', blocks: [demoCheck(turn, turn.mastery.attempts, turn.mastery.cycle)] } };
+  }
   if (request.intent.kind === 'review') {
-    const blocks = [sampleExample(turn), appliedCheck(turn, 0, turn.mastery.cycle + 1)];
+    const blocks = [sampleExample(turn), demoCheck(turn, 0, turn.mastery.cycle + 1)];
     return { ...base, lesson: { schema: 'delve.lesson/1', blocks } };
   }
   assert.equal(request.intent.kind, 'ask');

@@ -152,11 +152,17 @@ describe('activity assessment', () => {
   });
 
   it('records pack assessment and makes its summary available to the next tutor preview', () => {
+    save([block, { type: 'check', kind: 'prediction', prompt: 'Claim 8 has taken over. What can the writer accept?',
+      options: ['Claim 7', 'Claim 8', 'Either claim', 'Both claims'], expected: 1 }]);
+    const before = readLesson(db, address);
     const labs = new LabHost(db);
     const opened = labs.open(openRequest());
     for (let seq = 1; seq <= 3; seq++) labs.input({ session: opened.session, seq, input: { type: 'advance' } });
     const result = labs.input({ session: opened.session, seq: 4, input: { type: 'reject' } });
-    expect(listEvidence(db, address.conceptId)).toMatchObject([{ source: 'environment', status: 'partial', workspaceId: address.workspaceId }]);
+    expect(listEvidence(db, address.conceptId)).toMatchObject([
+      { source: 'environment', status: 'partial', masteryVerified: false, workspaceId: address.workspaceId },
+    ]);
+    expect(result.lesson?.mastery).toEqual(before.mastery);
     const observation = result.lesson?.messages.at(-1)?.observation;
     expect(observation).toBeTruthy();
     const preview = prepareTurn(db, { ...address, provider: 'codex', intent: { kind: 'ask', text: 'What next?' } }).preview;

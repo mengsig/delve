@@ -7,9 +7,11 @@ import { resolveScope } from './scope';
 
 const SCHEMA_VERSION = /^delve\.lesson\/\d+$/;
 const COMMIT_SHA = /^[0-9a-f]{7,64}$/i;
+export const TUTOR_GENERATION = 'four-choice/1';
 
 export interface CacheKeyParts {
   schemaVersion: string;
+  generation?: string;
   conceptKey: string;
   depth: Depth;
   provider: string;
@@ -23,6 +25,7 @@ export function lessonCacheKey(parts: CacheKeyParts): string {
   assert.ok(SCHEMA_VERSION.test(parts.schemaVersion), `bad schema version ${parts.schemaVersion}`);
   assert.ok((DEPTHS as readonly string[]).includes(parts.depth), `bad depth ${parts.depth}`);
   const fields = [parts.schemaVersion, parts.conceptKey, parts.depth, parts.provider, parts.model, parts.sourceRef];
+  if (parts.generation !== undefined) fields.push(parts.generation);
   assert.ok(fields.every((field) => field.length > 0), 'every cache key part is required');
   return createHash('sha256').update(JSON.stringify(fields)).digest('hex');
 }
