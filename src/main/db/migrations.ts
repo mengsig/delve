@@ -190,6 +190,36 @@ export const MIGRATIONS: readonly Migration[] = [
     CREATE UNIQUE INDEX transfer_links_pair ON transfer_links (min(from_concept_id, to_concept_id), max(from_concept_id, to_concept_id));
     CREATE INDEX transfer_links_to ON transfer_links (to_concept_id);`,
   },
+  {
+    version: 6,
+    name: 'index lesson selection and committed check progress',
+    sql: `-- NULL requires validation; an empty revision marks an unreadable lesson.
+    ALTER TABLE lessons ADD COLUMN document_revision TEXT;
+    CREATE INDEX lessons_selectable ON lessons (concept_id, depth, created_at DESC, id DESC,
+      workspace_id, snapshot_id, provider, document_revision) WHERE document_revision IS NOT '';
+    CREATE INDEX lessons_selectable_by_scope ON lessons (concept_id, depth, workspace_id, snapshot_id,
+      created_at DESC, id DESC, provider, document_revision) WHERE document_revision IS NOT '';
+    CREATE TRIGGER lesson_document_changed AFTER UPDATE OF body, schema_version, id ON lessons
+    WHEN NEW.body IS NOT OLD.body OR NEW.schema_version IS NOT OLD.schema_version OR NEW.id <> OLD.id
+    BEGIN UPDATE lessons SET document_revision = NULL WHERE id = NEW.id; END;
+
+    ALTER TABLE lesson_mastery ADD COLUMN check_attempts INTEGER;
+    ALTER TABLE lesson_mastery ADD COLUMN check_streak INTEGER;
+    CREATE INDEX mastery_progress ON lesson_mastery (workspace_id, depth, concept_id, lesson_id,
+      scope, revision, check_attempts, check_streak) WHERE state IS NOT NULL;
+    CREATE TRIGGER mastery_progress_insert AFTER INSERT ON lesson_mastery WHEN NEW.state IS NOT NULL
+    BEGIN UPDATE lesson_mastery SET check_attempts = json_extract(NEW.state, '$.attempts'),
+      check_streak = json_extract(NEW.state, '$.correctAnswers')
+      WHERE workspace_id = NEW.workspace_id AND concept_id = NEW.concept_id AND depth = NEW.depth; END;
+    CREATE TRIGGER mastery_progress_update AFTER UPDATE OF state ON lesson_mastery
+    WHEN NEW.state IS NOT OLD.state
+    BEGIN UPDATE lesson_mastery SET check_attempts = json_extract(NEW.state, '$.attempts'),
+      check_streak = json_extract(NEW.state, '$.correctAnswers')
+      WHERE workspace_id = NEW.workspace_id AND concept_id = NEW.concept_id AND depth = NEW.depth; END;
+    CREATE INDEX snapshot_generations ON repository_generations (snapshot_id);
+    CREATE INDEX workspace_baselines ON repository_generations (workspace_id, last_used DESC) WHERE kind = 'baseline';
+    CREATE INDEX workspace_snapshots ON snapshots (workspace_id, created_at DESC, id DESC);`,
+  },
 ];
 
 function assertOrdered(migrations: readonly Migration[]): void {
