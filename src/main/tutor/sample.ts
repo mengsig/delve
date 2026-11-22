@@ -38,7 +38,7 @@ function assessDemo(turn: PreparedTurn, response: NonNullable<PreparedTurn['resp
   assert.equal(turn.request.intent.kind, 'answer');
   const { correct } = response;
   const explanation = scenarioFeedback(id, context.depth, mastery.check.prompt) ?? item.mechanics;
-  const rationale = response.reasoning?.trim() ? reasoningFeedback(id, response.reasoning, item.detail, item.mechanics) : null;
+  const rationale = response.reasoning?.trim() ? reasoningFeedback(id, response.reasoning, explanation) : null;
   const selection = correct ? '“' + response.answer + '” is correct. ' + explanation
     : '“' + response.answer + '” does not fit this case. The correct choice is “' + reference + '”. ' + explanation;
   const blocks: Document['blocks'] = [{ type: 'prose', heading: correct ? 'Why that works' : 'Let’s look at the decision again',

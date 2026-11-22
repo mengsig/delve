@@ -14,7 +14,9 @@ At least one correct answer in the streak must apply the concept to a specific s
 grades the selected choice locally against its saved key. Learners can submit up to 4,000 characters
 of optional reasoning. The tutor explains the choice, addresses the reasoning when present, and uses
 it to pick a fresh scenario when another check is due. A correct choice earns credit even when the
-explanation needs correction. A miss resets the streak and its application pass. Conversation and
+explanation needs correction. The offline tutor recognizes a small set of explicit decisions. For questions,
+hedges, mixed statements or other ambiguous reasoning, it explains its offline limit and shows the
+model reasoning. The learner can continue with the ordinary next check. A miss resets the streak and its application pass. Conversation and
 instrument practice can guide teaching without changing the check's grade or progress.
 
 When the budget runs out, the learner can review or skip. Review resets the attempt budget and starts

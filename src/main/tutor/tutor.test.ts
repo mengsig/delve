@@ -565,14 +565,14 @@ it('adapts demo checks locally and responds distinctly to known and unfamiliar r
     mastery: { needsAdaptation: false, attempts: 0, correctAnswers: 0, activeCheck: { kind: 'applied', options: expect.any(Array) } } });
   const answer = (reasoning?: string) => ({ kind: 'answer' as const, answer: keyFor(adapted), revision: adapted.mastery.revision!, reasoning });
   const feedback = (reasoning?: string) => demoTurn(prepareTurn(db, { ...request, intent: answer(reasoning) }));
-  const misconception = feedback('I thought arrival order mattered.');
-  const goodReason = feedback('B still holds the current lease.');
+  const misconception = feedback('The first result wins.');
+  const goodReason = feedback('Accept the result from the current lease.');
   expect(misconception).toMatchObject({ assessment: true, reasoningFeedback: expect.stringContaining('Even the first result can carry an expired claim') });
   expect(goodReason).toMatchObject({ assessment: true, reasoningFeedback: expect.stringContaining('its active generation') });
   expect(misconception.lesson.blocks.at(-1)).not.toEqual(goodReason.lesson.blocks.at(-1));
-  expect(feedback('The label on the envelope is green.').reasoningFeedback).toMatch(/how would it identify the current owner\?/);
+  expect(feedback('The label on the envelope is green.').reasoningFeedback).toContain('I can’t judge this reasoning offline.');
   expect(feedback().observation).not.toMatch(/your reasoning|your rule/i);
-  const saved = await run(answer('I thought arrival order mattered.'));
+  const saved = await run(answer('The first result wins.'));
   expect(saved.mastery).toMatchObject({ attempts: 1, correctAnswers: 1, appliedPassed: true });
   expect(saved.messages.at(-1)).toMatchObject({ correct: true, observation: misconception.observation, reasoningFeedback: misconception.reasoningFeedback });
 });
