@@ -46,7 +46,9 @@ describe('shutdown', () => {
     expect(process.on).not.toHaveBeenCalledWith('SIGTERM', expect.anything());
     expect(process.on).not.toHaveBeenCalledWith('SIGINT', expect.anything());
   });
+});
 
+describe('shutdown drain', () => {
   it('quits when no cleanup was installed', async () => {
     const shutdown = installShutdown();
     beforeQuit();
