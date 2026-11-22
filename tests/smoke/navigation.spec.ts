@@ -18,7 +18,7 @@ test('opens primary destinations and switches workspace in one action', async ({
   await expect(header).toContainText('Knowledge · All workspaces');
   await expect(header).toContainText('Demo snapshot');
   await expect(header.getByRole('meter', { name: /Workspace mastery/ })).toHaveJSProperty('value', 2);
-  await button(page, 'Add a workspace').click();
+  await header.getByRole('button', { name: 'Add a workspace', exact: true }).click();
   await expect(header).toContainText('Workspace setup');
   await expect(header.locator('.workspace-identity')).toContainText('Archon (demo)');
   await button(page, 'Atlas').click();

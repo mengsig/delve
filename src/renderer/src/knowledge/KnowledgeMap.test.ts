@@ -4,7 +4,7 @@ import { fitViewport, readViewport, revealPoint, writeViewport, zoomAt } from '.
 import { drawGraph, prepareDrawData } from './map-drawing';
 import { directionalPoint, overlaps, project } from './map-geometry';
 import { pickNode, placeLabels } from './map-labels';
-import { layoutGraph, type Point } from './map-layout';
+import { framePoints, layoutGraph, type Point } from './map-layout';
 
 function concept(id: number, workspaceIds: string[] = []): KnowledgeConcept {
   return { id, key: String(id), title: `Node ${id}`, summary: '', portable: false,
@@ -85,22 +85,43 @@ describe('map layout and camera', () => {
   it('groups workspaces stably and places prerequisite ranks in sequence', () => {
     const concepts = [concept(1, ['a']), concept(2, ['b', 'a']), concept(3, ['a']), concept(4, ['b'])];
     const edges = [{ prerequisiteId: 1, conceptId: 2 }, { prerequisiteId: 2, conceptId: 3 }];
-    const layout = layoutGraph({ concepts, edges });
-    expect(layoutGraph({ concepts: concepts.toReversed(), edges: edges.toReversed() })).toEqual(layout);
+    const layout = layoutGraph({ global: true, concepts, edges });
+    expect(layoutGraph({ global: true, concepts: concepts.toReversed(), edges: edges.toReversed() })).toEqual(layout);
     expect(layout.areas.map(area => area.title)).toEqual(['a', 'b']);
-    const byId = new Map(layout.points.map(point => [point.id, point]));
+    const local = layoutGraph({ concepts: concepts.filter(c => c.memberships.some(m => m.workspaceId === 'a')), edges, global: false });
+    const byId = new Map(local.points.map(point => [point.id, point]));
+    expect(local.areas).toEqual([]);
     expect(byId.get(1)!.x).toBeLessThan(byId.get(2)!.x);
     expect(byId.get(2)!.x).toBeLessThan(byId.get(3)!.x);
-    expect(byId.get(2)!.x).toBeLessThan(layout.areas[0]!.right);
+  });
+
+  it('labels and fits every workspace even when all three share the same marker', () => {
+    const concepts = [concept(1, ['a', 'b', 'c'])];
+    const layout = layoutGraph({ concepts, edges: [], global: true });
+    expect(layout.points.map(point => point.id)).toEqual([1]);
+    expect(layout.areas.map(area => area.title)).toEqual(['a', 'b', 'c']);
+    expect(layout.areas.slice(1).map(area => area.sharedSummary)).toEqual(['Shares Node 1', 'Shares Node 1']);
+    const size = { width: 640, height: 414 };
+    const camera = fitViewport(framePoints(layout.points, layout, null), size);
+    for (const area of layout.areas) {
+      expect(area.left * camera.scale + camera.x).toBeGreaterThanOrEqual(0);
+      expect(area.right * camera.scale + camera.x).toBeLessThanOrEqual(size.width);
+      expect(area.top * camera.scale + camera.y).toBeGreaterThanOrEqual(0);
+      expect(area.bottom * camera.scale + camera.y).toBeLessThanOrEqual(size.height);
+    }
+    const mixed = layoutGraph({ concepts: [...concepts, concept(2, ['a']), concept(3, ['b'])], edges: [], global: true });
+    expect(mixed.areas).toHaveLength(3);
+    expect(mixed.areas.every(area => !area.sharedSummary)).toBe(true);
+    expect(new Set(mixed.points.map(p => p.id)).size).toBe(3);
   });
 
   it('assigns one finite position per concept when a graph has a cycle or missing endpoint', () => {
-    const layout = layoutGraph({ concepts: [concept(1), concept(2)], edges: [
+    const layout = layoutGraph({ global: true, concepts: [concept(1), concept(2)], edges: [
       { prerequisiteId: 1, conceptId: 2 }, { prerequisiteId: 2, conceptId: 1 }, { prerequisiteId: 9, conceptId: 1 },
     ] });
     expect(layout.points.map(point => point.id)).toEqual([1, 2]);
     expect(layout.points.every(({ x, y }) => Number.isFinite(x) && Number.isFinite(y))).toBe(true);
-    expect(() => layoutGraph({ concepts: [concept(1), concept(1)], edges: [] })).toThrow(/unique/);
+    expect(() => layoutGraph({ global: true, concepts: [concept(1), concept(1)], edges: [] })).toThrow(/unique/);
   });
 
 });

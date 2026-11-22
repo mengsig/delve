@@ -46,6 +46,17 @@ describe('scoped knowledge recommendations', () => {
     expect(neighbourhood(graph, 2)).toEqual(new Set([1, 2]));
   });
 
+  it('counts a shared concept on its reviewed path when its preferred workspace uses it only in a change', () => {
+    const first = area(alpha);
+    const second = area(beta);
+    first.progress.byId.get(2)!.onAtlas = false;
+    second.progress.byId.get(2)!.state = 'mastered';
+    const places = mapPlaces(graph, [first, second], alpha.workspaceId);
+    expect(places.get(2)?.area.workspaceId).toBe(beta.workspaceId);
+    expect(places.get(2)?.state).toBe('mastered');
+    expect(suggestedLesson([first, second], places, new Set([2]))).toBeNull();
+  });
+
   it('withholds guidance when the scoped check projection is unavailable', () => {
     const first = area(alpha);
     first.progress.available = false;

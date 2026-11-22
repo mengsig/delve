@@ -41,7 +41,8 @@ export function mapPlaces(graph: GlobalKnowledgeGraph, areas: LearningArea[], pr
     });
     const preferredPlace = candidates.find(p => p.area.workspaceId === preferred);
     const eligible = ({ area, progress }: typeof candidates[number]) => area.progress.available && canStartNext(progress);
-    const place = preferredPlace && eligible(preferredPlace) ? preferredPlace : candidates.find(eligible) ?? preferredPlace ?? candidates[0];
+    const place = preferredPlace && eligible(preferredPlace) ? preferredPlace : candidates.find(eligible)
+      ?? (preferredPlace?.progress.onAtlas ? preferredPlace : candidates.find(p => p.progress.onAtlas)) ?? preferredPlace ?? candidates[0];
     if (!place) continue;
     const { area, progress } = place;
     const state = progress.state !== 'mastered' && progress.unmet.length ? 'locked' : progress.state;

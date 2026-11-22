@@ -4,7 +4,7 @@ import { fitViewport, revealPoint, useMapCamera, type Size, type Viewport } from
 import { drawGraph, prepareDrawData } from './map-drawing';
 import { stateName, type NodeState } from './map-geometry';
 import { labelThreshold, type HitRegion } from './map-labels';
-import type { MapLayout, Point } from './map-layout';
+import { framePoints, type MapLayout, type Point } from './map-layout';
 import { useMapInput } from './use-map-input';
 import { useCanvasSize, useMapLayout } from './use-map-layout';
 import './map.css';
@@ -18,6 +18,7 @@ interface Props {
   cameras: Map<string, Viewport>;
   states: ReadonlyMap<number, NodeState>;
   areaKey: string;
+  global: boolean;
 }
 interface Framing { selected: number | null; visible: Set<number>; focus: Set<number> | null }
 type Camera = ReturnType<typeof useMapCamera>;
@@ -26,11 +27,6 @@ const emptyLayout: MapLayout = { points: [], areas: [] };
 
 function sameMembers(a: Set<number> | null, b: Set<number> | null) {
   return a === b || !!(a && b && a.size === b.size && Array.from(a).every(id => b.has(id)));
-}
-
-function framePoints(points: Point[], focus: Set<number> | null) {
-  const neighborhood = focus ? points.filter(point => focus.has(point.id)) : points;
-  return neighborhood.length ? neighborhood : points;
 }
 
 function useAutomaticFraming(camera: Camera, size: Size, points: Point[], layout: MapLayout | undefined, framing: Framing) {
@@ -44,19 +40,19 @@ function useAutomaticFraming(camera: Camera, size: Size, points: Point[], layout
     previous.current = { focus, selected, visible };
     if (!points.length) return;
     if (!last) {
-      if (!restored) move(fitViewport(framePoints(points, focus), size));
+      if (!restored) move(fitViewport(framePoints(points, layout, focus), size));
       return;
     }
     const filterChanged = !sameMembers(last.visible, visible);
     const focusChanged = focus && !sameMembers(last.focus, focus);
     if (focus && !last.focus) beforeFocus.current = current.current;
     if (last.focus && !focus && !filterChanged && selected === last.selected) {
-      move(beforeFocus.current ?? fitViewport(points, size), true);
+      move(beforeFocus.current ?? fitViewport(framePoints(points, layout, null), size), true);
       beforeFocus.current = null;
       return;
     }
     if (filterChanged || focusChanged) {
-      move(fitViewport(framePoints(points, focus), size), true);
+      move(fitViewport(framePoints(points, layout, focus), size), true);
       return;
     }
     const point = points.find(item => item.id === selected);
@@ -110,11 +106,11 @@ function MapCompass() {
   </svg>;
 }
 
-function AreaMap({ graph, selected, visible, focus, onSelect, cameras, states, areaKey }: Props) {
+function AreaMap({ graph, selected, visible, focus, onSelect, cameras, states, areaKey, global }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const instructions = useId();
   const { concepts, edges } = graph;
-  const input = useMemo(() => ({ concepts, edges }), [concepts, edges]);
+  const input = useMemo(() => ({ concepts, edges, global }), [concepts, edges, global]);
   const result = useMapLayout(input);
   const layout = result?.layout;
   const size = useCanvasSize(canvas);
@@ -124,7 +120,7 @@ function AreaMap({ graph, selected, visible, focus, onSelect, cameras, states, a
   useAutomaticFraming(camera, size, points, layout, { selected, visible, focus });
   const hitsRef = useRef<HitRegion[]>([]);
   const fit = () => {
-    if (points.length && size.width && size.height) camera.move(fitViewport(points, size), true);
+    if (layout && points.length && size.width && size.height) camera.move(fitViewport(framePoints(points, layout, null), size), true);
   };
   const interaction = useMapInput({ canvas, hits: hitsRef, size, points, selected, onSelect, fit,
     current: camera.current, move: camera.move });

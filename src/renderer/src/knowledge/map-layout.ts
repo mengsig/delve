@@ -2,10 +2,10 @@ import type { KnowledgeConcept, KnowledgeEdge } from '../../../shared/knowledge'
 
 export interface Point { id: number; x: number; y: number }
 export interface Bounds { left: number; top: number; right: number; bottom: number }
-export interface Area extends Bounds { id: string; title: string }
+export interface Area extends Bounds { id: string; title: string; sharedSummary?: string }
 export interface MapLayout { points: Point[]; areas: Area[] }
-export interface LayoutInput { concepts: KnowledgeConcept[]; edges: KnowledgeEdge[] }
-interface Group { id: string; title: string; concepts: KnowledgeConcept[] }
+export interface LayoutInput { concepts: KnowledgeConcept[]; edges: KnowledgeEdge[]; global: boolean }
+interface Group { id: string; title: string; concepts: KnowledgeConcept[]; members: KnowledgeConcept[] }
 interface Topology {
   order: number[];
   rank: Map<number, number>;
@@ -47,19 +47,29 @@ function readTopology(concepts: KnowledgeConcept[], edges: KnowledgeEdge[]): Top
   return { order, rank, outgoing, incoming };
 }
 
-function groupConcepts(concepts: KnowledgeConcept[]): Group[] {
-  const shared = [...(concepts[0]?.memberships ?? [])]
-    .sort((a, b) => a.workspaceId.localeCompare(b.workspaceId))
-    .find(({ workspaceId }) => concepts.every(concept =>
-      concept.memberships.some(membership => membership.workspaceId === workspaceId)));
+function groupConcepts(concepts: KnowledgeConcept[], global: boolean): Group[] {
+  if (!concepts.length) return [];
+  if (!global) return [{ id: '', title: '', concepts, members: concepts }];
   const groups = new Map<string, Group>();
+  const memberships = new Map<number, Group[]>();
   for (const concept of concepts) {
-    const membership = shared ?? concept.memberships.reduce<KnowledgeConcept['memberships'][number] | undefined>(
-      (primary, candidate) => !primary || candidate.workspaceId < primary.workspaceId ? candidate : primary, undefined);
-    const id = membership?.workspaceId ?? '';
-    const group = groups.get(id) ?? { id, title: membership?.workspaceName ?? 'Shared concepts', concepts: [] };
-    group.concepts.push(concept);
-    groups.set(id, group);
+    const locations = concept.memberships.length ? concept.memberships : [{ workspaceId: '', workspaceName: 'Shared concepts' }];
+    memberships.set(concept.id, locations.map(({ workspaceId, workspaceName }) => {
+      let group = groups.get(workspaceId);
+      if (!group) {
+        group = { id: workspaceId, title: workspaceName, concepts: [], members: [] };
+        groups.set(workspaceId, group);
+      }
+      group.members.push(concept);
+      return group;
+    }));
+  }
+  // Give small areas a representative marker when a concept belongs to several.
+  for (const concept of concepts) {
+    const candidates = memberships.get(concept.id)!;
+    const host = candidates.reduce((best, next) => next.members.length < best.members.length ||
+      next.members.length === best.members.length && next.id < best.id ? next : best);
+    host.concepts.push(concept);
   }
   return [...groups.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -98,7 +108,7 @@ function placeGroup(group: Group, topology: Topology, sortOrder: Map<number, num
   });
 }
 
-export function pointBounds(points: readonly Point[]): Bounds {
+export function pointBounds(points: readonly Pick<Point, 'x' | 'y'>[]): Bounds {
   if (!points.length) throw new Error('Cannot bound an empty map.');
   const result = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
   for (const { x, y } of points) {
@@ -111,34 +121,46 @@ export function pointBounds(points: readonly Point[]): Bounds {
   return result;
 }
 
-export function layoutGraph({ concepts, edges }: LayoutInput): MapLayout {
+export function layoutGraph({ concepts, edges, global }: LayoutInput): MapLayout {
   const topology = readTopology(concepts, edges);
-  const groups = groupConcepts(concepts);
+  const groups = groupConcepts(concepts, global);
   const sortOrder = new Map(topology.order.map((id, index) => [id, index]));
   const points: Point[] = [];
   const areas: Area[] = [];
   const workspaces = groups.map(group => {
     const members = placeGroup(group, topology, sortOrder);
-    const bounds = pointBounds(members);
+    const bounds = members.length ? pointBounds(members) : { left: 0, top: 0, right: 26, bottom: 0 };
     return { group, members, bounds, width: bounds.right - bounds.left + 180, height: bounds.bottom - bounds.top + 118 };
   });
-  const rowWidth = Math.sqrt(workspaces.reduce((sum, { width, height }) => sum + width * height, 0) * 1.8);
+  const gap = 50;
+  const rowWidth = Math.sqrt(workspaces.reduce((sum, { width, height }) => sum + (width + gap) * (height + gap), 0) * 1.8);
   let x = 0;
   let y = 0;
   let rowHeight = 0;
   for (const { group, members, bounds, width, height } of workspaces) {
-    if (x && x + width > rowWidth) {
+    if (x && x + width / 2 > rowWidth) {
       x = 0;
-      y += rowHeight + 50;
+      y += rowHeight + gap;
       rowHeight = 0;
     }
-    if (groups.length > 1) {
-      areas.push({ id: group.id, title: group.title, left: x, top: y, right: x + width, bottom: y + height });
+    if (global) {
+      const sharedSummary = members.length ? undefined : group.members.length === 1
+        ? 'Shares ' + group.members[0]!.title : group.members.length + ' shared concepts';
+      areas.push({ id: group.id, title: group.title, sharedSummary, left: x, top: y, right: x + width, bottom: y + height });
     }
     for (const point of members) points.push({ id: point.id, x: x + 90 + point.x - bounds.left, y: y + 58 + point.y - bounds.top });
-    x += width + 50;
+    x += width + gap;
     rowHeight = Math.max(rowHeight, height);
   }
   if (points.length !== concepts.length) throw new Error('Map layout did not place every concept.');
   return { points, areas };
+}
+
+export function framePoints(points: Point[], layout: MapLayout, focus: Set<number> | null) {
+  if (focus) {
+    const neighborhood = points.filter(point => focus.has(point.id));
+    if (neighborhood.length) return neighborhood;
+  }
+  if (!layout.areas.length || points.length !== layout.points.length) return points;
+  return layout.areas.flatMap(area => [{ x: area.left, y: area.top }, { x: area.right, y: area.bottom }]);
 }

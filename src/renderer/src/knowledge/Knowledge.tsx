@@ -156,7 +156,7 @@ function AreaContents(props: ContentsProps) {
       {view.list ? <LearnedList areaId={workspace} graph={graph} concepts={learned} group={view.filters.group}
         setGroup={group => updateFilters({ group })} onSelect={select} onOpen={open} />
         : <div className="knowledge-map-slot"><div inert={!model.visible.size}><KnowledgeMap cameras={props.historyView.cameras} areaKey={(view.demo ? 'demo/' : 'personal/') + workspace}
-          graph={local} visible={model.visible} states={model.states} selected={model.selected} onSelect={select} focus={model.focus} /></div>
+          global={workspace === anyWorkspace} graph={local} visible={model.visible} states={model.states} selected={model.selected} onSelect={select} focus={model.focus} /></div>
           {!model.visible.size && <div className="knowledge-no-matches"><Icon name="frame" /><h2>No matching concepts</h2><p>Try another name, state or verified depth.</p><button onClick={clear}>Clear filters</button></div>}</div>}
       {!view.list && <Legend transfers={local.links.length > 0} />}
     </section><aside className="knowledge-detail" aria-label="Concept guide">
@@ -174,15 +174,16 @@ function AreaContents(props: ContentsProps) {
 
 function GuideSummary({ model, areas, workspace }: ContentsProps & { model: Model }) {
   const area = model.place ? model.place.area : areas.find(a => a.workspaceId === workspace);
-  const included = area?.progress.concepts ?? [...model.places.values()].map(p => p.progress);
-  const mastered = included.filter(c => c.state === 'mastered').length;
-  return <AreaProgress name={area?.workspaceName ?? 'All workspaces'} mastered={mastered} total={included.length}
+  const guided = area ? [] : [...model.places.values()].filter(place => place.progress.onAtlas);
+  const mastered = area?.progress.mastered ?? guided.filter(place => place.state === 'mastered').length;
+  return <AreaProgress name={area?.workspaceName ?? 'All workspaces'} mastered={mastered} total={area?.progress.total ?? guided.length}
     available={area ? area.progress.available : areas.every(a => a.progress.available)} />;
 }
 
 function EndOfPath({ model, areas, activeId, retryProgress, onProgress }: ContentsProps & { model: Model }) {
   const progressAvailable = areas.every(a => a.progress.available);
-  const complete = model.matches.length > 0 && model.matches.every(c => model.states.get(c.id) === 'mastered');
+  const guided = model.matches.filter(concept => model.places.get(concept.id)?.progress.onAtlas);
+  const complete = guided.length > 0 && guided.every(concept => model.states.get(concept.id) === 'mastered');
   const matches = model.matches.map(c => model.places.get(c.id)?.area);
   const area = matches.find(candidate => candidate?.workspaceId === activeId) ?? matches[0];
   if (!progressAvailable) return <div className="knowledge-path-end"><h3>Progress unavailable</h3>
@@ -190,6 +191,6 @@ function EndOfPath({ model, areas, activeId, retryProgress, onProgress }: Conten
   if (!model.visible.size) return <div className="knowledge-path-end"><h3>No concept selected</h3><p>Clear your filters to explore this area.</p></div>;
   return <div className="knowledge-path-end"><Icon name={complete ? 'check' : 'route'} />
     <h3>{complete ? 'Path mastered' : 'No eligible next lesson'}</h3>
-    <p>{complete ? 'You’ve mastered every concept in this view at this depth.' : 'Explore a concept to see its prerequisites or choose another area.'}</p>
+    <p>{complete ? 'You’ve mastered every guided concept in this view at this depth.' : 'Explore a concept to see its prerequisites or choose another area.'}</p>
     {area && <button className="primary-btn" onClick={() => onProgress(area.workspaceId)}>View progress</button>}</div>;
 }

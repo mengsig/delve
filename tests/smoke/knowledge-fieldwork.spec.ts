@@ -1,13 +1,13 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { openDatabase } from '../../src/main/db/connection';
+import { openDatabase, transaction } from '../../src/main/db/connection';
 import { addWorkspace } from '../../src/main/db/workspaces';
-import { addPrerequisite, upsertConcept } from '../../src/main/db/concepts';
+import { addPrerequisite, upsertConcept, upsertConceptInTransaction } from '../../src/main/db/concepts';
 import { recordEvidence } from '../../src/main/db/evidence';
 import { saveLesson } from '../../src/main/db/lessons';
 import { withinBudget } from './action-budget';
-import { test } from './desktop';
+import { shortcut, test } from './desktop';
 
 test.use({ tutorCli: true });
 const opening = { type: 'prose', heading: 'Claim a task', text: 'A lease gives one worker temporary ownership.' };
@@ -170,12 +170,14 @@ test('previews a painted marker, pins its guide and explores by keyboard', async
   await expect(guide.getByRole('button', { name: 'Show all connections' })).toBeVisible();
 });
 
-test('offers Progress for an entirely mastered area at the selected depth', async ({ desktop: { directory, page } }) => {
+test('completes the reviewed path and opens the exact change-only concept in Atlas', async ({ desktop: { directory, page } }) => {
   const workspace = seedArea(directory);
   const db = openDatabase(join(directory, 'delve.sqlite'));
   const ids = db.prepare('SELECT concept_id FROM workspace_concepts WHERE workspace_id = ?').all(workspace.id);
   for (const row of ids) recordEvidence(db, { conceptId: Number(row.concept_id), workspaceId: workspace.id,
     depth: 'low', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const extra = transaction(db, () => upsertConceptInTransaction(db, { key: 'change-only', title: 'Lease renewal',
+    workspaceId: workspace.id, portable: false }, false));
   db.close();
   await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
   await page.getByLabel('Workspace area').selectOption(workspace.id);
@@ -188,4 +190,66 @@ test('offers Progress for an entirely mastered area at the selected depth', asyn
   await page.getByRole('button', { name: /Back to Knowledge/i }).click();
   await expect(page.getByRole('heading', { name: 'Path mastered' })).toBeVisible();
   await expect(page.getByLabel('Workspace area')).toHaveValue(workspace.id);
+  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveJSProperty('max', ids.length);
+  await page.getByRole('button', { name: 'Find a concept' }).click();
+  await page.getByRole('button', { name: extra.title, exact: true }).click();
+  await page.getByRole('button', { name: 'Show in workspace Atlas' }).click();
+  await expect(page.getByLabel('Selected concept')).toContainText(extra.title);
+  await expect(page.getByText('Viewing a concept from Knowledge alongside your reviewed map.')).toBeVisible();
+  await page.getByRole('button', { name: 'Return to reviewed map' }).click();
+  await expect(page.getByLabel('Selected concept')).not.toContainText(extra.title);
+  await page.getByRole('button', { name: /Back to Knowledge/i }).click();
+  await expect(page.getByLabel('Concept guide').getByRole('heading', { name: extra.title })).toBeVisible();
+});
+
+test('serializes header and keyboard navigation while a Knowledge workspace switch is pending', async ({ desktop }) => {
+  const { page, application } = desktop;
+  const workspace = seedArea(desktop.directory);
+  const identity = page.locator('#active-workspace strong');
+  const origin = await identity.innerText();
+  await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  await page.getByLabel('Workspace area').selectOption(workspace.id);
+  const atlas = page.locator('.windowbar').getByRole('button', { name: 'Atlas', exact: true });
+  // Hold real switch replies in the isolated Electron fixture so input can arrive during the round trip.
+  const release = await application.evaluateHandle(({ ipcMain }) => {
+    type Handler = (event: Electron.IpcMainInvokeEvent, request: unknown) => Promise<unknown>;
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Handler> })._invokeHandlers;
+    const original = handlers.get('workspaces:switch');
+    if (!original) throw new Error('The desktop workspace switch handler must be installed.');
+    let resume: (() => void) | undefined;
+    ipcMain.removeHandler('workspaces:switch');
+    ipcMain.handle('workspaces:switch', async (event, request) => {
+      const result = await original(event, request);
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, 4000);
+        resume = () => { clearTimeout(timer); resolve(); };
+      });
+      return result;
+    });
+    return () => resume?.();
+  });
+  async function tryOtherDestinations(trigger: Locator, source: Locator) {
+    const bounds = await atlas.boundingBox();
+    if (!bounds) throw new Error('The Atlas header button must be visible.');
+    await trigger.click();
+    await expect(page.getByText('Opening workspace…')).toBeVisible({ timeout: 2000 });
+    await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.keyboard.press(shortcut);
+    await page.keyboard.press('Alt+ArrowLeft');
+    await expect(page.getByRole('combobox', { name: /Search workspaces/ })).toHaveCount(0);
+    await expect(source).toBeVisible({ timeout: 1000 });
+    await release.evaluate(resume => resume());
+  }
+  try {
+    await tryOtherDestinations(page.getByRole('button', { name: 'Start Worker leases' }), page.locator('.knowledge'));
+    await expect(page.getByRole('heading', { name: opening.heading })).toBeVisible();
+    await expect(page.locator('#active-workspace')).toContainText(workspace.name);
+    await tryOtherDestinations(page.getByRole('button', { name: /Back to Knowledge/i }), page.getByText(opening.heading, { exact: true }).first());
+    await expect(identity).toHaveText(origin);
+    await expect(page.getByLabel('Workspace area')).toHaveValue(workspace.id);
+    await expect(page.getByLabel('Concept guide')).toContainText('Worker leases');
+  } finally {
+    await release.evaluate(resume => resume());
+    await release.dispose();
+  }
 });

@@ -75,11 +75,15 @@ function drawAreas(ctx: CanvasRenderingContext2D, areas: Area[], bounds: Bounds,
     ctx.stroke();
     const titleX = Math.max(origin.x + 12, 8);
     const labelWidth = origin.x + width - titleX - 8;
-    if (height >= 65 && labelWidth >= 50) {
+    if (height >= 32 && labelWidth >= 42) {
       ctx.globalAlpha = 1;
       ctx.font = '600 12px system-ui, sans-serif';
       ctx.fillStyle = palette.ink;
-      ctx.fillText(area.title, titleX, origin.y + 19, labelWidth);
+      ctx.fillText(area.title, titleX, origin.y + 18, labelWidth);
+      if (area.sharedSummary && height >= 44) {
+        ctx.font = '11px system-ui, sans-serif';
+        ctx.fillText(area.sharedSummary, titleX, origin.y + 36, labelWidth);
+      }
     }
   }
   ctx.globalAlpha = 1;

@@ -26,7 +26,7 @@ const readWorkspaces = () => call('workspaces:list', null);
 function useShortcuts(nav: DesktopNavigation) {
   const [open, setOpen] = useState(false);
   const onKey = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.isComposing || document.querySelector('dialog[open], [aria-modal="true"]')) return;
+    if (nav.switching || event.defaultPrevented || event.isComposing || document.querySelector('dialog[open], [aria-modal="true"]')) return;
     if (isSwitcherShortcut(event, /Mac/i.test(navigator.platform))) {
       event.preventDefault();
       if (!event.repeat) setOpen(true);
@@ -97,7 +97,7 @@ function KnowledgeScreen({ nav }: { nav: DesktopNavigation }) {
   if (route.screen !== 'knowledge') throw new Error('The Knowledge view requires a Knowledge route.');
   return <Knowledge active={active} depth={depth} historyView={route.view}
     onOpen={(workspaceId, conceptId, target, readingDepth) => openFromKnowledge(workspaceId,
-      target === 'atlas' ? { screen: 'atlas', conceptId } : { screen: 'lesson', conceptId, review: target === 'review' },
+      target === 'atlas' ? { screen: 'atlas', focus: { id: conceptId } } : { screen: 'lesson', conceptId, review: target === 'review' },
       readingDepth)}
     onProgress={workspaceId => void openFromKnowledge(workspaceId, { screen: 'progress' }, depth)
       .catch(cause => setError(errorMessage(cause)))}
@@ -133,11 +133,11 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
   }
   return <>
     <a className="skip-link" href="#workspace-page">Skip to workspace</a>
-    <section className={route.screen === 'lesson' && !setup ? 'shell shell--lesson' : 'shell'} aria-label="Delve desktop">
+    {nav.switching && <span className="workspace-wait" role="status">Opening workspace…</span>}
+    <section inert={nav.switching} aria-busy={nav.switching} className={route.screen === 'lesson' && !setup ? 'shell shell--lesson' : 'shell'} aria-label="Delve desktop">
       <Header screen={route.screen} lab={lab} workspace={firstRun ? undefined : active} head={study.head} progress={study.progress} go={nav.openPrimary} openSwitcher={palette.show} />
       <main id="workspace-page" ref={main} tabIndex={-1} className="app">
         {nav.error && <div role="alert">{nav.error} <button onClick={palette.show}>Choose workspace</button> <button onClick={() => nav.setError('')}>Dismiss</button></div>}
-        {nav.switching && <span className="workspace-wait" role="status">Opening workspace…</span>}
         <LearnLink onAccepted={accepted} />
         <DesktopJobs nav={nav} />
         <div className="screen" key={active?.id}>
@@ -148,7 +148,7 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
         </div>
       </main>
     </section>
-    {palette.open && <WorkspaceSwitcher commands={destinations.commands} onClose={palette.hide} onAdd={() => nav.visit({ screen: 'setup' })} />}
+    {palette.open && <WorkspaceSwitcher switching={nav.switching} commands={destinations.commands} onClose={palette.hide} onAdd={() => nav.visit({ screen: 'setup' })} />}
   </>;
 }
 

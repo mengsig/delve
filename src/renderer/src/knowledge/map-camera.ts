@@ -5,7 +5,7 @@ import { pointBounds, type Point } from './map-layout';
 export interface Viewport { x: number; y: number; scale: number }
 export interface Size { width: number; height: number }
 const storageKey = 'delve.knowledge.viewport';
-const layoutVersion = 1;
+const layoutVersion = 2;
 const minimumScale = .04;
 const maximumScale = 3;
 const initialView = { x: 0, y: 0, scale: 1 };
@@ -36,7 +36,7 @@ export function writeViewport(storage: Storage, areaKey: string, view: Viewport)
   storage.setItem(storageKey, JSON.stringify(view));
 }
 
-export function fitViewport(points: readonly Point[], { width, height }: Size): Viewport {
+export function fitViewport(points: readonly Pick<Point, 'x' | 'y'>[], { width, height }: Size): Viewport {
   if (!(width > 0 && height > 0)) throw new Error('Cannot fit the map without a visible canvas.');
   const bounds = pointBounds(points);
   const spanX = bounds.right - bounds.left;
