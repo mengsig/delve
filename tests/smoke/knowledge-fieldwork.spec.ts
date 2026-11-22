@@ -276,5 +276,42 @@ test('opens Progress for the mastered path when the active workspace contains on
   await expect(identity).toHaveText(reviewed.name, { timeout: 2500 });
   await page.getByRole('button', { name: /Back to Knowledge/i }).click();
   await expect(identity).toHaveText(origin.name);
+  await expect(page.getByLabel('Workspace area').locator('option:checked')).toHaveText('All workspaces');
   await expect(page.getByRole('heading', { name: 'Path mastered' })).toBeVisible();
+});
+
+test('restores the learned list after opening a lesson from a deep row', async ({ desktop: { directory, page } }) => {
+  const db = openDatabase(join(directory, 'delve.sqlite'));
+  const workspace = addWorkspace(db, { kind: 'topic', title: 'Learned concepts' });
+  try {
+    for (let index = 1; index <= 30; index++) {
+      const concept = upsertConcept(db, { key: 'learned-' + index, title: 'Learned concept ' + index, workspaceId: workspace.id, portable: false });
+      recordEvidence(db, { conceptId: concept.id, workspaceId: workspace.id, depth: 'medium',
+        status: 'demonstrated', source: 'check', masteryVerified: true });
+    }
+  } finally { db.close(); }
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  await page.getByLabel('Workspace area').selectOption(workspace.id);
+  await page.getByRole('button', { name: 'Learned list' }).click();
+  const list = page.locator('.knowledge-list');
+  const scrollTop = await list.evaluate(element => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  expect(scrollTop).toBeGreaterThan(0);
+  const row = list.getByRole('button', { name: /^Open lesson:/ }).last();
+  await expect(row).toBeInViewport({ ratio: 1 });
+  const label = await row.getAttribute('aria-label');
+  if (!label?.startsWith('Open lesson: ')) throw new Error('The learned row must have a named lesson action.');
+  const lesson = label.slice('Open lesson: '.length);
+  const open = list.getByRole('button', { name: label, exact: true });
+  await expect(open).toBeInViewport({ ratio: 1 });
+  await open.click();
+  await expect(page.getByRole('heading', { name: lesson, exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: /Back to Knowledge/i }).click();
+  await expect(list).toHaveJSProperty('scrollTop', scrollTop);
+  await expect(open).toBeInViewport({ ratio: 1 });
 });

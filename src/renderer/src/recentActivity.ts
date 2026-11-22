@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { z } from 'zod';
 import { DEPTHS } from '../../shared/domain';
 
@@ -39,13 +39,15 @@ export function activityKey(entry: Activity): string {
 
 export function useRecentActivity() {
   const [recent, setRecent] = useState(readActivity);
-  useEffect(() => { localStorage.setItem(storageKey, JSON.stringify(recent)); }, [recent]);
+  const current = useRef(recent);
   const remember = useCallback((entry: Activity) => {
+    const previous = current.current;
+    if (JSON.stringify(previous[0]) === JSON.stringify(entry)) return;
     const key = activityKey(entry);
-    setRecent(previous => {
-      if (JSON.stringify(previous[0]) === JSON.stringify(entry)) return previous;
-      return [entry, ...previous.filter(item => activityKey(item) !== key)].slice(0, limit);
-    });
+    const next = [entry, ...previous.filter(item => activityKey(item) !== key)].slice(0, limit);
+    localStorage.setItem(storageKey, JSON.stringify(next));
+    current.current = next;
+    setRecent(next);
   }, []);
   return { recent, remember };
 }

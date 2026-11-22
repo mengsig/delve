@@ -55,5 +55,6 @@ export function rememberFilters(filters: Filters) {
 export function knowledgeHistoryView() {
   let saved: KnowledgeView | null = null;
   const cameras = new Map<string, Viewport>();
-  return { cameras, read: () => saved, save: (view: KnowledgeView) => { saved = view; } };
+  const listPositions = new Map<string, number>();
+  return { cameras, listPositions, read: () => saved, save: (view: KnowledgeView) => { saved = view; } };
 }
