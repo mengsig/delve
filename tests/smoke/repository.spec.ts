@@ -8,7 +8,7 @@ import { withinBudget } from './action-budget';
 
 test.use({ tutorCli: true, firstRun: true });
 
-function createRepository(directory: string) {
+function createRepository(directory: string, extraFiles: Record<string, string> = {}) {
   const repo = join(directory, 'dispatch');
   mkdirSync(repo);
   execFileSync('git', ['init', '--quiet', '--template=', '--initial-branch=main', repo]);
@@ -16,8 +16,9 @@ function createRepository(directory: string) {
   const content = ['export const attempts = 1;\n', 'export const attempts = 3;\n'];
   const commits = content.map((file, i) => {
     const title = i ? 'Retry a failed dispatch' : 'Dispatch once';
+    const files = i === 0 ? { 'dispatch.ts': file } : { 'dispatch.ts': file, ...extraFiles };
     return ['commit refs/heads/main', 'committer Fixture <fixture@example.invalid> ' + (1000000000 + i) + ' +0000',
-      data(title).trimEnd(), 'M 100644 inline dispatch.ts', data(file)].join('\n');
+      data(title).trimEnd(), ...Object.entries(files).flatMap(([path, contents]) => [`M 100644 inline ${path}`, data(contents)])].join('\n');
   });
   execFileSync('git', ['-C', repo, 'fast-import', '--quiet'], { input: commits.join('\n') + '\ndone\n' });
   return { repo, head: execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() };
@@ -110,6 +111,35 @@ async function askTutor(page: Page, directory: string) {
   await preview.getByRole('button', { name: 'Allow once and continue' }).click();
   await expect(page.getByRole('log')).toContainText(answer);
 }
+
+test('edits the filtered file slice without changing hidden files or sending the request', async ({ desktop }, info) => {
+  const { page, directory } = desktop;
+  const { repo } = createRepository(directory, { 'README.md': '# Dispatch\n', 'src/worker.ts': 'export const workers = 2;\n' });
+  await page.setViewportSize({ width: 1200, height: 850 });
+  await page.locator('#source-input').fill(repo);
+  await page.getByText('Edit files (3 selected)', { exact: true }).click();
+  const filter = page.getByLabel('Filter repository files');
+  await filter.fill('SRC/');
+  await expect(page.getByRole('checkbox', { name: 'src/worker.ts' })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'README.md' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Clear visible' }).click();
+  await expect(page.getByRole('checkbox', { name: 'src/worker.ts' })).not.toBeChecked();
+  const requested = page.getByRole('list', { name: 'Files included in the request' });
+  await expect(requested.getByRole('listitem')).toHaveText(['README.md', 'dispatch.ts']);
+  await page.getByRole('button', { name: 'Select visible' }).press('Enter');
+  await expect(page.getByRole('checkbox', { name: 'src/worker.ts' })).toBeChecked();
+  await expect(requested.getByRole('listitem')).toHaveText(['README.md', 'dispatch.ts', 'src/worker.ts']);
+  await page.getByText('Exact request', { exact: true }).click();
+  await expect(page.getByLabel('Exact provider request')).toContainText('export const workers = 2;');
+  expect(existsSync(join(directory, 'request.json'))).toBe(false);
+  await page.getByText('Exact request', { exact: true }).click();
+  await filter.focus();
+  await capture(page, info, 'file-selection-after');
+  if (process.env['DELVE_NIGHT_EVIDENCE']) {
+    mkdirSync('.archon/evidence', { recursive: true });
+    await page.screenshot({ path: '.archon/evidence/file-selection-after.png' });
+  }
+});
 
 test('maps approved files, teaches one commit at two depths and previews an incoming link before opening its saved conversation', async ({ desktop }, info) => {
   const { page, directory } = desktop;
