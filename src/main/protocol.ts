@@ -28,8 +28,10 @@ export function resolveAppPath(root: string, url: string): string | null {
   const pathname = decodeURIComponent(parsed.pathname);
   const normalizedRoot = resolve(root);
   const file = resolve(normalizedRoot, `.${pathname === '/' ? '/index.html' : pathname}`);
+  assert.ok(isAbsolute(file), 'resolved renderer file must be absolute');
   const pathFromRoot = relative(normalizedRoot, file);
-  return pathFromRoot && pathFromRoot !== '..' && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot) ? file : null;
+  if (!pathFromRoot || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot)) return null;
+  return file;
 }
 
 /** Serves the built renderer from `root` with a strict CSP header. */

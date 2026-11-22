@@ -27,6 +27,7 @@ describe('resolveAppPath', () => {
   it('maps app URLs into the renderer folder', () => {
     expect(resolveAppPath(root, 'app://delve/')).toBe(join(root, 'index.html'));
     expect(resolveAppPath(root, 'app://delve/assets/a.js')).toBe(join(root, 'assets', 'a.js'));
+    expect(resolveAppPath(root, 'app://delve/..foo')).toBe(join(root, '..foo'));
   });
 
   it('refuses traversal and foreign hosts', () => {
