@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { GlobalKnowledgeGraph, KnowledgeConcept } from '../../../shared/knowledge';
 import type { KnowledgeActions } from './Knowledge';
+import type { LearnedListPosition } from './view';
 
 const ROW_HEIGHT = 76;
 const MOUNTED_ROWS = 15;
@@ -10,7 +11,7 @@ interface Props {
   concepts: KnowledgeConcept[];
   areaId: string;
   areaKey: string;
-  positions: Map<string, number>;
+  positions: Map<string, LearnedListPosition>;
   group: boolean;
   setGroup: (value: boolean) => void;
   onSelect: (id: number) => void;
@@ -23,7 +24,6 @@ interface Row {
   target?: string;
 }
 
-type Anchor = { id: number; target?: string };
 type RowAction = 'select' | 'lesson';
 
 function learnedRows(concepts: KnowledgeConcept[], group: boolean, areaId: string): Row[] {
@@ -72,10 +72,11 @@ function revealRow(list: HTMLDivElement, index: number) {
   else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
 }
 
-function useLearnedNavigation(rows: Row[], areaKey: string, positions: Map<string, number>) {
+function useLearnedNavigation(rows: Row[], areaKey: string, positions: Map<string, LearnedListPosition>) {
   const listRef = useRef<HTMLDivElement>(null);
-  const [scroll, setScroll] = useState(() => positions.get(areaKey) ?? 0);
-  const [anchor, setAnchor] = useState<Anchor | null>(null);
+  const [scroll, setScroll] = useState(() => positions.get(areaKey)?.scroll ?? 0);
+  const [anchor, setAnchor] = useState(() => positions.get(areaKey)?.anchor ?? null);
+  const rememberedAnchor = useRef<LearnedListPosition['anchor']>(null);
   const previousRows = useRef(rows);
   const pendingAction = useRef<RowAction | null>(null);
   const activeIndex = useMemo(() => {
@@ -87,9 +88,9 @@ function useLearnedNavigation(rows: Row[], areaKey: string, positions: Map<strin
   useLayoutEffect(() => {
     const list = listRef.current;
     if (!list) throw new Error('The learned list must have a scroll container.');
-    list.scrollTop = positions.get(areaKey) ?? 0;
+    list.scrollTop = positions.get(areaKey)?.scroll ?? 0;
     setScroll(list.scrollTop);
-    return () => { positions.set(areaKey, list.scrollTop); };
+    return () => { positions.set(areaKey, { scroll: list.scrollTop, anchor: rememberedAnchor.current }); };
   }, [areaKey, positions]);
 
   useLayoutEffect(() => {
@@ -102,6 +103,7 @@ function useLearnedNavigation(rows: Row[], areaKey: string, positions: Map<strin
   }, [rows, activeIndex]);
 
   useLayoutEffect(() => {
+    rememberedAnchor.current = anchor;
     const action = pendingAction.current;
     if (action === null) return;
     pendingAction.current = null;

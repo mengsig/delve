@@ -19,6 +19,11 @@ export interface KnowledgeView {
   details: boolean;
 }
 
+export interface LearnedListPosition {
+  scroll: number;
+  anchor: { id: number; target?: string } | null;
+}
+
 export const anyWorkspace = '*';
 const filterKey = 'delve.knowledge.filters';
 
@@ -55,6 +60,6 @@ export function rememberFilters(filters: Filters) {
 export function knowledgeHistoryView() {
   let saved: KnowledgeView | null = null;
   const cameras = new Map<string, Viewport>();
-  const listPositions = new Map<string, number>();
+  const listPositions = new Map<string, LearnedListPosition>();
   return { cameras, listPositions, read: () => saved, save: (view: KnowledgeView) => { saved = view; } };
 }
