@@ -20,6 +20,7 @@
   margin-block: 12px;
 }
 .repository-files { max-height: 340px; overflow: auto; }
+.attach-files .actions button[aria-disabled="true"] { cursor: default; color: var(--dim); }
 .repository-files li, .repository-list li + li { border-top: 1px solid var(--rule); }
 .repository-files label, .repository-list button {
   display: flex;

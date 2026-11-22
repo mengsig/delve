@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { RepositoryFile } from '../../../shared/repository';
 import { fitsFileSlice, MAX_BYTES, MAX_FILE_BYTES, MAX_FILES, selectVisibleFiles } from './fileSelection';
 
@@ -6,6 +6,8 @@ export function RepositoryFiles({ files, paths, onChange }: {
   files: RepositoryFile[]; paths: Set<string>; onChange: (paths: Set<string>) => void;
 }) {
   const [filter, setFilter] = useState('');
+  const filterId = useId();
+  const limitsId = useId();
   const query = filter.trim().toLowerCase();
   const shown = files.filter(file => file.path.toLowerCase().includes(query));
   const bytes = files.reduce((total, file) => paths.has(file.path) ? total + file.bytes : total, 0);
@@ -32,16 +34,16 @@ export function RepositoryFiles({ files, paths, onChange }: {
   return <details className="attach-files">
     <summary>Edit files ({paths.size} selected)</summary>
     <div className="formrow">
-      <label htmlFor="attach-file-filter">Filter repository files</label>
-      <input id="attach-file-filter" value={filter} onChange={event => setFilter(event.target.value)}
+      <label htmlFor={filterId}>Filter repository files</label>
+      <input id={filterId} value={filter} onChange={event => setFilter(event.target.value)}
         onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }} />
     </div>
     <div className="actions">
-      <button type="button" aria-disabled={!canSelect} aria-describedby="attach-file-limits"
+      <button type="button" aria-disabled={!canSelect} aria-describedby={limitsId}
         onClick={() => { if (canSelect) onChange(selected); }}>Select visible</button>
       <button type="button" aria-disabled={!canClear} onClick={clearVisible}>Clear visible</button>
     </div>
-    <p id="attach-file-limits" className="smallprint" role="status">
+    <p id={limitsId} className="smallprint" role="status">
       {paths.size} of {MAX_FILES} files · {bytes.toLocaleString()} of {MAX_BYTES.toLocaleString()} bytes.
       Each file can be up to {MAX_FILE_BYTES.toLocaleString()} bytes.
       {oversized > 0 && ` Visible files over the individual limit: ${oversized}.`}
