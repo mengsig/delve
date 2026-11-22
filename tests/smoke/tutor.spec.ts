@@ -168,6 +168,62 @@ test('keeps an approved turn running in the background and reopens the lesson', 
   await expect(activity).toHaveCount(0);
 });
 
+test('restores an interrupted answer after restarting and retries exactly the approved request', async ({ desktop }, info) => {
+  const { page, directory } = desktop;
+  const viewport = { width: 1280, height: 720 };
+  const choice = 'It covers fewer addresses';
+  const reasoning = 'The longer prefix covers a smaller destination range.';
+  const gate = join(directory, 'gate');
+  const receipt = join(directory, 'request.json');
+  await page.setViewportSize(viewport);
+  writeOpening(directory);
+  await add(page).click();
+  await typeTopic(page, 'IP routing');
+  await start(page).click();
+  await page.getByRole('button', { name: choice, exact: true }).click();
+  await page.getByRole('textbox', { name: /Explain your reasoning/ }).fill(reasoning);
+
+  const next = { ...check, prompt: 'Which route wins between two matching /20 and /28 routes?' };
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify({ ...envelope, assessment: true,
+    observation: 'You identified the narrower route.',
+    reasoningFeedback: 'It matches fewer addresses.',
+    lesson: { schema: 'delve.lesson/1', source: null, blocks: [explanation, next] },
+  }));
+  unlinkSync(receipt);
+  writeFileSync(gate, '');
+  await page.getByRole('button', { name: 'Check answer', exact: true }).click();
+  await page.getByRole('button', { name: 'Allow once and continue' }).click();
+  await expect.poll(() => existsSync(receipt)).toBe(true);
+  const approvedRequest = JSON.parse(readFileSync(receipt, 'utf8')).stdin;
+  expect(approvedRequest).toContain(reasoning);
+  await page.getByRole('button', { name: 'Continue in background' }).click();
+  await expect(page.getByRole('region', { name: 'Tutor activity' })).toContainText('Preparing tutor response · IP routing');
+  await page.screenshot({ path: info.outputPath('s6-background.png') });
+  unlinkSync(receipt);
+
+  const restarted = await desktop.restart();
+  await restarted.setViewportSize(viewport);
+  const activity = restarted.getByRole('region', { name: 'Tutor activity' });
+  await expect(activity).toContainText('Tutor request interrupted · IP routing');
+  await expect(activity.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+  await restarted.screenshot({ path: info.outputPath('s6-restart.png') });
+  await activity.getByRole('button', { name: 'Open lesson', exact: true }).click();
+  const transcript = restarted.getByLabel('Lesson transcript');
+  await expect(transcript).toContainText(choice);
+  await expect(transcript.getByText(reasoning, { exact: false })).toBeInViewport();
+  await expect(restarted.getByRole('button', { name: choice, exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(restarted.getByRole('alert')).toContainText('Tutor request interrupted');
+  await restarted.screenshot({ path: info.outputPath('s6-reopened.png') });
+  expect(existsSync(receipt)).toBe(false);
+  unlinkSync(gate);
+
+  await restarted.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(restarted.getByRole('heading', { name: next.prompt })).toBeVisible();
+  await expect(restarted.getByRole('log')).toContainText(choice);
+  await expect(restarted.getByRole('log')).toContainText('You identified the narrower route.');
+  expect(JSON.parse(readFileSync(receipt, 'utf8')).stdin).toBe(approvedRequest);
+});
+
 async function exerciseAnswerRecovery(page: Page, gate: string) {
   const choice = page.getByRole('button', { name: 'It covers fewer addresses' });
   const rationale = page.getByRole('textbox', { name: /Explain your reasoning/ });

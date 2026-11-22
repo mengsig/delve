@@ -1,16 +1,21 @@
 import assert from 'node:assert/strict';
 import { DomainError } from '../../shared/errors';
-import type { ReaderLesson, TutorContract } from '../../shared/reader';
+import { lessonKey, type ReaderLesson, type SavedTutorJob, type TutorContract } from '../../shared/reader';
 import type { Db } from '../db/connection';
+import { readLesson } from '../reader/ipc';
+import { findTutorJob, listTutorJobs, markTutorJobFailed, markTutorJobReady, removeTutorJob, storeTutorJob } from './jobs';
 import { createGenerator, type Generate } from './provider';
 import { checkedTurn, executeTurn } from './turn';
 
 interface ActiveTurn {
+  id: string;
   token: string;
   controller: AbortController;
   result: Promise<ReaderLesson>;
   subscribers: Set<string>;
 }
+
+const interrupted = { code: 'TUTOR_INTERRUPTED', message: 'Delve closed before the tutor finished.' };
 
 export class TutorSession {
   private closed = false;
@@ -20,19 +25,70 @@ export class TutorSession {
 
   run(request: TutorContract['tutor:run']['request']): Promise<ReaderLesson> {
     if (this.closed) throw new DomainError('TUTOR_CLOSED', 'The tutor is closing.');
-    const { requestId, token } = request;
+    const { requestId, token, ...input } = request;
     if (this.cancellations.has(requestId)) throw new DomainError('DUPLICATE_REQUEST', 'That request is already running.');
-    const turn = checkedTurn(this.db, request, token);
-    const key = [request.workspaceId, request.conceptId, request.depth].join('/');
+    const turn = checkedTurn(this.db, input, token);
+    const key = lessonKey(input);
     let active = this.turns.get(key);
     if (active && active.token !== token) throw new DomainError('TUTOR_BUSY', 'Finish or cancel the current tutor response first.');
     if (!active) {
       const controller = new AbortController();
-      const result = executeTurn(this.db, this.generate, turn, controller.signal);
-      active = { token, controller, result, subscribers: new Set() };
+      storeTutorJob(this.db, requestId, turn);
+      const result = executeTurn(this.db, this.generate, turn, controller.signal, () => markTutorJobReady(this.db, requestId))
+        .catch((cause: unknown) => {
+          if (!this.closed && !controller.signal.aborted) this.recordFailure(requestId, cause);
+          throw cause;
+        });
+      active = { id: requestId, token, controller, result, subscribers: new Set() };
       this.turns.set(key, active);
     }
     return this.subscribe(key, active, requestId);
+  }
+
+  private recordFailure(id: string, cause: unknown): void {
+    const error = cause instanceof DomainError ? cause : new DomainError('INTERNAL', 'Something went wrong in Delve.');
+    try {
+      markTutorJobFailed(this.db, id, error.code, error.message);
+    } catch (persistenceError) {
+      throw new AggregateError([cause, persistenceError], 'Could not record the tutor failure.', { cause: persistenceError });
+    }
+  }
+
+  private active(job: SavedTutorJob) {
+    const active = this.turns.get(lessonKey(job.request));
+    return active?.id === job.id ? active : undefined;
+  }
+
+  jobs(): SavedTutorJob[] {
+    return listTutorJobs(this.db).map(job => job.phase === 'running' && !this.active(job)
+      ? { ...job, phase: 'failed', ...interrupted } : job);
+  }
+
+  wait(id: string): ReaderLesson | Promise<ReaderLesson> {
+    const { job } = this.requireJob(id);
+    if (job.phase === 'ready') return readLesson(this.db, job.request);
+    if (job.phase === 'failed') throw new DomainError(job.code, job.message);
+    const active = this.active(job);
+    if (!active) throw new DomainError(interrupted.code, interrupted.message);
+    return active.result;
+  }
+
+  retry(id: string): Promise<ReaderLesson> {
+    const { job, token } = this.requireJob(id);
+    if (job.phase !== 'running' || this.active(job)) throw new DomainError('TUTOR_BUSY', 'This tutor request is no longer interrupted.');
+    return this.run({ ...job.request, token, requestId: id });
+  }
+
+  dismiss(id: string): boolean {
+    const saved = findTutorJob(this.db, id);
+    return Boolean(saved && !this.active(saved.job) && removeTutorJob(this.db, id));
+  }
+
+  private requireJob(id: string) {
+    const saved = findTutorJob(this.db, id);
+    if (!saved) throw new DomainError('TUTOR_JOB_MISSING', 'This tutor request is no longer available.');
+    assert.equal(saved.job.id, id);
+    return saved;
   }
 
   private subscribe(key: string, active: ActiveTurn, id: string): Promise<ReaderLesson> {
@@ -46,9 +102,11 @@ export class TutorSession {
         return true;
       };
       this.cancellations.set(id, () => {
+        const error = new DomainError('TUTOR_CANCELLED', 'The tutor response was cancelled.');
+        if (!this.closed && active.subscribers.size === 1) this.recordFailure(active.id, error);
         assert.ok(leave(), 'only active subscribers may cancel');
         if (!active.subscribers.size) active.controller.abort();
-        reject(new DomainError('TUTOR_CANCELLED', 'The tutor response was cancelled.'));
+        reject(error);
       });
       active.result.then(value => { if (leave()) resolve(value); }, error => { if (leave()) reject(error); });
     });

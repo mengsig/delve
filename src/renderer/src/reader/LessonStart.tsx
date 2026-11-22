@@ -35,7 +35,7 @@ export function useOpenLesson(body: ReaderLesson, tutor: LessonTutor, review = f
   const intent = review && body.mastery.stage === 'understood' && body.mastery.revision
     ? { kind: 'review' as const, revision: body.mastery.revision } : openingIntent(body);
   const key = intent && [tutor.provider, intent.kind, body.mastery.revision].join('/');
-  const ready = tutor.signedIn && !tutor.pending && !tutor.job && !tutor.review.preview;
+  const ready = tutor.ready && tutor.signedIn && !tutor.pending && !tutor.job && !tutor.review.preview;
   const prepare = useEffectEvent(() => {
     if (!intent || !key || attempted.current === key) return;
     if (review && intent.kind === 'review') {
@@ -86,7 +86,7 @@ export function LessonStart({ title, open, workspaceId, conceptId, depth, provid
       checkPermission(previous => previous + 1);
       return;
     }
-    if (signedIn && prepared && !active) queue.start({ request: prepared.request, token: prepared.data.token, title });
+    if (signedIn && prepared && !running) queue.start({ request: prepared.request, token: prepared.data.token, title });
     open(conceptId);
   }
   return <div className="next-start">

@@ -258,6 +258,38 @@ it('discards late output after cancellation or a change to the previewed context
   expect(readLesson(db, request).blocks).toEqual([]);
 });
 
+it('restores an approved tutor request and records completion with the saved lesson', async () => {
+  const generate = vi.fn<Generate>(() => new Promise(() => undefined));
+  session = new TutorSession(db, generate);
+  const id = randomUUID();
+  const { token } = prepareTurn(db, request).preview;
+  const inFlight = session.run({ ...request, token, requestId: id });
+  expect(session.jobs()).toMatchObject([{ id, phase: 'running' }]);
+  expect(session.dismiss(id)).toBe(false);
+  session.close();
+  await expect(inFlight).rejects.toThrow(/cancelled/);
+  expect(generate.mock.calls[0]?.[1].aborted).toBe(true);
+
+  const finish = vi.fn<Generate>(async () => opening);
+  session = new TutorSession(db, finish);
+  expect(session.jobs()).toMatchObject([{ id, phase: 'failed', code: 'TUTOR_INTERRUPTED', request }]);
+  vi.stubEnv('DELVE_CODEX_MODEL', 'new-model');
+  expect(() => session.retry(id)).toThrow(/changed/);
+  expect(finish).not.toHaveBeenCalled();
+  vi.stubEnv('DELVE_CODEX_MODEL', undefined);
+  expect((await session.retry(id)).blocks).toContainEqual(explanation);
+  expect(finish).toHaveBeenCalledOnce();
+
+  session.close();
+  session = new TutorSession(db, finish);
+  expect(session.jobs()).toMatchObject([{ id, phase: 'ready' }]);
+  expect((await session.wait(id)).blocks).toContainEqual(explanation);
+  expect(() => session.retry(id)).toThrow(/no longer interrupted/);
+  expect(finish).toHaveBeenCalledOnce();
+  expect(session.dismiss(id)).toBe(true);
+  expect(session.jobs()).toEqual([]);
+});
+
 it('the offline provider reteaches a miss, offers fresh applied checks and recommends a path after understanding', async () => {
   seedDemoWorkspaces(db);
   session = new TutorSession(db);

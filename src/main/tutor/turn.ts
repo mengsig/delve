@@ -25,7 +25,7 @@ function reuseOpening(db: Db, turn: PreparedTurn): boolean {
   const cached = storedLesson(db, turn.context, turn.cacheKey);
   if (!cached.document || cached.invalidLatest || !freshCheckSchema.safeParse(checkIn(cached.document)).success) return false;
   const lesson = cached.document;
-  if (turn.selected.id !== cached.id) transaction(db, () => saveOpening(db, turn, lesson));
+  if (turn.selected.id !== cached.id) saveOpening(db, turn, lesson);
   return true;
 }
 
@@ -93,14 +93,19 @@ export function checkedTurn(db: Db, request: TutorRequest, token: string) {
   return turn;
 }
 
-export async function executeTurn(db: Db, generate: Generate, turn: PreparedTurn, signal: AbortSignal) {
-  if (reuseOpening(db, turn)) return readLesson(db, turn.context);
+export async function executeTurn(db: Db, generate: Generate, turn: PreparedTurn, signal: AbortSignal, onCommit?: () => void) {
+  if (turn.request.intent.kind === 'teach' && transaction(db, () => {
+    if (!reuseOpening(db, turn)) return false;
+    onCommit?.();
+    return true;
+  })) return readLesson(db, turn.context);
   const output = await generate(turn, signal);
   if (signal.aborted) throw new DomainError('TUTOR_CANCELLED', 'The tutor response was cancelled.');
   const reply = validateTurn(turn, output);
   transaction(db, () => {
     checkedTurn(db, turn.request, turn.preview.token);
     commitReply(db, turn, reply);
+    onCommit?.();
   });
   return readLesson(db, turn.context);
 }

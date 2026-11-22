@@ -8,6 +8,8 @@ export interface LessonAddress {
   depth: Depth;
 }
 
+export const lessonKey = ({ workspaceId, conceptId, depth }: LessonAddress) => [workspaceId, conceptId, depth].join('/');
+
 export interface ReaderMessage {
   id: number;
   role: 'learner' | 'tutor' | 'system';
@@ -89,9 +91,20 @@ export interface TopicPreviewRequest {
 
 export type TopicPreview = Omit<TutorPreview, 'token'>;
 
+export type SavedTutorJob = {
+  id: string;
+  title: string;
+  request: TutorRequest;
+  submittedAnswer?: string;
+} & ({ phase: 'running' | 'ready' } | { phase: 'failed'; code: string; message: string });
+
 export interface TutorContract {
   'tutor:preview-topic': { request: TopicPreviewRequest; response: TopicPreview };
   'tutor:preview': { request: TutorRequest; response: TutorPreview };
   'tutor:run': { request: TutorRequest & { token: string; requestId: string }; response: ReaderLesson };
   'tutor:cancel': { request: { requestId: string }; response: boolean };
+  'tutor:jobs': { request: null; response: SavedTutorJob[] };
+  'tutor:wait': { request: { requestId: string }; response: ReaderLesson };
+  'tutor:retry': { request: { requestId: string }; response: ReaderLesson };
+  'tutor:dismiss': { request: { requestId: string }; response: boolean };
 }

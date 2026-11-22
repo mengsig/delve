@@ -345,6 +345,25 @@ export const MIGRATIONS: readonly Migration[] = [
     DROP TABLE migration_portable;
     DROP TABLE migration_groups;`,
   },
+  {
+    version: 8,
+    name: 'persist approved tutor requests',
+    sql: `CREATE TABLE tutor_jobs (
+      id TEXT PRIMARY KEY NOT NULL,
+      workspace_id TEXT NOT NULL,
+      concept_id INTEGER NOT NULL,
+      depth TEXT NOT NULL CHECK (depth IN ('high', 'medium', 'low')),
+      token TEXT NOT NULL CHECK (length(token) = 64),
+      detail TEXT NOT NULL CHECK (json_valid(detail)),
+      phase TEXT NOT NULL CHECK (phase IN ('running', 'ready', 'failed')),
+      code TEXT,
+      message TEXT,
+      CHECK ((phase = 'failed' AND code IS NOT NULL AND message IS NOT NULL)
+        OR (phase <> 'failed' AND code IS NULL AND message IS NULL)),
+      UNIQUE (workspace_id, concept_id, depth),
+      FOREIGN KEY (workspace_id, concept_id) REFERENCES workspace_concepts ON DELETE CASCADE
+    );`,
+  },
 ];
 
 function assertOrdered(migrations: readonly Migration[]): void {
