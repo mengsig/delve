@@ -35,11 +35,16 @@ if [ "$url" = https://github.com/mengsig/delve/releases/latest ]; then
   printf '%s' 'https://github.com/mengsig/delve/releases/tag/v0.1.0'
   exit 0
 fi
-[ "$MOCK_DOWNLOAD" = checksum ] || exit 22
+[ "$MOCK_DOWNLOAD" = checksum ] || [ "$MOCK_DOWNLOAD" = success ] || exit 22
 case $url in
   */SHA256SUMS)
-    printf '%064d  %s\n' 0 "$MOCK_ASSET" > "$output" ;;
-  */"$MOCK_ASSET") printf '%s\n' 'deliberately incorrect asset' > "$output" ;;
+    if [ "$MOCK_DOWNLOAD" = success ]; then
+      digest=$(sha256sum "$MOCK_PAYLOAD")
+      printf '%s  %s\n' "${digest%% *}" "$MOCK_ASSET" > "$output"
+    else
+      printf '%064d  %s\n' 0 "$MOCK_ASSET" > "$output"
+    fi ;;
+  */"$MOCK_ASSET") cp "$MOCK_PAYLOAD" "$output" ;;
   *) exit 22 ;;
 esac
 MOCK
@@ -53,6 +58,12 @@ cat > "$root/bin/hdiutil" <<'MOCK'
 #!/bin/sh
 printf '%s\n' 'hdiutil invoked before checksum verification' >&2
 exit 99
+MOCK
+cat > "$root/payload" <<'MOCK'
+#!/bin/sh
+printf 'executed\n' > "$MOCK_MARKER"
+mkdir -p squashfs-root/icons
+printf 'icon\n' > squashfs-root/icons/delve.png
 MOCK
 chmod +x "$root/bin/uname" "$root/bin/curl" "$root/bin/hdiutil" "$root/bin/pgrep"
 
@@ -71,7 +82,7 @@ run_installer() {
     TMPDIR="$case_dir/tmp" XDG_DATA_HOME="$case_dir/home/.local/share" \
     XDG_CONFIG_HOME="$case_dir/home/.config" DELVE_VERSION="$version" \
     MOCK_OS="$os" MOCK_ARCH="$arch" MOCK_ASSET="$asset" \
-    MOCK_DOWNLOAD="$mode" MOCK_LOG="$case_dir/curl.log" \
+    MOCK_DOWNLOAD="$mode" MOCK_PAYLOAD="$root/payload" MOCK_MARKER="$case_dir/executed" MOCK_LOG="$case_dir/curl.log" \
     sh "$installer" > "$case_dir/output" 2>&1; then
     fail "$name: installer unexpectedly succeeded"
   fi
@@ -105,7 +116,8 @@ for platform in linux mac; do
   run_installer "$platform-checksum" "$os" "$arch" "$asset" checksum 0.1.0
   expect_url "$release/$asset"
   expect_url "$release/SHA256SUMS"
-  grep -Ei 'checksum|sha256|verification' "$case_dir/output" >/dev/null || fail 'checksum failure was not explained'
+  grep -F 'Checksum mismatch' "$case_dir/output" >/dev/null || fail 'checksum failure was not explained'
+  [ ! -e "$case_dir/executed" ] || fail 'asset ran before checksum verification'
   if find "$case_dir/home" -type f -print | grep . >/dev/null; then
     fail 'checksum failure left installed files in HOME'
   fi
@@ -113,5 +125,17 @@ for platform in linux mac; do
     fail 'installation started before checksum verification'
   fi
 done
+
+case_dir=$root/linux-success
+mkdir -p "$case_dir/home" "$case_dir/tmp"
+: > "$case_dir/curl.log"
+env -i PATH="$root/bin:/usr/bin:/bin" HOME="$case_dir/home" \
+  TMPDIR="$case_dir/tmp" DELVE_VERSION=0.1.0 MOCK_OS=Linux MOCK_ARCH=x86_64 \
+  MOCK_ASSET="$linux_asset" MOCK_DOWNLOAD=success MOCK_PAYLOAD="$root/payload" \
+  MOCK_MARKER="$case_dir/executed" MOCK_LOG="$case_dir/curl.log" \
+  sh "$installer" > "$case_dir/output" 2>&1 || fail 'valid checksum did not install'
+[ -e "$case_dir/executed" ] || fail 'verified asset was not extracted'
+[ -x "$case_dir/home/.local/share/delve/Delve.AppImage" ] || fail 'AppImage was not installed'
+[ -L "$case_dir/home/.local/bin/delve" ] || fail 'launcher was not installed'
 
 printf '%s\n' 'installer tests passed'
