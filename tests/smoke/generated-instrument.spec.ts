@@ -111,6 +111,7 @@ test('a new topic wires a network, then opens a generated board inside a tutor r
   await expect(stage.getByRole('list')).toContainText('client.out → proxy.in');
   await stage.getByRole('button', { name: /proxy\.out/ }).click();
   await stage.getByRole('button', { name: /service\.in/ }).press('Enter');
+  await expect(stage.getByRole('list')).toContainText('proxy.out → service.in');
   await stage.getByRole('button', { name: 'Test path' }).click();
   await expect(page.getByRole('log')).toContainText('reached the service through the proxy');
   response(directory, bundle(boardSource), false);
