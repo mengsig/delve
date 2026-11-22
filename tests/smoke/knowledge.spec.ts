@@ -72,11 +72,10 @@ async function verifyLearnedLessonActions(page: Page) {
 
 test('opens the global graph, finds a shared learned concept and opens its lesson', async ({ desktop: { page, application, directory } }) => {
   const { shared, backpressure } = seedKnowledge(directory);
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
+  await page.setViewportSize({ width: 1280, height: 800 });
   await captureThemes(page, 'readme-after');
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
-  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
-  await page.setViewportSize({ width: 1280, height: 771 });
   await withinBudget(page, 'Open Knowledge from the header', 1, async () => {
     await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Knowledge.' })).toBeVisible();
@@ -113,7 +112,7 @@ test('opens the global graph, finds a shared learned concept and opens its lesso
   for (const name of ['Workspace', 'State', 'Depth']) await expect(page.getByRole('combobox', { name, exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open lesson', exact: true })).toBeVisible();
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
-  await page.setViewportSize({ width: 1280, height: 771 });
+  await page.setViewportSize({ width: 1280, height: 800 });
   await verifyConnections(page, directory, shared.id, backpressure.id);
   await page.getByLabel('State').selectOption('verified');
   await withinBudget(page, 'Open a review of the selected concept', 1, async () => {

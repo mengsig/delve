@@ -47,13 +47,15 @@ The mockup's separate Atlas destination remains available through the persistent
 
 ## Shell spacing and scrolling
 
-The desktop shell starts 12px below the window edge, bringing its outer inset closer to the approved mockup. The document scrollbar no longer reserves a grey rail; native wheel, touchpad and keyboard scrolling remain available. This preserves the existing map height and navigation while giving the shell its full right margin.
+The desktop shell starts 12px below the window edge, bringing its outer inset closer to the approved mockup. The long document views use a slim, theme-coloured draggable scrollbar thumb on a transparent track. This deliberately differs from the mockup so readers can see and change their position without a full-height grey rail. Native wheel, touchpad and keyboard scrolling remain available.
 
 ## Verification
 
 The map retains a small, muted React Flow attribution in both themes. Delve and React Flow are MIT-licensed; [React Flow's attribution policy](https://reactflow.dev/remove-attribution) asks projects that remove the badge to subscribe. Keeping it acknowledges the library while fitting the Contour map, unlike the unbadged mockup.
 
 CI runs the journey assertions against the built desktop as part of `npm run test:smoke`. The [action counter](../tests/smoke/action-budget.ts) measures trusted pointer and keyboard events. [Tutor](../tests/smoke/tutor.spec.ts), [repository](../tests/smoke/repository.spec.ts), [Changes](../tests/smoke/explorer.spec.ts) and [navigation](../tests/smoke/navigation.spec.ts) and [Knowledge](../tests/smoke/knowledge.spec.ts) cover the budgets above. Tests exercise actual Git operations and the normal CLI boundary with deterministic provider and GitHub fixtures.
+
+For a native X11 pointer measurement of the 2,000-node Knowledge fixture, build the app and run `KNOWLEDGE_NATIVE_POINTER=1 KNOWLEDGE_FRAME_BUDGET=1 npx playwright test tests/smoke/knowledge-performance.spec.ts` on a dedicated display with `xdotool` installed. The test reports animation-frame gaps during a two-second drag and wheel zoom; host scheduling can affect the maximum.
 
 The packaged before/after artifact, **delve-ux-journeys**, includes matching 1280 × 800 captures of setup, Atlas, search, first-use consent, the first lesson, repository attachment, map progress and the selected PR. The accessibility checks exercise keyboard focus, native dialogs, reduced motion and the dark and light designs. Automated checks complement the keyboard and viewport journeys. Verification used Linux and fixture subscription responses.
 

@@ -75,7 +75,10 @@ function createWindow(labs: LabHost, shutdown: Shutdown): BrowserWindow {
   window.webContents.on('did-start-navigation', event => { if (event.isMainFrame && !event.isSameDocument) labs.clear(); });
   window.webContents.on('render-process-gone', () => labs.clear());
   window.webContents.on('destroyed', () => labs.clear());
-  window.once('ready-to-show', () => window.show());
+  const showWindow = () => { if (!window.isDestroyed()) window.show(); };
+  const showFallback = setTimeout(showWindow, 2000);
+  window.once('ready-to-show', () => { clearTimeout(showFallback); showWindow(); });
+  window.once('closed', () => clearTimeout(showFallback));
   const url = devServerUrl ?? `${APP_ORIGIN}/index.html`;
   window.loadURL(url).catch((error: unknown) => {
     if (shutdown.signal.aborted) return;
