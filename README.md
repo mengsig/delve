@@ -16,7 +16,9 @@ in your home directory, using AppImage extraction to work without FUSE 2. On mac
 it installs Delve in Applications. To install a specific release, download
 [`install.sh`](https://github.com/mengsig/delve/blob/main/install.sh) and run
 `DELVE_VERSION=v1.2.3 sh install.sh` with the desired release tag. Run `sh install.sh --uninstall`
-to remove the installation. The installer remembers the macOS installation location for uninstall.
+to remove the installed files. The installer lists what it removed and where it left files.
+If an older macOS installer saved only the app location, move its `Delve.app` to Trash or
+reinstall the same release to record the bundle files before uninstalling.
 
 Alternatively, download a package and `SHA256SUMS` from the
 [releases page](https://github.com/mengsig/delve/releases) and verify its SHA-256 checksum before
