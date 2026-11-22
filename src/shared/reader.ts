@@ -105,6 +105,6 @@ export interface TutorContract {
   'tutor:cancel': { request: { requestId: string }; response: boolean };
   'tutor:jobs': { request: null; response: SavedTutorJob[] };
   'tutor:wait': { request: { requestId: string }; response: ReaderLesson };
-  'tutor:retry': { request: { requestId: string }; response: ReaderLesson };
+  'tutor:retry': { request: { requestId: string; provider: TutorRequest['provider'] }; response: ReaderLesson };
   'tutor:dismiss': { request: { requestId: string }; response: boolean };
 }

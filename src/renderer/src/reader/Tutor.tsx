@@ -4,7 +4,7 @@ import { call, IpcCallError } from '../api';
 import { providerHint, useDetectedProvider, useProviderDetection } from '../SetupProvider';
 import { errorMessage } from '../useRead';
 import { hasTutorApproval, setTutorApproval } from './tutorApproval';
-import { lessonKey, useTutorJobs } from './TutorJobs';
+import { lessonKey, tutorName, useTutorJobs } from './TutorJobs';
 import { TutorConsent, TutorPreviewDialog } from './TutorPreview';
 
 type Provider = TutorRequest['provider'];
@@ -137,9 +137,15 @@ export function useTutor(address: LessonAddress, title: string, demo: boolean, o
     choose(next);
   }
 
+  function retry() {
+    if (job?.phase !== 'failed' || job.code !== 'TUTOR_INTERRUPTED' || !signedIn) return;
+    if (job.request.provider !== provider) prepare(job.request.intent, true);
+    else queue.retry(job, provider);
+  }
+
   return { job, detection, provider, status, signedIn, prepare, lastIntent, choose: changeProvider, approve, approval, review,
     pending: running || review.pending, running, ready: queue.saved.ready,
-    cancel: () => job && queue.cancel(job), retry: () => job && queue.retry(job) };
+    cancel: () => job && queue.cancel(job), retry };
 }
 
 export type LessonTutor = ReturnType<typeof useTutor>;
@@ -188,11 +194,15 @@ export function TutorTurnStatus({ tutor, onBackground, reload }: { tutor: Lesson
   const intent = lastIntent ?? failure?.request.intent;
   const reloadSaved = failure?.code === 'RELOAD_LESSON';
   const interrupted = failure?.code === 'TUTOR_INTERRUPTED';
+  const providerChanged = interrupted && failure.request.provider !== tutor.provider;
   const stale = ['LESSON_CHANGED', 'STALE_PREVIEW'].includes(review.code || failure?.code || '');
   return <div className="reader-turn-status" role="alert"><span>{stale ? 'The question changed. Review the current check.' :
     (interrupted ? 'Tutor request interrupted. ' : intent?.kind === 'answer' && !reloadSaved ? 'Your answer hasn’t been graded. ' : '') + message}</span>
+    {providerChanged && !stale && <span>Review the request for {tutorName(tutor.provider)} before sending.</span>}
+    {interrupted && !providerChanged && !stale && <span>Retry will use {tutorName(tutor.provider)}.</span>}
     {(stale || reloadSaved) && <button onClick={reload}>Load current check</button>}
-    {!stale && !reloadSaved && intent && failure?.code !== 'PROVIDER_QUOTA' && <button type="button" onClick={() =>
-      interrupted ? tutor.retry() : tutor.prepare(intent)}>Retry</button>}
+    {!stale && !reloadSaved && intent && failure?.code !== 'PROVIDER_QUOTA' && <button type="button"
+      disabled={interrupted && !tutor.signedIn} onClick={() => interrupted ? tutor.retry() : tutor.prepare(intent)}>
+      {providerChanged ? 'Review retry' : 'Retry'}</button>}
   </div>;
 }

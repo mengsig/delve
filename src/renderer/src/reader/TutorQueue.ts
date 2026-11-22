@@ -95,11 +95,11 @@ export function useQueue() {
     return true;
   }
 
-  function retry(job: TutorJob) {
-    if (job.phase !== 'failed' || job.code !== 'TUTOR_INTERRUPTED' || busy(job.key)) return;
+  function retry(job: TutorJob, provider: TutorRequest['provider']) {
+    if (job.phase !== 'failed' || job.code !== 'TUTOR_INTERRUPTED' || job.request.provider !== provider || busy(job.key)) return;
     const resumed = { ...job, phase: 'running' as const };
     replace(job, resumed);
-    void follow(resumed, () => call('tutor:retry', { requestId: job.id }));
+    void follow(resumed, () => call('tutor:retry', { requestId: job.id, provider }));
   }
 
   function failRead(job: TutorJob, cause: IpcCallError) {

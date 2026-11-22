@@ -207,12 +207,17 @@ test('restores an interrupted answer after restarting and retries exactly the ap
   await expect(activity).toContainText('Tutor request interrupted · IP routing');
   await expect(activity.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
   await restarted.screenshot({ path: info.outputPath('s6-restart.png') });
+  await restarted.evaluate(() => localStorage.setItem('delve.provider', 'claude'));
+  await restarted.reload();
+  await expect(activity).toContainText('Open the lesson to review the request for Claude Code.');
+  await expect(activity.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
   await activity.getByRole('button', { name: 'Open lesson', exact: true }).click();
   const transcript = restarted.getByLabel('Lesson transcript');
   await expect(transcript).toContainText(choice);
   await expect(transcript.getByText(reasoning, { exact: false })).toBeInViewport();
   await expect(restarted.getByRole('button', { name: choice, exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(restarted.getByRole('alert')).toContainText('Tutor request interrupted');
+  await reviewInterruptedAnswer(restarted, receipt, reasoning);
   await restarted.screenshot({ path: info.outputPath('s6-reopened.png') });
   expect(existsSync(receipt)).toBe(false);
   unlinkSync(gate);
@@ -223,6 +228,21 @@ test('restores an interrupted answer after restarting and retries exactly the ap
   await expect(restarted.getByRole('log')).toContainText('You identified the narrower route.');
   expect(JSON.parse(readFileSync(receipt, 'utf8')).stdin).toBe(approvedRequest);
 });
+
+async function reviewInterruptedAnswer(page: Page, receipt: string, reasoning: string) {
+  await page.getByRole('button', { name: 'Review retry', exact: true }).click();
+  const preview = page.getByRole('dialog', { name: 'Review what will be sent' });
+  await expect(preview).toContainText('Claude Code');
+  await expect(preview.getByLabel('Exact provider request')).toContainText(reasoning);
+  expect(existsSync(receipt)).toBe(false);
+  await preview.getByRole('button', { name: 'Close preview' }).click();
+
+  await page.getByRole('button', { name: 'Lesson notes' }).click();
+  const notes = page.getByRole('dialog');
+  await notes.getByLabel('Tutor', { exact: true }).selectOption('codex');
+  await notes.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Retry will use Codex.');
+}
 
 async function exerciseAnswerRecovery(page: Page, gate: string) {
   const choice = page.getByRole('button', { name: 'It covers fewer addresses' });

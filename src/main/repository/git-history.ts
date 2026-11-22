@@ -6,10 +6,11 @@ import type { HistoryNode } from '../../shared/explorer';
 import { DomainError } from '../../shared/errors';
 import { changeTitle, gitReader, nulRecords, type GitReader } from './git-reader';
 import { OBJECT_ID, safeBranch, safeAuthor } from './source-policy';
-import { completedOutput } from './source-process';
+import { completedOutput, type CommandResult } from './source-process';
 
 const COMMIT_BATCH = 32;
 const MAX_BRANCHES = 256;
+const MAX_PARENT_REPAIRS = 4;
 const LOG = ['log', '--no-notes', '--no-show-signature', '--no-color', '--encoding=UTF-8',
   '-z', '--format=%H%x00%P%x00%an%x00%aI%x00%s'];
 
@@ -66,9 +67,14 @@ export async function gitHistoryNode(reader: GitReader, head: string): Promise<H
   return node;
 }
 
-interface BrokenBoundary {
+interface BrokenParent {
   commit: string;
   missing: string;
+  parents: string[];
+}
+
+interface BrokenBoundary {
+  missing: Set<string>;
   parents: string[];
 }
 
@@ -93,12 +99,12 @@ function unreadableObject(diagnostic: string): string | undefined {
   return id && OBJECT_ID.test(id) ? id : undefined;
 }
 
-async function brokenBoundary(reader: GitReader, tips: string[], missing: string): Promise<BrokenBoundary | null> {
-  assert.ok(OBJECT_ID.test(missing));
+async function brokenParent(reader: GitReader, tips: string[]): Promise<BrokenParent | null> {
   assert.ok(tips.length > 0 && tips.every(tip => OBJECT_ID.test(tip)));
   // A plain walk reports the child of a missing parent even when the ordered walk fails during setup.
   const traversal = await reader.run(['log', '--no-notes', '--no-show-signature', '--format=', ...tips, '--'], 256 * 1024);
-  if (unreadableObject(traversal.diagnostic) !== missing) return null;
+  const missing = unreadableObject(traversal.diagnostic);
+  if (!missing) return null;
   const commit = /Failed to traverse parents of commit ([a-f0-9]+)\b/i.exec(traversal.diagnostic)?.[1]?.toLowerCase();
   if (!commit || !OBJECT_ID.test(commit)) return null;
   const result = await reader.run(['cat-file', 'commit', commit], 2 * 1024 * 1024);
@@ -108,19 +114,22 @@ async function brokenBoundary(reader: GitReader, tips: string[], missing: string
   if (end < 0) return null;
   const headers = content.slice(0, end);
   const parents = [...headers.matchAll(/^parent ([a-f0-9]+)$/gm)].map(match => match[1] ?? '');
-  assert.ok(parents.every(parent => OBJECT_ID.test(parent)));
-  if (!parents.includes(missing)) return null;
+  if (!parents.every(parent => OBJECT_ID.test(parent)) || !parents.includes(missing)) return null;
   return { commit, missing, parents };
 }
 
-async function withBoundary<T>(reader: GitReader, boundary: BrokenBoundary, action: (reader: GitReader) => Promise<T>): Promise<T> {
-  assert.ok(OBJECT_ID.test(boundary.commit));
-  assert.ok(boundary.parents.includes(boundary.missing) && boundary.parents.every(parent => OBJECT_ID.test(parent)));
-  const availableParents = boundary.parents.filter(parent => parent !== boundary.missing);
+function graftLine([commit, { missing, parents }]: [string, BrokenBoundary]): string {
+  assert.ok(OBJECT_ID.test(commit) && parents.every(parent => OBJECT_ID.test(parent)));
+  assert.ok(missing.size > 0 && [...missing].every(parent => parents.includes(parent)));
+  return [commit, ...parents.filter(parent => !missing.has(parent))].join(' ');
+}
+
+async function withBoundaries<T>(reader: GitReader, boundaries: Map<string, BrokenBoundary>, action: (reader: GitReader) => Promise<T>): Promise<T> {
+  if (boundaries.size === 0) return action(reader);
   const directory = await mkdtemp(join(tmpdir(), 'delve-history-'));
   try {
     const graftFile = join(directory, 'grafts');
-    await writeFile(graftFile, [boundary.commit, ...availableParents].join(' ') + '\n');
+    await writeFile(graftFile, [...boundaries].map(graftLine).join('\n') + '\n');
     return await action({ run: (args, maxBytes) => reader.run(['-c', 'advice.graftFileDeprecated=false', ...args], maxBytes, graftFile) });
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -137,39 +146,64 @@ function unreadableWarning(id: string) {
   return `Git commit ${id} is missing or damaged. Run git fsck to check the repository. You may need to restore the commit from a healthy copy.`;
 }
 
-async function readGitHistoryBatch(reader: GitReader, tips: string[], labels: Map<string, string[]>, skip: number, boundary?: BrokenBoundary): Promise<GitHistoryBatch> {
-  assert.ok(Number.isSafeInteger(skip) && skip >= 0);
+function addBrokenBoundary(boundaries: Map<string, BrokenBoundary>, { commit, parents, missing }: BrokenParent): boolean {
+  const current = boundaries.get(commit);
+  if (!current) {
+    boundaries.set(commit, { parents, missing: new Set([missing]) });
+    return true;
+  }
+  assert.deepEqual(current.parents, parents);
+  assert.ok(parents.includes(missing));
+  if (current.missing.has(missing)) return false;
+  current.missing.add(missing);
+  return true;
+}
+
+async function walkHistory(reader: GitReader, tips: string[], skip: number, boundaries: Map<string, BrokenBoundary>): Promise<CommandResult> {
   assert.ok(tips.length > 0 && tips.every(tip => OBJECT_ID.test(tip)));
+  assert.ok(Number.isSafeInteger(skip) && skip >= 0);
   // Ancestry takes precedence when authored dates are out of order.
   const args = [...LOG, '--author-date-order', `--skip=${skip}`, `--max-count=${COMMIT_BATCH + 1}`, ...tips, '--'];
-  const log = await reader.run(args, 2 * 1024 * 1024);
+  const run = () => withBoundaries(reader, boundaries, git => git.run(args, 2 * 1024 * 1024));
+  let log = await run();
+  let readable = log.output;
+  for (let attempt = 0; attempt < MAX_PARENT_REPAIRS && !log.truncated && log.status !== 0; attempt++) {
+    if (!unreadableObject(log.diagnostic)) break;
+    const parent = await withBoundaries(reader, boundaries, git => brokenParent(git, tips));
+    if (!parent || !addBrokenBoundary(boundaries, parent)) break;
+    log = await run();
+    if (!log.truncated && log.status !== 0 && log.output.length < readable.length) continue;
+    readable = log.output;
+  }
+  return { ...log, output: readable };
+}
+
+async function readGitHistoryBatch(reader: GitReader, tips: string[], labels: Map<string, string[]>, skip: number,
+  boundaries: Map<string, BrokenBoundary>): Promise<GitHistoryBatch> {
+  const log = await walkHistory(reader, tips, skip, boundaries);
   const history = commitNodes(nulRecords(log.output), labels);
   const nodes = history.slice(0, COMMIT_BATCH);
+  const boundaryIndex = boundaries.size ? nodes.findIndex(node => boundaries.has(node.ref)) : -1;
+  if (boundaryIndex >= 0) {
+    const node = nodes[boundaryIndex]!;
+    const boundary = boundaries.get(node.ref);
+    assert.ok(boundary);
+    const missing = boundary.parents.find(parent => boundary.missing.has(parent));
+    assert.ok(missing);
+    return { nodes: [...nodes.slice(0, boundaryIndex), { ...node, parents: boundary.parents }], next: null,
+      warning: unreadableWarning(missing) };
+  }
   if (!log.truncated && log.status !== 0) {
     const missing = unreadableObject(log.diagnostic);
-    const broken = missing && !boundary ? await brokenBoundary(reader, tips, missing) : null;
-    if (broken) return withBoundary(reader, broken, repaired => readGitHistoryBatch(repaired, tips, labels, skip, broken));
     return { nodes, next: history.length > COMMIT_BATCH ? skip + nodes.length : null,
-      warning: unreadableWarningOrGeneric(missing) };
-  }
-  const boundaryIndex = boundary ? nodes.findIndex(node => node.ref === boundary.commit) : -1;
-  if (boundary && boundaryIndex >= 0) {
-    const node = nodes[boundaryIndex];
-    assert.ok(node);
-    node.parents = boundary.parents;
-    return { nodes: nodes.slice(0, boundaryIndex + 1), next: null,
-      warning: unreadableWarning(boundary.missing) };
+      warning: missing ? unreadableWarning(missing) : 'Git could not read the rest of the history. Run git fsck to check the repository.' };
   }
   if (log.truncated && nodes.length === 0) {
-    const id = await unreadableCommit(reader, tips, skip);
+    const id = await withBoundaries(reader, boundaries, git => unreadableCommit(git, tips, skip));
     return { nodes, next: null, warning: `Git commit ${id} exceeds the metadata read limit. Reduce its commit metadata to view older history.` };
   }
   const more = log.truncated || history.length > COMMIT_BATCH;
   return { nodes, next: more ? skip + nodes.length : null };
-}
-
-function unreadableWarningOrGeneric(id: string | undefined): string {
-  return id ? unreadableWarning(id) : 'Git could not read the rest of the history. Run git fsck to check the repository.';
 }
 
 export async function openGitHistory(path: string, branch?: string, commits = true): Promise<GitHistorySource> {
@@ -189,5 +223,6 @@ export async function openGitHistory(path: string, branch?: string, commits = tr
   const isShallow = completedOutput(shallow, 'Could not check Git history depth.').toString('utf8').trim();
   assert.ok(isShallow === 'true' || isShallow === 'false');
   if (isShallow === 'true') warnings.push('Git history is limited to this shallow snapshot. Run git fetch --unshallow to see older commits.');
-  return { ...result, read: skip => readGitHistoryBatch(reader, tips, labels, skip) };
+  const boundaries = new Map<string, BrokenBoundary>();
+  return { ...result, read: skip => readGitHistoryBatch(reader, tips, labels, skip, boundaries) };
 }

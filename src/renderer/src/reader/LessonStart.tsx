@@ -77,16 +77,15 @@ export function LessonStart({ title, open, workspaceId, conceptId, depth, provid
   if (result.status === 'error') return <div role="alert">{result.message} <button onClick={refresh}>Retry next lesson</button></div>;
   const prepared = result.status === 'ready' && result.value.kind === 'preview' && result.value;
   const needsTutor = result.status === 'ready' && result.value.kind === 'sign-in';
-  const running = queue.jobs.get(lessonKey({ workspaceId, conceptId, depth }));
-  const active = running?.phase === 'running' || running?.phase === 'cancelling';
-  const consent = prepared && !active && provider !== 'demo' && !hasTutorApproval(workspaceId, provider);
+  const job = queue.jobs.get(lessonKey({ workspaceId, conceptId, depth }));
+  const consent = prepared && !job && provider !== 'demo' && !hasTutorApproval(workspaceId, provider);
   function start() {
     if (result.status !== 'ready' || result.value.kind === 'checking') return;
-    if (prepared && !active && provider !== 'demo' && !consent && !hasTutorApproval(workspaceId, provider)) {
+    if (prepared && !job && provider !== 'demo' && !consent && !hasTutorApproval(workspaceId, provider)) {
       checkPermission(previous => previous + 1);
       return;
     }
-    if (signedIn && prepared && !running) queue.start({ request: prepared.request, token: prepared.data.token, title });
+    if (signedIn && prepared && !job) queue.start({ request: prepared.request, token: prepared.data.token, title });
     open(conceptId);
   }
   return <div className="next-start">
@@ -94,6 +93,6 @@ export function LessonStart({ title, open, workspaceId, conceptId, depth, provid
     {consent && <div className="next-preview"><PreviewMetadata provider={provider} data={prepared.data} />
       <ExactRequest data={prepared.data} /></div>}
     <button className="primary-btn" disabled={result.status === 'loading' || result.value.kind === 'checking'} onClick={start}>
-      {consent ? 'Allow once & start ' : needsTutor ? 'Open ' : 'Start '}{title} <span aria-hidden="true">→</span></button>
+      {consent ? 'Allow once & start ' : needsTutor || job ? 'Open ' : 'Start '}{title} <span aria-hidden="true">→</span></button>
   </div>;
 }

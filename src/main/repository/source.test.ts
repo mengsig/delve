@@ -206,32 +206,34 @@ describe('Git change read boundaries', () => {
 });
 
 describe('repository explorer damaged and shallow history', () => {
-  it('keeps readable commits in order and stops at a missing parent', async () => {
-    const base = commit('Base', '--allow-empty');
-    const tree = git('rev-parse', `${base}^{tree}`);
-    const missing = 'a'.repeat(40);
-    git('update-ref', 'refs/heads/intact', base);
-    const object = `tree ${tree}\nparent ${missing}\nparent ${base}\nauthor Fixture User <fixture@example.invalid> 1700000000 +0000\n`
-      + 'committer Fixture User <fixture@example.invalid> 1700000000 +0000\n\nBoundary\n';
-    const boundary = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'],
-      { input: object, encoding: 'utf8' }).trim();
-    git('update-ref', 'refs/heads/main', boundary);
-    const expected = [boundary];
-    for (let i = 0; i < 35; i++) expected.unshift(commit(`Readable ${i}`, '--allow-empty'));
-    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
-    const pages = [];
-    let next: number | null = 0;
-    while (next !== null && pages.length < 5) {
-      const page = await history.advance(() => pages.length + 1);
-      pages.push(page);
-      next = page.next;
-    }
-    expect(next).toBeNull();
-    expect(pages.flatMap(page => page.nodes.map(node => node.ref))).toEqual(expected);
-    expect(pages.flatMap(page => page.nodes).at(-1)?.parents).toEqual([missing, base]);
-    expect(pages.at(-1)?.warning).toContain(missing);
-    expect(pages.at(-1)?.warning).toContain('git fsck');
-  }, 30_000);
+  it.each([{ count: 'one parent', missingIds: ['a'] }, { count: 'two parents', missingIds: ['a', 'b'] }])(
+    'keeps readable commits in order when a merge is missing $count', async ({ missingIds }) => {
+      const base = commit('Base', '--allow-empty');
+      const tree = git('rev-parse', `${base}^{tree}`);
+      const missing = missingIds.map(char => char.repeat(40));
+      git('update-ref', 'refs/heads/intact', base);
+      const parents = [...missing, base];
+      const object = `tree ${tree}\n${parents.map(parent => `parent ${parent}\n`).join('')}author Fixture User <fixture@example.invalid> 1700000000 +0000\n`
+        + 'committer Fixture User <fixture@example.invalid> 1700000000 +0000\n\nBoundary\n';
+      const boundary = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'],
+        { input: object, encoding: 'utf8' }).trim();
+      git('update-ref', 'refs/heads/main', boundary);
+      const expected = [boundary];
+      for (let i = 0; i < 35; i++) expected.unshift(commit(`Readable ${i}`, '--allow-empty'));
+      const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+      const pages = [];
+      let next: number | null = 0;
+      while (next !== null && pages.length < 5) {
+        const page = await history.advance(() => pages.length + 1);
+        pages.push(page);
+        next = page.next;
+      }
+      expect(next).toBeNull();
+      expect(pages.flatMap(page => page.nodes.map(node => node.ref))).toEqual(expected);
+      expect(pages.flatMap(page => page.nodes).at(-1)?.parents).toEqual(parents);
+      expect(pages.at(-1)?.warning).toContain(missing[0]);
+      expect(pages.at(-1)?.warning).toContain('git fsck');
+    }, 30_000);
 
   it('keeps available shallow commits and explains how to fetch older history', async () => {
     commit('Older', '--allow-empty');

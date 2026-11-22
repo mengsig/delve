@@ -1,9 +1,11 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { LessonAddress } from '../../../shared/reader';
+import type { LessonAddress, TutorRequest } from '../../../shared/reader';
+import { preferredProvider, PROVIDER_LABELS } from '../preferences';
 import { errorMessage } from '../useRead';
 import { useQueue, type TutorJob } from './TutorQueue';
 
 export { lessonKey } from '../../../shared/reader';
+export const tutorName = (provider: TutorRequest['provider']) => provider === 'demo' ? 'the offline tutor' : PROVIDER_LABELS[provider];
 
 export interface ReadingPosition {
   top: number;
@@ -67,15 +69,20 @@ function jobLabel(job: TutorJob) {
 function JobNotice({ job, onOpen }: { job: TutorJob; onOpen: () => void }) {
   const { cancel, dismiss, retry } = useTutorJobs();
   const inProgress = job.phase === 'running' || job.phase === 'cancelling';
+  const interrupted = job.phase === 'failed' && job.code === 'TUTOR_INTERRUPTED';
+  const provider = job.request.provider === 'demo' ? 'demo' : preferredProvider();
+  const canRetry = interrupted && provider === job.request.provider;
   return <li className="map-job">
     <div role="status"><strong>{jobLabel(job)} · {job.title}</strong>
       {job.phase === 'failed' && <div>{job.message}</div>}
+      {canRetry && <div>Retry will use {tutorName(provider)}.</div>}
+      {interrupted && !canRetry && <div>Open the lesson to review the request for {tutorName(provider)}.</div>}
       {job.phase === 'running' && job.warning && <div>{job.warning}</div>}
     </div>
     <div className="actions">
       <button onClick={onOpen}>Open lesson</button>
       {job.phase === 'running' && <button onClick={() => void cancel(job)}>Cancel tutor request</button>}
-      {job.phase === 'failed' && job.code === 'TUTOR_INTERRUPTED' && <button onClick={() => retry(job)}>Retry</button>}
+      {canRetry && <button onClick={() => retry(job, provider === 'demo' ? 'demo' : preferredProvider())}>Retry</button>}
       {!inProgress && <button onClick={() => void dismiss(job)}>Dismiss</button>}
     </div>
   </li>;

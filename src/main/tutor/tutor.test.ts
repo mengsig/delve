@@ -273,18 +273,20 @@ it('restores an approved tutor request and records completion with the saved les
   const finish = vi.fn<Generate>(async () => opening);
   session = new TutorSession(db, finish);
   expect(session.jobs()).toMatchObject([{ id, phase: 'failed', code: 'TUTOR_INTERRUPTED', request }]);
+  expect(() => session.retry(id, 'claude')).toThrow(/tutor changed/);
+  expect(finish).not.toHaveBeenCalled();
   vi.stubEnv('DELVE_CODEX_MODEL', 'new-model');
-  expect(() => session.retry(id)).toThrow(/changed/);
+  expect(() => session.retry(id, 'codex')).toThrow(/changed/);
   expect(finish).not.toHaveBeenCalled();
   vi.stubEnv('DELVE_CODEX_MODEL', undefined);
-  expect((await session.retry(id)).blocks).toContainEqual(explanation);
+  expect((await session.retry(id, 'codex')).blocks).toContainEqual(explanation);
   expect(finish).toHaveBeenCalledOnce();
 
   session.close();
   session = new TutorSession(db, finish);
   expect(session.jobs()).toMatchObject([{ id, phase: 'ready' }]);
   expect((await session.wait(id)).blocks).toContainEqual(explanation);
-  expect(() => session.retry(id)).toThrow(/no longer interrupted/);
+  expect(() => session.retry(id, 'codex')).toThrow(/no longer interrupted/);
   expect(finish).toHaveBeenCalledOnce();
   expect(session.dismiss(id)).toBe(true);
   expect(session.jobs()).toEqual([]);

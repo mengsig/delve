@@ -73,9 +73,10 @@ export class TutorSession {
     return active.result;
   }
 
-  retry(id: string): Promise<ReaderLesson> {
+  retry(id: string, provider: TutorContract['tutor:retry']['request']['provider']): Promise<ReaderLesson> {
     const { job, token } = this.requireJob(id);
     if (job.phase !== 'running' || this.active(job)) throw new DomainError('TUTOR_BUSY', 'This tutor request is no longer interrupted.');
+    if (provider !== job.request.provider) throw new DomainError('PROVIDER_CHANGED', 'The tutor changed. Review the request for the new tutor.');
     return this.run({ ...job.request, token, requestId: id });
   }
 

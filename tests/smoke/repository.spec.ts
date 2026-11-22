@@ -216,7 +216,7 @@ test('shows readable commits and names the missing parent in History', async ({ 
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.getByRole('button', { name: 'Changes', exact: true }).click();
   const history = page.getByRole('region', { name: 'History', exact: true });
-  await expect(history.getByRole('option')).toHaveText([/Explain retry limits/, /Add dispatch retries/]);
+  await expect(history.getByRole('listbox').getByRole('option')).toHaveText([/Explain retry limits/, /Add dispatch retries/]);
   await expect(history).toContainText(`Git commit ${missing} is missing or damaged.`);
   await expect(history).toContainText('git fsck');
   await expect(history).not.toContainText('No commits or pull requests are available');

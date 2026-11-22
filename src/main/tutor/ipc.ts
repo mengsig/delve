@@ -14,7 +14,7 @@ export const tutorSchemas = {
   'tutor:cancel': jobAddress,
   'tutor:jobs': z.null(),
   'tutor:wait': jobAddress,
-  'tutor:retry': jobAddress,
+  'tutor:retry': jobAddress.extend({ provider: tutorRequest.shape.provider }),
   'tutor:dismiss': jobAddress,
 };
 
@@ -26,7 +26,7 @@ export function tutorHandlers(db: Db, session: TutorSession): Pick<IpcHandlers, 
     'tutor:cancel': ({ requestId }) => session.cancel(requestId),
     'tutor:jobs': () => session.jobs(),
     'tutor:wait': ({ requestId }) => session.wait(requestId),
-    'tutor:retry': ({ requestId }) => session.retry(requestId),
+    'tutor:retry': ({ requestId, provider }) => session.retry(requestId, provider),
     'tutor:dismiss': ({ requestId }) => session.dismiss(requestId),
   };
 }
