@@ -1,6 +1,7 @@
-import { useEffect, useEffectEvent, useRef } from 'react';
+import { useContext, useEffect, useEffectEvent, useRef } from 'react';
 import { CHECK_ANSWER_LIMIT } from '../../../shared/lesson-blocks';
 import type { ActiveMasteryCheck, TutorIntent } from '../../../shared/reader';
+import { EnvironmentActivity } from '../lab/EnvironmentActivity';
 import type { LessonDraft } from './TutorJobs';
 
 interface Props {
@@ -14,13 +15,15 @@ interface Props {
 }
 
 export function AnswerCheck({ check, revision, draft, change, disabled, submit, preview }: Props) {
+  const activity = useContext(EnvironmentActivity);
   const options = check.options ?? [];
   const group = useRef<HTMLDivElement>(null);
   const selected = draft.choice;
   function send(exact = false) {
     if (disabled || selected === undefined || options[selected] === undefined) return;
-    const reasoning = draft.reasoning.trim();
-    submit({ kind: 'answer', revision, answer: selected, ...(reasoning && { reasoning }) }, exact);
+    activity?.onRead();
+    const reasoning = draft.reasoning;
+    submit({ kind: 'answer', revision, answer: selected, ...(reasoning.trim() && { reasoning }) }, exact);
   }
   const hotkey = useEffectEvent((event: KeyboardEvent) => {
     if (disabled || event.defaultPrevented || event.isComposing || event.repeat ||
@@ -33,7 +36,7 @@ export function AnswerCheck({ check, revision, draft, change, disabled, submit, 
       event.preventDefault();
       change({ choice: index });
       group.current?.querySelectorAll('button')[index]?.focus({ preventScroll: true });
-    } else if (event.key === 'Enter' && target instanceof Node && group.current?.contains(target)) {
+    } else if (event.key === 'Enter' && selected !== undefined && target instanceof Node && group.current?.contains(target)) {
       event.preventDefault();
       send();
     }

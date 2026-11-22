@@ -80,7 +80,7 @@ export function publicMastery(mastery: Mastery): ReaderMastery {
   assert.equal(stage === 'checking', check !== null);
   assert.ok(correctAnswers <= attempts && attempts <= maxAttempts);
   return { stage, revision, attempts, maxAttempts, correctAnswers, requiredCorrectAnswers,
-    appliedPassed: mastery.applied || stage === 'understood', needsAdaptation: check !== null && needsCheckAdaptation(check),
+    appliedPassed: mastery.applied, needsAdaptation: check !== null && needsCheckAdaptation(check),
     activeCheck: check && { kind: isApplication(check) ? 'applied' : 'recognition', prompt: check.prompt,
       ...(check.options ? { options: check.options } : {}) } };
 }

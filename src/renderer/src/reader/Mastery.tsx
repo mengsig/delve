@@ -17,13 +17,16 @@ export function LessonRail({ props, mastery, title }: { props: Props; mastery: M
   const mastered = mastery.stage === 'understood';
   return <aside className="lesson-rail" aria-label="Lesson progress">
     <header className="current-lesson"><span className="plate">Current lesson</span><strong>{title}</strong>
-      <Meter label="Correct checks in a row" value={mastery.correctAnswers} max={mastery.requiredCorrectAnswers} />
+      <Meter label="Correct checks in a row" value={Math.min(mastery.correctAnswers, mastery.requiredCorrectAnswers)} max={mastery.requiredCorrectAnswers}
+        detail={mastery.correctAnswers > mastery.requiredCorrectAnswers ? mastery.correctAnswers + ' in a row · target ' + mastery.requiredCorrectAnswers : undefined} />
       <small>{mastered ? '✓ Verified mastery' : mastery.appliedPassed ? '✓ Application passed' : 'Includes one application check'}</small>
     </header>
     <div className="path-heading"><b>Your learning path</b><span>{progress.available ? progress.mastered + ' / ' + progress.total + ' mastered' : 'Progress unavailable'}</span></div>
     <ul className="path-concepts" aria-label="Concept mastery">
-      {progress.concepts.filter(c => c.onAtlas || c.id === props.conceptId).map(c =>
-        <li key={c.id} className={c.id === current?.id ? 'active-concept' : undefined}>
+      {progress.available && progress.concepts.filter(c => c.onAtlas || c.id === props.conceptId).map(c =>
+        <li key={c.id} className={c.id === current?.id ? 'active-concept' : undefined} data-state={c.state}>
+          <span className="path-symbol" aria-hidden="true">{c.state === 'mastered' ? <Icon name="check" /> :
+            c.id === current?.id ? '◎' : c.state === 'locked' ? <Icon name="lock" /> : c.state === 'in-progress' ? '◒' : ''}</span>
           <ConceptMeter concept={c} current={c.id === current?.id} /></li>)}
     </ul>
     <button className="progress-link" onClick={props.onProgress}><Icon name="layer" /> Progress at {props.depth} depth</button>
@@ -32,12 +35,12 @@ export function LessonRail({ props, mastery, title }: { props: Props; mastery: M
 
 export function Completion({ props, mastery, tutor, title }: { props: Props; mastery: Mastery; tutor: LessonTutor; title: string }) {
   const progress = useMemo(() => buildLearningProgress(props.graph, props.depth), [props.graph, props.depth]);
-  const next = eligibleNext(progress, props.conceptId);
+  const next = progress.available && eligibleNext(progress, props.conceptId);
   return <section className="lesson-completion" aria-label="Lesson complete">
     <span className="mastery-seal" aria-hidden="true"><Icon name="check" /></span>
     <div><span className="plate">Lesson complete</span><h3>{title} mastered</h3>
       <p>{mastery.appliedPassed ? 'Your correct checks included a new situation.' : 'Verified at ' + props.depth + ' depth.'}</p></div>
-    {next ? <LessonStart workspaceId={props.workspace.id} conceptId={next.id} depth={props.depth} provider={tutor.provider}
+    {next ? <LessonStart workspaceId={props.workspace.id} conceptId={next.id} depth={props.depth} provider={tutor.provider} signedIn={tutor.signedIn}
       title={next.title} open={props.onLesson} /> : <button className="primary-btn" onClick={props.onProgress}>View progress</button>}
   </section>;
 }

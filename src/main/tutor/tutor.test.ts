@@ -446,6 +446,7 @@ it('binds reasons and keyed verdicts to exact previews and gives the CLI the app
     intent: { kind: 'answer', revision: lesson.mastery.revision!, answer: 1, reasoning } });
   const inputs = [answer('  The /24 is narrower. 網\n'), answer('1 means the packet takes the newest route.'), answer()];
   const [approved, different, empty] = inputs.map(input => prepareTurn(db, input));
+  expect(prepareTurn(db, answer('  ')).response?.reasoning).toBeUndefined();
   expect(new Set([approved!.preview.token, different!.preview.token, empty!.preview.token]).size).toBe(3);
   expect(() => session.run({ ...inputs[1]!, token: approved!.preview.token, requestId: randomUUID() })).toThrow(/changed/);
   for (const turn of [different!, empty!]) {

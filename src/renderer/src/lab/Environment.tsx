@@ -24,19 +24,25 @@ function latestInstrument(body: ReaderLesson): string | null {
   return index >= 0 ? blockKey(null, index) : null;
 }
 
-export function LatestInstrumentLink({ body, onOpen }: { body: ReaderLesson; onOpen: () => void }) {
+export function LatestInstrumentLink({ body, onOpen, compact }: { body: ReaderLesson; onOpen?: () => void; compact?: boolean }) {
   const scope = useContext(LabContext);
   const latest = latestInstrument(body);
   if (!scope || !latest) return null;
-  return <button onClick={() => {
-    onOpen();
+  return <button className={compact ? 'jump-bench' : undefined} onClick={() => {
+    onOpen?.();
     scope.select(latest);
     requestAnimationFrame(() => {
       const chapter = document.getElementById('instrument');
-      chapter?.focus({ preventScroll: true });
-      chapter?.scrollIntoView({ block: 'start', behavior: 'instant' });
+      if (chapter) revealInstrument(chapter);
     });
-  }}>Open latest Lab bench</button>;
+  }}>{compact ? 'Jump to instrument' : 'Open latest Lab bench'}</button>;
+}
+
+function revealInstrument(chapter: HTMLElement) {
+  const details = chapter.closest('details');
+  if (details) details.open = true;
+  chapter.focus({ preventScroll: true });
+  chapter.scrollIntoView({ block: 'start', behavior: 'instant' });
 }
 
 function instrumentExists(body: ReaderLesson, key: string) {
@@ -121,8 +127,7 @@ export function Environment({ block, messageId, blockIndex }: { block: Block; me
   const resume = active && activity?.resumeKey === key;
   useEffect(() => {
     if (!resume || !chapter.current) return;
-    chapter.current.focus({ preventScroll: true });
-    chapter.current.scrollIntoView({ block: 'start', behavior: 'instant' });
+    revealInstrument(chapter.current);
   }, [resume]);
   return <section ref={chapter} className="chapter lab-chapter" tabIndex={-1} id={active ? 'instrument' : undefined}
     onFocus={event => { if (active && event.target === chapter.current) activity?.onUse(key, heading); }}>

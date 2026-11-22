@@ -1,6 +1,7 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useContext, useRef, useState } from 'react';
 import type { LessonAddress, ReaderLesson } from '../../../shared/reader';
-import { LessonInstruments } from '../lab/Environment';
+import { EnvironmentActivity } from '../lab/EnvironmentActivity';
+import { LatestInstrumentLink, LessonInstruments } from '../lab/Environment';
 import { call } from '../api';
 import { Icon } from '../Icon';
 import { errorMessage, useRead } from '../useRead';
@@ -32,9 +33,14 @@ function Thread({ body, tutor, scope }: { body: ReaderLesson; tutor: LessonTutor
   const pendingText = intent?.kind === 'ask' ? intent.text : selection && intent?.kind === 'answer' ? [selection, intent.reasoning].filter(Boolean).join('\n') : '';
   return <>
     <header className="thread-heading"><span className="tutor-mark"><Icon name="layer" /></span>
-      <div><b>Delve tutor</b><small>Lesson conversation</small></div><small className="local-status">● &nbsp;Saved locally</small>
+      <div><b>Delve tutor</b><small>Lesson conversation</small></div><LatestInstrumentLink body={body} compact /><small className="local-status">● &nbsp;Saved locally</small>
     </header>
     <Transcript scope={scope} lastMessage={body.messages.at(-1)?.id} pendingTurn={pending?.id}>
+      {body.invalidLatest && body.revision && <section className="reader-notice" role="status">
+        <p>The newest lesson could not be displayed. You can continue with the last readable version.</p>
+        <button disabled={tutor.pending || !tutor.signedIn} onClick={() => tutor.prepare({ kind: 'teach' })}>Retry lesson generation</button>
+        {tutor.provider !== 'demo' && <button disabled={tutor.pending || !tutor.signedIn} onClick={() => tutor.prepare({ kind: 'teach' }, true)}>Preview lesson request</button>}
+      </section>}
       {body.blocks.length > 0 && <section id="opening-lesson"><span className="message-author">Delve tutor</span>
         <LessonBlocks blocks={body.blocks} /></section>}
       {body.mastery.needsAdaptation && <section><strong>Saved question</strong><p>{body.mastery.activeCheck?.prompt}</p>
@@ -79,7 +85,12 @@ function Session({ props, initial, title, address, reload }: {
     if (tutor.job?.phase === 'failed') dismiss(tutor.job);
     reload();
   }
-  return <div className="field-lesson">
+  const activity = useContext(EnvironmentActivity);
+  const lessonActivity = activity && { ...activity, onUse: (key: string, name: string) => {
+    if (draft.mode !== 'ask') change({ mode: 'ask' });
+    activity.onUse(key, name);
+  } };
+  return <div className="field-lesson"><EnvironmentActivity.Provider value={lessonActivity}>
     <LessonInstruments address={address} body={body} onLesson={commit}>
       <LessonHeading props={props} title={title}><LessonNotes props={props} body={body} tutor={tutor} busy={skip.busy || tutor.pending}
         skip={skip.skip} review={() => body.mastery.revision && tutor.prepare({ kind: 'review', revision: body.mastery.revision })} /></LessonHeading>
@@ -89,7 +100,7 @@ function Session({ props, initial, title, address, reload }: {
         <ResponseDock {...{ props, body, title, tutor, draft, change, opening }} reload={refresh} busy={skip.busy} />
       </article>
       <LessonRail props={props} title={title} mastery={body.mastery} /></div>
-    </LessonInstruments>
+    </LessonInstruments></EnvironmentActivity.Provider>
   </div>;
 }
 

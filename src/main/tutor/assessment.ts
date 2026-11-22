@@ -29,7 +29,7 @@ export function checkResponse(mastery: Mastery, intent: Extract<TutorIntent, { k
   }
   const expected = check.options[check.expected];
   assert.ok(expected !== undefined, 'a validated choice has a reference answer');
-  return { prompt: check.prompt, selectedIndex, answer: check.options[selectedIndex], reasoning: intent.reasoning,
+  return { prompt: check.prompt, selectedIndex, answer: check.options[selectedIndex], reasoning: intent.reasoning?.trim() ? intent.reasoning : undefined,
     reference: [expected], correct: selectedIndex === check.expected };
 }
 

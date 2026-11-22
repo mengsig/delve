@@ -4,6 +4,7 @@ import type { WorkspaceGraph } from '../../shared/graph';
 import type { LessonAddress, ReaderLesson } from '../../shared/reader';
 import { call } from './api';
 import { buildLearningProgress, type CommittedCheckProgress, type StudyGraph } from './progress/model';
+import { useBackgroundTutorCompletion } from './reader/TutorJobs';
 import { useRepositoryCompletion } from './repository/MapJobs';
 import { useRead } from './useRead';
 
@@ -20,6 +21,7 @@ export function useWorkspaceStudy(workspaceId: string | undefined, depth: Depth)
   const [committed, setCommitted] = useState<{ graph: WorkspaceGraph; depth: Depth; checks: Map<number, CommittedCheckProgress> }>();
   const current = useRef({ lastReady, workspaceId, depth });
   useLayoutEffect(() => { current.current = { lastReady, workspaceId, depth }; }, [lastReady, workspaceId, depth]);
+  useBackgroundTutorCompletion(workspaceId, depth, refresh);
   useRepositoryCompletion(workspaceId ?? '', refresh);
   useRepositoryCompletion(workspaceId ?? '', head.refresh);
   useEffect(() => {
@@ -47,7 +49,7 @@ export function useWorkspaceStudy(workspaceId: string | undefined, depth: Depth)
       ? { ...durable, committedChecks: committed.checks } : durable;
   }, [lastReady, committed, depth, result.status]);
   const progress = useMemo(() => graph && buildLearningProgress(graph, depth), [graph, depth]);
-  return { graph, progress, commit, refresh, head: head.result.status === 'ready' ? head.result.value : undefined,
+  return { graph, progress, commit, refresh, head: head.result.status === 'ready' ? head.result.value : head.result.status === 'error' ? { kind: 'unavailable' as const } : undefined,
     error: result.status === 'error' ? result.message : undefined };
 }
 

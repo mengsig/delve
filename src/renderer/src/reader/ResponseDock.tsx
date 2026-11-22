@@ -9,7 +9,7 @@ import type { ReaderProps } from './ReaderHeader';
 
 interface Props {
   body: ReaderLesson;
-  props: ReaderProps & { conceptId: number; onBackToChange?: () => void };
+  props: ReaderProps & { conceptId: number; onBackToChange?: () => void; initialQuestion?: string };
   tutor: LessonTutor;
   opening: TutorIntent | null;
   title: string;
@@ -21,11 +21,11 @@ interface Props {
 
 function EmptyCheck({ body, tutor, opening }: Pick<Props, 'body' | 'tutor' | 'opening'>) {
   const adapt = body.mastery.needsAdaptation;
-  const label = adapt ? 'Prepare four choices' : body.invalidLatest ? 'Retry lesson generation' : 'Start lesson';
+  const label = adapt ? 'Prepare four choices' : body.invalidLatest && !body.revision ? 'Retry lesson generation' : 'Start lesson';
   return <section className="empty-check">
     <strong>{adapt ? 'Update this saved check' : 'Your first check will appear here.'}</strong>
     {adapt && <p>Your original question is in the conversation. Prepare choices to continue this round.</p>}
-    {body.invalidLatest && <p>The newest lesson could not be displayed. Your saved material is still available.</p>}
+    {body.invalidLatest && !body.revision && <p>The stored lesson could not be displayed. Generate a new lesson to continue.</p>}
     <button disabled={!tutor.signedIn || tutor.pending} onClick={() => tutor.prepare(opening ?? { kind: 'teach' })}>{label}</button>
   </section>;
 }
@@ -34,7 +34,7 @@ function DockTabs({ draft, change, body }: Pick<Props, 'draft' | 'change' | 'bod
   const { attempts, maxAttempts, correctAnswers } = body.mastery;
   return <div className="dock-tools"><div className="dock-tabs" role="group" aria-label="Response mode">
     <button aria-pressed={draft.mode === 'answer'} onClick={() => change({ mode: 'answer' })}>Answer check</button>
-    <button aria-pressed={draft.mode === 'ask'} onClick={() => change({ mode: 'ask' })}>Ask tutor</button></div>
+    <button aria-pressed={draft.mode === 'ask'} onClick={() => { change({ mode: 'ask' }); requestAnimationFrame(() => document.getElementById('reader-question')?.focus({ preventScroll: true })); }}>Ask tutor</button></div>
     <span className="check-budget">{maxAttempts - attempts} tries left <b>↗ {correctAnswers} in a row</b></span>
   </div>;
 }
@@ -46,19 +46,27 @@ export function ResponseDock({ body, props, tutor, opening, title, draft, change
   const check = mastery.activeCheck;
   const consent = Boolean(tutor.review.preview && !tutor.review.preview.exact);
   const dock = useRef<HTMLElement>(null);
-  const restore = useRef(false);
+  const restore = useRef('');
+  function rememberFocus() {
+    const target = document.activeElement;
+    if (target instanceof HTMLElement && dock.current?.contains(target)) {
+      restore.current = target.id || 'first-choice';
+    }
+  }
   const held = tutor.pending || consent;
   useLayoutEffect(() => {
     if (!held && restore.current && document.activeElement === document.body) {
-      dock.current?.querySelector<HTMLElement>('#check-reason, #reader-question, button:not(:disabled)')?.focus({ preventScroll: true });
+      const target = document.getElementById(restore.current) ??
+        dock.current?.querySelector<HTMLElement>('.answer-options button, .lesson-completion .primary-btn, button:not(:disabled)');
+      target?.focus({ preventScroll: true });
     }
-    if (!held) restore.current = false;
+    if (!held) restore.current = '';
   }, [held]);
-  const composer = <Composer tutor={tutor} draft={draft.question} setDraft={question => change({ question })}
-    focusOnOpen={draft.mode === 'ask' && !held} />;
-  return <section className="response-dock" ref={dock} aria-label="Lesson response" onSubmitCapture={() => { restore.current = true; }}>
+  const composer = <Composer tutor={tutor} draft={draft.question} setDraft={question => change({ question })} secondary={done || paused} focusOnOpen={Boolean(props.initialQuestion) && !held} />;
+  return <section className="response-dock" ref={dock} aria-label="Lesson response" onSubmitCapture={rememberFocus}>
     <TutorTurnStatus tutor={tutor} onBackground={props.onBackToChange ?? props.onBack} reload={reload} />
     <TutorReview tutor={tutor} />
+    {tutor.running && composer}
     {!tutor.signedIn && !tutor.detection.checking && <TutorSettings tutor={tutor} />}
     {!held && <>
       {done && <Completion props={props} mastery={mastery} tutor={tutor} title={title} />}
@@ -67,7 +75,7 @@ export function ResponseDock({ body, props, tutor, opening, title, draft, change
       {done || paused || draft.mode === 'ask' ? composer :
         check?.options && mastery.revision && !mastery.needsAdaptation ?
           <AnswerCheck check={check} revision={mastery.revision} draft={draft} change={change}
-            disabled={busy || !tutor.signedIn || Boolean(tutor.review.preview)} preview={!props.graph.demo} submit={tutor.prepare} /> :
+            disabled={busy || !tutor.signedIn || Boolean(tutor.review.preview)} preview={!props.graph.demo} submit={(intent, exact) => { rememberFocus(); tutor.prepare(intent, exact); }} /> :
           <EmptyCheck body={body} opening={opening} tutor={tutor} />}
     </>}
   </section>;

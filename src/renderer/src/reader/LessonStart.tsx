@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useEffectEvent, useRef } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { LessonAddress, ReaderLesson, TutorIntent, TutorRequest } from '../../../shared/reader';
 import { call } from '../api';
 import { useRead } from '../useRead';
@@ -8,8 +8,8 @@ import { lessonKey, useTutorJobs } from './TutorJobs';
 import { ExactRequest, PreviewMetadata } from './TutorPreview';
 
 export function openingIntent(body: ReaderLesson): TutorIntent | null {
-  if (body.invalidLatest) return null;
   if (body.mastery.needsAdaptation && body.mastery.revision) return { kind: 'adapt', revision: body.mastery.revision };
+  if (body.invalidLatest) return null;
   if (!body.reused && !body.revision && !body.blocks.length) return { kind: 'teach' };
   if (body.mastery.stage === 'teaching' && body.mastery.revision) return { kind: 'review', revision: body.mastery.revision };
   return null;
@@ -41,21 +41,23 @@ export function useOpenLesson(body: ReaderLesson, tutor: LessonTutor, review = f
 
 interface StartProps extends LessonAddress {
   title: string;
+  signedIn: boolean;
   provider: TutorRequest['provider'];
   open: (id: number) => void;
 }
 
-export function LessonStart({ title, open, workspaceId, conceptId, depth, provider }: StartProps) {
+export function LessonStart({ title, open, workspaceId, conceptId, depth, provider, signedIn }: StartProps) {
   const queue = useTutorJobs();
   const query = useCallback(async () => {
     const address = { workspaceId, conceptId, depth };
     const lesson = await call('reader:lesson', address);
     const intent = openingIntent(lesson);
-    if (!intent) return null;
+    if (!intent || !signedIn) return null;
     const request = { ...address, provider, intent };
     return { request, data: await call('tutor:preview', request) };
-  }, [workspaceId, conceptId, depth, provider]);
+  }, [workspaceId, conceptId, depth, provider, signedIn]);
   const { result, refresh } = useRead(query);
+  const [, checkPermission] = useState(0);
   if (result.status === 'error') return <div role="alert">{result.message} <button onClick={refresh}>Retry next lesson</button></div>;
   const prepared = result.status === 'ready' && result.value;
   const running = queue.jobs.get(lessonKey({ workspaceId, conceptId, depth }));
@@ -63,7 +65,11 @@ export function LessonStart({ title, open, workspaceId, conceptId, depth, provid
   const consent = prepared && !active && provider !== 'demo' && !hasTutorApproval(workspaceId, provider);
   function start() {
     if (result.status !== 'ready') return;
-    if (prepared && !active) queue.start({ request: prepared.request, token: prepared.data.token, title });
+    if (prepared && !active && provider !== 'demo' && !consent && !hasTutorApproval(workspaceId, provider)) {
+      checkPermission(previous => previous + 1);
+      return;
+    }
+    if (signedIn && prepared && !active) queue.start({ request: prepared.request, token: prepared.data.token, title });
     open(conceptId);
   }
   return <div className="next-start">

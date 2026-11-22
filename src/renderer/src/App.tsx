@@ -68,7 +68,7 @@ function useStudyDestinations(nav: DesktopNavigation) {
     onResume={() => void resume(last).catch(report)} />;
   const workspaceBar = nav.active && <WorkspaceBar workspaces={workspaces} activeId={nav.active.id}
     onSwitch={id => { if (id !== nav.list.activeId) void select(id).catch(report); }} />;
-  return { view, onView: changeView, remember, commands, continueActivity, workspaceBar };
+  return { view, onView: changeView, remember, last, commands, continueActivity, workspaceBar };
 }
 
 function DesktopJobs({ nav }: { nav: DesktopNavigation }) {
@@ -94,7 +94,11 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
   const main = useRef<HTMLElement>(null);
   const { active, route } = nav;
   const study = useWorkspaceStudy(active?.id, nav.depth);
-  const setup = route.screen === 'setup' || route.screen === 'first-run' || !active;
+  const firstRun = route.screen === 'first-run' || !active;
+  const setup = firstRun || route.screen === 'setup';
+  const last = destinations.last;
+  const lab = route.screen === 'lesson' && last?.kind === 'environment' && last.workspaceId === active?.id
+    && last.conceptId === route.conceptId && last.depth === nav.depth;
   useEffect(() => {
     if (!setup) main.current?.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -112,7 +116,7 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
   return <>
     <a className="skip-link" href="#workspace-page">Skip to workspace</a>
     <section className={route.screen === 'lesson' && !setup ? 'shell shell--lesson' : 'shell'} aria-label="Delve desktop">
-      <Header screen={route.screen} workspace={active} head={study.head} progress={study.progress} go={nav.openPrimary} openSwitcher={palette.show} />
+      <Header screen={route.screen} lab={lab} workspace={firstRun ? undefined : active} head={study.head} progress={study.progress} go={nav.openPrimary} openSwitcher={palette.show} />
       <main id="workspace-page" ref={main} tabIndex={-1} className="app">
         {nav.error && <div role="alert">{nav.error} <button onClick={palette.show}>Choose workspace</button> <button onClick={() => nav.setError('')}>Dismiss</button></div>}
         {nav.switching && <span className="workspace-wait" role="status">Opening workspace…</span>}

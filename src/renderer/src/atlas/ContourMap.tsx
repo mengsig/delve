@@ -6,6 +6,7 @@ import {
 import '@xyflow/react/dist/base.css';
 import type { Depth } from '../../../shared/domain';
 import { DEPTHS } from '../../../shared/domain';
+import { motionDuration } from '../design/motion';
 import { Terrain } from '../Terrain';
 import type { DemoPlate } from './demoAtlas';
 import { positions } from './layout';
@@ -31,10 +32,6 @@ type ConceptNode = Node<{
   status: string;
   onSelect: (id: number) => void;
 }, 'concept'>;
-
-function motionDuration() {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200;
-}
 
 function revealNode(button: HTMLButtonElement, id: number, flow: ReactFlowInstance<ConceptNode>) {
   if (!button.matches(':focus-visible')) return;

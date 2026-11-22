@@ -29,7 +29,7 @@ function useTutorPreview(start: (request: TutorRequest, token: string) => boolea
     try {
       const data = await call('tutor:preview', request);
       if (active.current !== id) return;
-      if (exact || !allowed) setPreview({ request, data, exact });
+      if (exact || !allowed || (request.provider !== 'demo' && !hasTutorApproval(request.workspaceId, request.provider))) setPreview({ request, data, exact });
       else if (!start(request, data.token)) setError('A tutor request is already running for this lesson.');
     } catch (cause) {
       if (active.current === id) {
@@ -96,7 +96,7 @@ export function useTutor(address: LessonAddress, title: string, demo: boolean, o
   const job = useAddressJob(address, onLesson);
   const detection = useProviderDetection(!demo);
   const { provider: detected, choose, cli: status } = useDetectedProvider(detection.statuses);
-  const provider = demo ? 'demo' : detected;
+  const provider: Provider = demo ? 'demo' : detected;
   const approval = useApproval(address, provider, () => update(version => version + 1));
   const start = (request: TutorRequest, token: string) => queue.start({ request, token, title });
   const review = useTutorPreview(start, lessonKey(address));

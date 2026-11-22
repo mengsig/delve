@@ -33,8 +33,8 @@ Next lesson is recommended only after mastery. After a skip, the learner can kee
 | --- | --- | --- |
 | Explore the map | Select a concept + Open lesson → same 2 actions | Terrain and the accessible Folio list share selection. The suggested concept opens in one click. The primary action stays visible on a 1280 × 800 Atlas and a 4K Atlas. |
 | Switch reading depth | 1 selection → 1 | Depth stays in the reader header. The source form puts the initial override in Advanced options. |
-| Continue a conversation | Type + submit → same | A new reply preserves the reader's scroll position. An active request can continue when leaving the lesson. Its in-app notice reopens the result in one click. |
-| Check understanding | Answer and submit, approve if prompted → same | Written and choice checks expose exact previews and a one-step approval. Progress shows the resulting evidence and recommendation. |
+| Continue a conversation | Type + submit → same | The transcript follows new turns near the bottom. Reading earlier messages holds position and reveals a New reply action. An active request can continue when leaving the lesson. Its in-app notice reopens the result in one click. |
+| Check understanding | Answer and submit, approve if prompted → same | New checks offer four choices and optional reasoning. Digits 1–4 select a choice outside the text fields. Exact previews and one-time approval are available in the answer dock. Progress shows the resulting evidence and recommendation. |
 | Practice in an environment | Jump to instrument in 1 → same | The composer leaves room for controls. Returning through Continue focuses the last instrument. Each opening starts a fresh practice session. Recorded observations and evidence persist. |
 | Review progress | Header in 1 → same | Empty records lead back to learning. Evidence retains its depth, originating workspace and reset action. |
 | Read more repository files | Atlas → file selection → preview → approve | File selection and provider settings collapse. Review the exact request or approve the selected snapshot. Empty and stale inventories give a reload action. |
@@ -47,7 +47,7 @@ The mockup's separate Atlas destination remains available through the persistent
 
 ## Shell spacing and scrolling
 
-The desktop shell starts 12px below the window edge, bringing its outer inset closer to the approved mockup. The long document views use a slim, theme-coloured draggable scrollbar thumb on a transparent track. This deliberately differs from the mockup so readers can see and change their position without a full-height grey rail. Native wheel, touchpad and keyboard scrolling remain available.
+The persistent header identifies the workspace, branch or source context, destination and current depth’s mastery. A lesson fits the window with a scrollable transcript, anchored answer dock and independently scrollable learning path. The long document views use a slim, theme-coloured draggable scrollbar thumb on a transparent track. This deliberately differs from the mockup so readers can see and change their position without a full-height grey rail. Native wheel, touchpad and keyboard scrolling remain available.
 
 ## Verification
 

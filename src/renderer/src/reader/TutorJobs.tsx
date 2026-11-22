@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { LessonAddress, ReaderLesson, TutorRequest } from '../../../shared/reader';
 import { call, IpcCallError } from '../api';
 import { errorMessage } from '../useRead';
@@ -93,6 +93,12 @@ function useQueue() {
     dismiss: (job: TutorJob) => { if (!running.current.has(job.key)) replace(job); } };
 }
 
+export interface ReadingPosition {
+  top: number;
+  following: boolean;
+  seen?: number;
+}
+
 export interface LessonDraft {
   mode: 'answer' | 'ask';
   question: string;
@@ -103,7 +109,7 @@ export interface LessonDraft {
 
 function useTutorActivity() {
   const queue = useQueue();
-  const [positions] = useState(() => new Map<string, number>());
+  const [positions] = useState(() => new Map<string, ReadingPosition>());
   const [drafts] = useState(() => new Map<string, LessonDraft>());
   const [visible, setVisible] = useState<string>();
   const [openError, setOpenError] = useState('');
@@ -114,6 +120,17 @@ const TutorJobsContext = createContext<ReturnType<typeof useTutorActivity> | nul
 
 export function TutorJobsProvider({ children }: { children: ReactNode }) {
   return <TutorJobsContext.Provider value={useTutorActivity()}>{children}</TutorJobsContext.Provider>;
+}
+
+export function useBackgroundTutorCompletion(workspaceId: string | undefined, depth: LessonAddress['depth'], refresh: () => void) {
+  const { jobs, visible } = useTutorJobs();
+  const previous = useRef(new Set<string>());
+  useEffect(() => {
+    const ready = new Set([...jobs.values()].filter(job => job.phase === 'ready' && job.key !== visible
+      && job.request.workspaceId === workspaceId && job.request.depth === depth).map(job => job.id));
+    if ([...ready].some(id => !previous.current.has(id))) refresh();
+    previous.current = ready;
+  }, [jobs, visible, workspaceId, depth, refresh]);
 }
 
 export function useTutorJobs() {

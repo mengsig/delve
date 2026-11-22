@@ -32,7 +32,7 @@ function reuseOpening(db: Db, turn: PreparedTurn): boolean {
 function gradeFeedback(correct: boolean, stage: 'understood' | 'review' | 'checking') {
   const verdict = correct ? 'Correct.' : 'That answer was incorrect.';
   if (stage === 'understood') return verdict + ' You demonstrated understanding at this depth.';
-  if (stage === 'review') return verdict + ' This round is complete. Review the lesson or skip the remaining checks.';
+  if (stage === 'review') return verdict + ' This round is complete. Start a fresh practice round when you are ready.';
   return verdict + ' Try a fresh example to show how the rule applies.';
 }
 

@@ -11,12 +11,16 @@ export function LessonBlocks({ blocks }: { blocks: LessonBlock[] }) {
 
 function Message({ message }: { message: ReaderMessage }) {
   const label = message.role === 'learner' ? 'You' : message.role === 'tutor' ? 'Delve tutor' : 'Delve';
+  const teaching = message.blocks?.length ? <div className="lesson-blocks">{message.blocks.map((block, index) =>
+    block.type !== 'check' && <TeachingBlock key={index} block={block} blockIndex={index} messageId={message.id} />)}</div> : null;
+  const graded = message.correct !== undefined;
   return <div className={'reader-message reader-message-' + message.role}>
     <span className="eyebrow">{label}</span>
-    {message.text && <p>{message.text}</p>}
-    {message.blocks && <div className="lesson-blocks">{message.blocks.map((block, index) =>
-      block.type !== 'check' && <TeachingBlock key={index} block={block} blockIndex={index} messageId={message.id} />)}</div>}
+    {message.text && !graded && <p>{message.text}</p>}
     {message.observation && <p className="reader-observation">{message.observation}</p>}
+    {message.reasoningFeedback && <p>{message.reasoningFeedback}</p>}
+    {graded && teaching ? <details className="reply-details"><summary>Explore the explanation</summary>
+      {teaching}</details> : teaching}
     {message.correct !== undefined && <span className="check-result" data-correct={message.correct}>
       {message.correct ? '✓ Correct check' : '↺ Correction'}</span>}
   </div>;
@@ -31,8 +35,8 @@ export function Conversation({ messages, earlierMessages }: { messages: ReaderMe
   </section>;
 }
 
-export function Composer({ tutor, draft, setDraft, focusOnOpen }: {
-  tutor: ReturnType<typeof useTutor>; draft: string; setDraft: (text: string) => void; focusOnOpen?: boolean;
+export function Composer({ tutor, draft, setDraft, focusOnOpen, secondary = false }: {
+  tutor: ReturnType<typeof useTutor>; draft: string; setDraft: (text: string) => void; focusOnOpen?: boolean; secondary?: boolean;
 }) {
   const input = useRef<HTMLTextAreaElement>(null);
   const activity = useContext(EnvironmentActivity);
@@ -57,7 +61,7 @@ export function Composer({ tutor, draft, setDraft, focusOnOpen }: {
       <div className="actions">
         {tutor.provider !== 'demo' && draft.trim() && <button type="button" disabled={tutor.pending || !tutor.signedIn}
           onClick={() => tutor.prepare({ kind: 'ask', text: draft.trim() }, true)}>Preview</button>}
-        <button type="submit" className="primary-btn" disabled={!draft.trim() || tutor.pending || !tutor.signedIn}>Ask question</button>
+        <button type="submit" className={secondary ? undefined : "primary-btn"} disabled={!draft.trim() || tutor.pending || !tutor.signedIn}>Ask question</button>
       </div>
     </div>
   </form>;
