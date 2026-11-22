@@ -1,10 +1,24 @@
 import assert from 'node:assert/strict';
 import type { DatabaseSync } from 'node:sqlite';
+import { normalizedConceptName, portableAlias } from './portable-identity';
 
 export interface Migration {
   version: number;
   name: string;
   sql: string;
+  registerFunctions?: (db: DatabaseSync) => void;
+}
+
+function registerPortableIdentity(db: DatabaseSync): void {
+  db.function('delve_portable_alias', { deterministic: true, directOnly: true }, (key, title) => {
+    assert.equal(typeof key, 'string');
+    assert.equal(typeof title, 'string');
+    return portableAlias(String(key), String(title)) ?? null;
+  });
+  db.function('delve_normalized_concept', { deterministic: true, directOnly: true }, text => {
+    assert.ok(typeof text === 'string');
+    return normalizedConceptName(text);
+  });
 }
 
 const INITIAL_SCHEMA = `
@@ -223,6 +237,7 @@ export const MIGRATIONS: readonly Migration[] = [
   {
     version: 7,
     name: 'link duplicate repository concepts to portable identities',
+    registerFunctions: registerPortableIdentity,
     sql: `CREATE TABLE concept_identity_links (
       legacy_concept_id INTEGER PRIMARY KEY REFERENCES concepts ON DELETE CASCADE,
       portable_concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
@@ -239,34 +254,53 @@ export const MIGRATIONS: readonly Migration[] = [
       recorded_at TEXT NOT NULL, mastery_verified INTEGER NOT NULL
     );
     CREATE TEMP TABLE migration_candidates AS
-    SELECT c.id, c.workspace_id, substr(c.key, length('ws/' || c.workspace_id || '/') + 1) AS general_key,
-      lower(trim(c.title)) AS normalized_title
+    SELECT id, workspace_id, coalesce(delve_portable_alias(local_key, title), local_key) AS general_key,
+      coalesce(delve_portable_alias('', title), delve_normalized_concept(title)) AS normalized_title,
+      lower(trim(summary)) AS normalized_summary, delve_portable_alias('', title) AS known_alias
+    FROM (SELECT c.*, substr(c.key, length('ws/' || c.workspace_id || '/') + 1) AS local_key
     FROM concepts c JOIN workspaces w ON w.id = c.workspace_id
     WHERE c.portable = 0 AND w.kind <> 'topic' AND w.source NOT LIKE 'Demo:%'
       AND substr(c.key, 1, length('ws/' || c.workspace_id || '/')) = 'ws/' || c.workspace_id || '/'
       AND substr(c.key, length('ws/' || c.workspace_id || '/') + 1) <> ''
       AND substr(c.key, length('ws/' || c.workspace_id || '/') + 1) NOT LIKE 'change/%'
       AND substr(c.key, length('ws/' || c.workspace_id || '/') + 1) NOT LIKE 'Demo:%'
-      AND c.title NOT LIKE 'Demo:%';
-    DELETE FROM migration_candidates WHERE general_key NOT IN (
-      SELECT general_key FROM migration_candidates GROUP BY general_key
-      HAVING count(DISTINCT workspace_id) >= 2 AND count(DISTINCT normalized_title) = 1
-    ) OR EXISTS (
-      SELECT 1 FROM concepts existing WHERE existing.key = migration_candidates.general_key
-        AND (existing.portable <> 1 OR lower(trim(existing.title)) <> migration_candidates.normalized_title)
+      AND c.title NOT LIKE 'Demo:%');
+    CREATE TEMP TABLE migration_portable AS
+    SELECT id, coalesce(delve_portable_alias(key, title), key) AS general_key,
+      coalesce(delve_portable_alias('', title), delve_normalized_concept(title)) AS normalized_title
+    FROM concepts WHERE portable = 1 AND key NOT LIKE 'Demo:%';
+    CREATE INDEX migration_portable_key ON migration_portable(general_key);
+    CREATE TEMP TABLE migration_groups AS
+    SELECT general_key, min(id) AS sample_id, min(normalized_title) AS normalized_title,
+      count(DISTINCT workspace_id) AS workspace_count,
+      (count(known_alias) = count(*) OR (count(DISTINCT normalized_summary) = 1 AND min(normalized_summary) <> '')) AS corroborated
+    FROM migration_candidates
+    GROUP BY general_key HAVING count(DISTINCT normalized_title) = 1 AND count(DISTINCT workspace_id) = count(*);
+    ALTER TABLE migration_groups ADD COLUMN portable_id INTEGER;
+    UPDATE migration_groups AS groups SET portable_id = (
+      SELECT CASE WHEN count(*) = 1 AND min(p.normalized_title) = groups.normalized_title THEN min(p.id) END
+      FROM migration_portable p WHERE p.general_key = groups.general_key
+    );
+    DELETE FROM migration_groups WHERE portable_id IS NULL AND (
+      workspace_count < 2 OR NOT corroborated
+      OR EXISTS (SELECT 1 FROM migration_portable p WHERE p.general_key = migration_groups.general_key)
+      OR EXISTS (SELECT 1 FROM concepts c WHERE c.key = migration_groups.general_key)
     );
     INSERT INTO concepts (key, title, summary, portable, workspace_id, created_at, updated_at)
-    SELECT m.general_key, c.title, c.summary, 1, NULL, c.created_at, c.updated_at
-    FROM migration_candidates m JOIN concepts c ON c.id = m.id
-    WHERE m.id = (SELECT min(other.id) FROM migration_candidates other WHERE other.general_key = m.general_key)
-      AND NOT EXISTS (SELECT 1 FROM concepts existing WHERE existing.key = m.general_key);
+    SELECT g.general_key, c.title, c.summary, 1, NULL, c.created_at, c.updated_at
+    FROM migration_groups g JOIN concepts c ON c.id = g.sample_id WHERE g.portable_id IS NULL;
+    UPDATE migration_groups SET portable_id = (SELECT c.id FROM concepts c WHERE c.key = migration_groups.general_key) WHERE portable_id IS NULL;
     INSERT INTO concept_identity_links (legacy_concept_id, portable_concept_id)
-    SELECT m.id, c.id FROM migration_candidates m JOIN concepts c ON c.key = m.general_key AND c.portable = 1;
+    SELECT m.id, g.portable_id FROM migration_candidates m JOIN migration_groups g ON g.general_key = m.general_key;
     INSERT INTO workspace_concepts (workspace_id, concept_id, on_atlas)
     SELECT wc.workspace_id, l.portable_concept_id, max(wc.on_atlas)
     FROM workspace_concepts wc JOIN concept_identity_links l ON l.legacy_concept_id = wc.concept_id
     GROUP BY wc.workspace_id, l.portable_concept_id
     ON CONFLICT (workspace_id, concept_id) DO UPDATE SET on_atlas = max(on_atlas, excluded.on_atlas);
+    INSERT INTO snapshot_concepts (snapshot_id, concept_id)
+    SELECT DISTINCT sc.snapshot_id, l.portable_concept_id FROM snapshot_concepts sc
+    JOIN concept_identity_links l ON l.legacy_concept_id = sc.concept_id
+    WHERE true ON CONFLICT (snapshot_id, concept_id) DO NOTHING;
     UPDATE workspace_concepts SET on_atlas = 0 WHERE concept_id IN (SELECT legacy_concept_id FROM concept_identity_links);
     INSERT INTO migrated_evidence_archive (original_evidence_id, concept_id, portable_concept_id, depth, status,
       source, note, workspace_id, snapshot_id, revision, recorded_at, mastery_verified)
@@ -286,7 +320,9 @@ export const MIGRATIONS: readonly Migration[] = [
     ON CONFLICT (concept_id, depth) DO UPDATE SET status = excluded.status, source = excluded.source,
       note = excluded.note, workspace_id = excluded.workspace_id, snapshot_id = excluded.snapshot_id,
       revision = excluded.revision, recorded_at = excluded.recorded_at, mastery_verified = excluded.mastery_verified;
-    DROP TABLE migration_candidates;`,
+    DROP TABLE migration_candidates;
+    DROP TABLE migration_portable;
+    DROP TABLE migration_groups;`,
   },
 ];
 
@@ -314,6 +350,7 @@ export function migrate(db: DatabaseSync, migrations: readonly Migration[] = MIG
   for (const migration of migrations.slice(current)) {
     db.exec('BEGIN IMMEDIATE');
     try {
+      migration.registerFunctions?.(db);
       db.exec(migration.sql);
       db.exec(`PRAGMA user_version = ${migration.version}`);
       db.exec('COMMIT');

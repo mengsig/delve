@@ -317,6 +317,8 @@ it('regenerates an invalid latest opening and preserves the fallback if the retr
   session = new TutorSession(db, async () => { throw new Error('Provider unavailable'); });
   await expect(run(request.intent)).rejects.toThrow('Provider unavailable');
   expect(readLesson(db, request)).toMatchObject({ invalidLatest: true, revision: previous.revision });
+  recordEvidence(db, { ...request, status: 'demonstrated', source: 'check', masteryVerified: true });
+  expect(readLesson(db, request)).toMatchObject({ reused: true, invalidLatest: true });
   session = new TutorSession(db, async () => ({ ...opening, lesson: { ...opening.lesson, blocks: [{ ...explanation, heading: 'Revised explanation' }, applied] } }));
   expect(await run(request.intent)).toMatchObject({ invalidLatest: false, blocks: [{ heading: 'Revised explanation' }, { type: 'check' }] });
 });

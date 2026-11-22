@@ -36,11 +36,11 @@ export function checkResponse(mastery: Mastery, intent: Extract<TutorIntent, { k
 export function saveCheckEvidence(db: Db, context: LessonContext, response: ResponseToCheck, demonstrated: boolean): void {
   assert.ok(db.isTransaction);
   assert.ok(response.prompt.length > 0 && response.answer.length > 0);
-  const prior = listEvidence(db, context.conceptId).find(e => e.depth === context.depth);
+  const prior = listEvidence(db, context.canonicalConceptId).find(e => e.depth === context.depth);
   if (prior?.workspaceId && prior.workspaceId !== context.workspaceId && (prior.masteryVerified || !demonstrated)) return;
   if (prior?.status === 'demonstrated' && !demonstrated) return;
   recordEvidenceInTransaction(db, {
-    workspaceId: context.workspaceId, conceptId: context.conceptId, snapshotId: context.snapshotId ?? undefined, depth: context.depth,
+    workspaceId: context.workspaceId, conceptId: context.canonicalConceptId, snapshotId: context.snapshotId ?? undefined, depth: context.depth,
     status: demonstrated ? 'demonstrated' : 'partial', source: 'check', note: response.prompt + ' — ' + response.answer,
     masteryVerified: demonstrated,
   });

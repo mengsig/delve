@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import type { ReaderLesson } from '../../../shared/reader';
 import { DEPTHS } from '../../../shared/domain';
+import { coversDepth, demonstratedEvidence } from '../../../shared/evidence-depth';
 import { Icon } from '../Icon';
 import { LatestInstrumentLink } from '../lab/Environment';
 import { TutorSettings, type LessonTutor } from './Tutor';
@@ -17,7 +18,9 @@ interface NotesProps {
 
 export function LessonNotes({ props, body, tutor, skip, review, busy }: NotesProps) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const evidence = props.graph.evidence.find(e => e.depth === props.depth && e.conceptId === props.conceptId);
+  const concept = props.graph.concepts.find(c => c.id === props.conceptId);
+  const evidence = demonstratedEvidence(props.graph.evidence.filter(e => e.conceptId === props.conceptId
+    && (e.depth === props.depth || concept?.portable && coversDepth(e.depth, props.depth)))).get(props.conceptId);
   const mastery = body.mastery;
   function closeAnd(act: () => void) {
     dialog.current?.close();
@@ -27,9 +30,9 @@ export function LessonNotes({ props, body, tutor, skip, review, busy }: NotesPro
     <button className="lesson-notes-button" onClick={() => dialog.current?.showModal()}><Icon name="book" /> Lesson notes</button>
     <dialog ref={dialog} className="reader-preview lesson-notes" aria-labelledby="lesson-notes-heading">
       <div className="notes-title"><h2 id="lesson-notes-heading">Lesson notes</h2><form method="dialog"><button autoFocus>Close</button></form></div>
-      <p>{props.graph.concepts.find(c => c.id === props.conceptId)?.summary}</p>
+      <p>{concept?.summary}</p>
       <section><h3>Source {props.workspace.kind === 'topic' ? 'study' : 'snapshot'}</h3><p className="mono">{body.source ?? 'No source recorded'}{props.graph.demo && ' · demo'}</p>
-        <p>{evidence?.status === 'demonstrated' ? 'Understood at ' + props.depth + ' depth' +
+        <p>{evidence ? 'Understood at ' + evidence.depth + ' depth' +
           (evidence.workspaceName ? ' in ' + evidence.workspaceName : '') + '.' : 'Not yet marked understood at ' + props.depth + ' depth.'}</p></section>
       <section><h3>Tutor settings</h3><TutorSettings tutor={tutor} /></section>
       <section className="actions">

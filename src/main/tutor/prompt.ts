@@ -34,7 +34,7 @@ const instructions = [
   'Every new check must be kind prediction with exactly four distinct plausible options and a zero-based integer expected index. Ask the learner to predict an outcome or choose an action in a concrete situation. Vary the task, conditions and phrasing compared with mastery.previousQuestions. Do not give away the new answer in preceding teaching.',
   'Keep recommendation null until the learner reaches understood or skipped. Then you may give a specific next step with a reason, choosing a targetId from nextConcepts or null for practice within this concept.',
   'Use the recent turns and prerequisites to adjust your approach and reuse demonstrated concepts as building blocks.',
-  'Follow repositoryUsage and depthTopUp when supplied. Teach and assess repository application or the new depth of the portable concept, respectively. Every check, including an adapted check, must test that application or new detail.',
+  'Follow repositoryUsage, prerequisiteTopUps, and depthTopUp when supplied. Teach and assess repository application and the missing detail. Every check, including an adapted check, must test that application or new detail.',
   'When hands-on practice helps, add an environment block with a readable fallback. Use a built-in config where appropriate: lease-handoff@1 parameters {taskId, initialGeneration, deadlineTicks}, camera-exposure@1 parameters {initialShutter, initialIso}, or network-builder@1 parameters {clientPort, proxyInputPort, proxyOutputPort, servicePort, initialLinks}.',
   'Set the environment block pack field to null when providing config. For example, lease parameters can be {"taskId":"042","initialGeneration":7,"deadlineTicks":3}; camera parameters can be {"initialShutter":125,"initialIso":200}; network parameters can be {"clientPort":"client.out","proxyInputPort":"proxy.in","proxyOutputPort":"proxy.out","servicePort":"service.in","initialLinks":[]}.',
   'For other topics create config {pack:"bundle@1", bundle:{apiVersion:"delve.view/1",entry:"step",source}, parameters:{title,initial}}. Source defines function step(initial, action), returning {text,controls,marks}: controls are {id,label}, marks are {x,y,width,height,color}. Use plain identifier control IDs, coordinates 0..100 and six-digit hex colors, for example #93b859. The first action is an empty string. State may be kept in JavaScript between actions. This activity is practice, not assessment.',
@@ -55,7 +55,7 @@ export function previewNewTopic(request: TopicPreviewRequest) {
   const [requiredCorrect, maxAttempts] = masteryLimits[request.depth];
   return formatPreview(request, {
     concept: name, summary: '', depth: request.depth, snapshot: null, knownConcepts: [], prerequisites: [],
-    repositoryUsage: [], depthTopUp: null, lesson: null, recentTurns: [], nextConcepts: [],
+    repositoryUsage: [], prerequisiteTopUps: [], depthTopUp: null, lesson: null, recentTurns: [], nextConcepts: [],
     mastery: { stage: 'teaching', attempts: 0, maxAttempts, consecutiveCorrect: 0, requiredCorrect,
       appliedPassInStreak: false, previousQuestions: [] },
     intent: 'teach', visualRequired: false, check: null,
@@ -83,7 +83,7 @@ function checkForAdaptation(mastery: Mastery, intent: TutorRequest['intent']) {
 }
 
 function prerequisiteContext(graph: ReturnType<typeof readWorkspaceGraph>, context: ReturnType<typeof lessonContext>) {
-  const { conceptId, depth, portable, topic } = context;
+  const { canonicalConceptId: conceptId, depth, portable, topic } = context;
   assert.equal(graph.workspaceId, context.workspaceId);
   const deepest = demonstratedEvidence(graph.evidence);
   const exact = new Set(graph.evidence.filter(e => e.depth === depth && e.status === 'demonstrated').map(e => e.conceptId));
@@ -93,16 +93,21 @@ function prerequisiteContext(graph: ReturnType<typeof readWorkspaceGraph>, conte
   }).map(c => c.id));
   const ids = new Set(graph.edges.filter(e => e.conceptId === conceptId).map(e => e.prerequisiteId));
   const prerequisites = graph.concepts.filter(c => ids.has(c.id)).slice(0, 40);
-  const repositoryUsage = portable || topic ? [] : prerequisites.flatMap(c => {
+  const repositoryUsage: string[] = [];
+  const prerequisiteTopUps: string[] = [];
+  for (const c of portable || topic ? [] : prerequisites) {
     const evidence = c.portable && deepest.get(c.id);
-    return evidence ? [`The learner already understands ${c.title.slice(0, 300)} at ${evidence.depth} depth; teach only how this repository uses it.`] : [];
-  });
+    if (!evidence) continue;
+    const known = `The learner already understands ${c.title.slice(0, 300)} at ${evidence.depth} depth`;
+    if (coversDepth(evidence.depth, depth)) repositoryUsage.push(known + '; teach only how this repository uses it.');
+    else prerequisiteTopUps.push(known + `; cover only the additional detail needed at ${depth} depth to explain this repository's use.`);
+  }
   const established = portable && deepest.get(conceptId);
   const depthTopUp = established && !coversDepth(established.depth, depth)
     ? `The learner already understands this concept at ${established.depth} depth. Teach and check only the additional detail needed at ${depth} depth.`
     : null;
-  assert.ok(repositoryUsage.length <= prerequisites.length);
-  return { demonstrated, prerequisites: prerequisites.map(c => c.title.slice(0, 300)), repositoryUsage, depthTopUp };
+  assert.ok(repositoryUsage.length + prerequisiteTopUps.length <= prerequisites.length);
+  return { demonstrated, prerequisites: prerequisites.map(c => c.title.slice(0, 300)), repositoryUsage, prerequisiteTopUps, depthTopUp };
 }
 
 export function prepareTurn(db: Db, request: TutorRequest) {
@@ -116,17 +121,19 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const response = intent.kind === 'answer' ? checkResponse(mastery, intent) : null;
   const legacyCheck = checkForAdaptation(mastery, intent);
   const reused = mastery.stage === 'understood';
-  const graph = readWorkspaceGraph(db, context.workspaceId);
-  const { demonstrated, prerequisites, repositoryUsage, depthTopUp } = prerequisiteContext(graph, context);
+  const graph = readWorkspaceGraph(db, context.workspaceId, true);
+  const { demonstrated, prerequisites, repositoryUsage, prerequisiteTopUps, depthTopUp } = prerequisiteContext(graph, context);
   const history = readHistory(db, context).messages.slice(-12);
   const mayRecommend = intent.kind === 'ask' && canRecommend(mastery)
     || response !== null && nextGrade(mastery, response.correct).stage === 'understood';
-  const nextConcepts = mayRecommend ? graph.concepts.filter(c => !demonstrated.has(c.id) && c.id !== context.conceptId).slice(0, 80) : [];
-  const evidence = graph.evidence.find(e => e.conceptId === context.conceptId && e.depth === context.depth);
+  const atlasIds = new Set(graph.atlasConceptIds);
+  const nextConcepts = mayRecommend ? graph.concepts.filter(c => atlasIds.has(c.id)
+    && !demonstrated.has(c.id) && c.id !== context.canonicalConceptId).slice(0, 80) : [];
+  const evidence = graph.evidence.find(e => e.conceptId === context.canonicalConceptId && e.depth === context.depth);
   const payload = {
     concept: context.title.slice(0, 1024), summary: context.summary.slice(0, 8000), depth: context.depth, snapshot: context.snapshot,
     knownConcepts: graph.concepts.filter(c => demonstrated.has(c.id)).slice(0, 100).map(c => c.title.slice(0, 300)),
-    prerequisites, repositoryUsage, depthTopUp,
+    prerequisites, repositoryUsage, prerequisiteTopUps, depthTopUp,
     evidence: evidence && { status: evidence.status, source: evidence.source, note: evidence.note.slice(0, 2000) },
     lesson: selected.document ? JSON.stringify(teachingBlocks(selected.document)).slice(0, 20000) : null,
     recentTurns: history.map(m => ({ role: m.role, text: m.text.slice(0, 1000), observation: m.observation, reasoningFeedback: m.reasoningFeedback,
@@ -138,7 +145,8 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const data = formatPreview(request, payload);
   const cacheModel = modelCacheKey(data.model);
   const cacheKey = lessonCacheKey({ provider: request.provider, model: cacheModel, schemaVersion: 'delve.lesson/1',
-    generation: repositoryUsage.length || depthTopUp ? TUTOR_GENERATION + '/' + JSON.stringify([repositoryUsage, depthTopUp]) : TUTOR_GENERATION,
+    generation: repositoryUsage.length || prerequisiteTopUps.length || depthTopUp
+      ? TUTOR_GENERATION + '/' + JSON.stringify([repositoryUsage, prerequisiteTopUps, depthTopUp]) : TUTOR_GENERATION,
     conceptKey: context.key,
     depth: context.depth, sourceRef: context.workspaceId + '/' + (context.snapshot ?? 'concept') });
   const token = createHash('sha256').update(JSON.stringify([cacheKey, data.modelSource, selected.revision,

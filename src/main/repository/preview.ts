@@ -11,7 +11,7 @@ import { depthGuide } from '../tutor/prompt';
 import { cacheModel, selectModel } from '../providers/model';
 import { readChangeWithPatches, readFiles } from './source';
 import { digest, type ApprovedSource } from './store';
-import { portableKeyGuide } from './portable-concepts';
+import { portableKeyGuide } from '../db/portable-identity';
 
 interface SourceMaterial {
   commit: string;

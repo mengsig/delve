@@ -42,7 +42,7 @@ function repeatsQuestion(current: string[], previous: string): boolean {
   return shared >= 6 && shared / (words.size + earlierWords.size - shared) >= 0.9;
 }
 
-export const hasVerifiedMastery = (db: Db, context: LessonContext) => listEvidence(db, context.conceptId)
+export const hasVerifiedMastery = (db: Db, context: LessonContext) => listEvidence(db, context.canonicalConceptId)
   .some(e => e.masteryVerified && (context.portable
     ? coversDepth(e.depth, context.depth) : e.depth === context.depth && e.workspaceId === context.workspaceId));
 
