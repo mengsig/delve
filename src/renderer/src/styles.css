@@ -8,7 +8,7 @@
   --motion-page: 200ms;
   --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
-html { scrollbar-gutter: stable; }
+html::-webkit-scrollbar { width: 0; height: 0; }
 body { padding-bottom: 24px; }
 .brand { border: 0; padding: 0; background: transparent; }
 button { transition: background-color var(--motion-fast), border-color var(--motion-fast), filter var(--motion-fast); }

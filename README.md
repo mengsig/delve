@@ -130,6 +130,7 @@ npm run dev       # start the app with hot reload
 
 | Script | What it does |
 | --- | --- |
+| `./scripts/ci.sh` | Run Linux lint, typecheck, unit and provider tests, build, and desktop smoke serially (uses Xvfb when available). Set `DELVE_PACKAGE_EXECUTABLE` to also smoke a prepared Linux package |
 | `npm run lint` | ESLint over the whole project |
 | `npm run typecheck` | TypeScript for main/preload and for the renderer |
 | `npm test` | Vitest unit tests (database, IPC, security guards, provider runner with a fake CLI) |
