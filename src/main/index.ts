@@ -22,6 +22,7 @@ import { createTransferLink, getGlobalKnowledgeGraph } from './db/knowledge';
 import { transaction } from './db/connection';
 import { DomainError } from '../shared/errors';
 import { reportStartupFailure, showErrorDialog } from './error-dialog';
+import { showWhenReady } from './window-show';
 
 // electron-vite sets this in development only; an empty value means "not set".
 const devServerUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'] || undefined;
@@ -76,10 +77,7 @@ function createWindow(labs: LabHost, shutdown: Shutdown): BrowserWindow {
   window.webContents.on('did-start-navigation', event => { if (event.isMainFrame && !event.isSameDocument) labs.clear(); });
   window.webContents.on('render-process-gone', () => labs.clear());
   window.webContents.on('destroyed', () => labs.clear());
-  const showWindow = () => { if (!window.isDestroyed()) window.show(); };
-  const showFallback = setTimeout(showWindow, 2000);
-  window.once('ready-to-show', () => { clearTimeout(showFallback); showWindow(); });
-  window.once('closed', () => clearTimeout(showFallback));
+  showWhenReady(window);
   const url = devServerUrl ?? `${APP_ORIGIN}/index.html`;
   window.loadURL(url).catch((error: unknown) => {
     if (shutdown.signal.aborted) return;

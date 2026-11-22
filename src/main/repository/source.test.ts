@@ -10,6 +10,7 @@ import { RepositoryLearning } from './service';
 import type { Workspace } from '../../shared/domain';
 import { openRepositoryHistory } from './history';
 import { listChanges, listFiles, readChange, readChangeDetail, readChangeWithPatches, readFiles, repositoryPath } from './source';
+import * as sourceProcess from './source-process';
 
 let root: string;
 let repo: string;
@@ -118,6 +119,31 @@ describe('Git changes', () => {
     expect(change).toMatchObject({ commit: second, title: 'Update logic', partial: true, files: ['main.ts'] });
     expect(change.diff).toContain('-old\n+new');
     expect(change.diff).not.toContain('sentinel');
+  });
+
+  it('passes the Git null file to every diff-tree call and ignores repository diff ordering', async () => {
+    await writeFile(join(repo, 'a.txt'), 'first\n');
+    await writeFile(join(repo, 'z.txt'), 'last\n');
+    const head = commit('Add files');
+    await writeFile(join(root, 'order'), 'z.txt\na.txt\n');
+    git('config', 'diff.orderFile', join(root, 'order'));
+    expect(git('show', '--format=', '--name-only', head).split(/\r?\n/)).toEqual(['z.txt', 'a.txt']);
+
+    const gitSource = vi.spyOn(sourceProcess, 'gitSource');
+    try {
+      const detail = await readChangeDetail(repo, workspace, 'commit', head);
+      expect(detail).toMatchObject({ fileCount: 2, additions: 2, deletions: 0, partial: false });
+      expect(detail.files.map(file => file.path)).toEqual(['a.txt', 'z.txt']);
+      const diffCalls = gitSource.mock.calls.map(([args]) => args).filter(args => args.includes('diff-tree'));
+      expect(diffCalls).toHaveLength(4);
+      for (const args of diffCalls) {
+        const order = args.indexOf('-O');
+        expect(order).toBeGreaterThan(-1);
+        expect(args[order + 1]).toBe('/dev/null');
+      }
+    } finally {
+      gitSource.mockRestore();
+    }
   });
 });
 
