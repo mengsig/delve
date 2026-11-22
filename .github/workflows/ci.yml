@@ -38,6 +38,76 @@ jobs:
             test-results/
           retention-days: 7
 
+  installer-tests:
+    name: Installer shell checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shellcheck
+        run: shellcheck install.sh tests/install.sh
+      - name: Installer unit tests
+        run: sh tests/install.sh
+
+  installer-release:
+    name: Install published release (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pin latest published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(gh api repos/mengsig/delve/releases/latest --jq .tag_name)"
+          test -n "$version"
+          echo "DELVE_VERSION=$version" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = macOS ]; then
+            echo "DELVE_INSTALL_DIR=$HOME/Applications" >> "$GITHUB_ENV"
+          fi
+      - name: Install from checked-out script
+        run: cat install.sh | sh
+      - name: Verify Linux installation and checksum
+        if: runner.os == 'Linux'
+        run: |
+          app="$HOME/.local/share/delve/Delve.AppImage"
+          test -x "$app"
+          test -x "$HOME/.local/bin/delve"
+          test -s "$HOME/.local/share/applications/delve.desktop"
+          test -s "$HOME/.local/share/icons/hicolor/256x256/apps/delve.png"
+          case "$(uname -m)" in
+            x86_64) arch=x86_64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) exit 1 ;;
+          esac
+          asset="Delve-${DELVE_VERSION#v}-${arch}.AppImage"
+          curl -fsSL "https://github.com/mengsig/delve/releases/download/$DELVE_VERSION/SHA256SUMS" -o "$RUNNER_TEMP/SHA256SUMS"
+          expected="$(awk -v name="$asset" '$2 == name { print $1 }' "$RUNNER_TEMP/SHA256SUMS")"
+          test -n "$expected"
+          actual="$(sha256sum "$app" | cut -d ' ' -f 1)"
+          test "$actual" = "$expected"
+      - name: Verify macOS installation
+        if: runner.os == 'macOS'
+        run: |
+          test -d "$DELVE_INSTALL_DIR/Delve.app"
+          ! xattr -p com.apple.quarantine "$DELVE_INSTALL_DIR/Delve.app" 2>/dev/null
+      - name: Uninstall
+        run: cat install.sh | sh -s -- --uninstall
+      - name: Verify Linux uninstall
+        if: runner.os == 'Linux'
+        run: |
+          test ! -e "$HOME/.local/share/delve/Delve.AppImage"
+          test ! -e "$HOME/.local/bin/delve"
+          test ! -e "$HOME/.local/share/applications/delve.desktop"
+          test ! -e "$HOME/.local/share/icons/hicolor/256x256/apps/delve.png"
+      - name: Verify macOS uninstall
+        if: runner.os == 'macOS'
+        run: test ! -e "$DELVE_INSTALL_DIR/Delve.app"
+
   package:
     name: Package (${{ matrix.os }})
     needs: check

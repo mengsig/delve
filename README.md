@@ -2,6 +2,30 @@
 
 Learn the codebase your agents are building. A local-first, open-source desktop app (Electron) that keeps developers in touch with a repository: learn it from scratch, then follow what changed and why, at three depths.
 
+
+## Install
+
+On Linux or macOS, install the latest release with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mengsig/delve/main/install.sh | sh
+```
+
+The installer verifies the release checksum. On Linux it installs an AppImage and desktop launcher
+in your home directory, using AppImage extraction to work without FUSE 2. On macOS
+it installs Delve in Applications. To install a specific release, download
+[`install.sh`](https://github.com/mengsig/delve/blob/main/install.sh) and run
+`DELVE_VERSION=v1.2.3 sh install.sh` with the desired release tag. Run `sh install.sh --uninstall`
+to remove the installation. The installer remembers the macOS installation location for uninstall.
+
+Alternatively, download a package and `SHA256SUMS` from the
+[releases page](https://github.com/mengsig/delve/releases) and verify its SHA-256 checksum before
+installation. Packages are not yet code-signed.
+
+- **Linux:** make the AppImage executable and run it, or install the `.deb` with `sudo apt install ./Delve-*.deb`. See [Linux setup](docs/linux.md) for FUSE alternatives and manual desktop integration.
+- **macOS:** open the DMG and drag Delve to Applications. If Gatekeeper blocks an unsigned build, use System Settings → Privacy & Security → Open Anyway.
+- **Windows:** download and run the setup executable. If SmartScreen reports an unknown publisher, choose More info → Run anyway after verifying the checksum.
+
 ![Delve atlas in light theme](docs/screenshots/light.png)
 ![Delve atlas in dark theme](docs/screenshots/dark.png)
 
@@ -90,17 +114,6 @@ you wire simulated ports by dragging or by selecting an output followed by an in
 topic, the tutor can also supply a self-contained program with its own state, drawing and controls.
 Custom programs run as practice. Host-verifiable rubrics currently ship for the dispatch, exposure
 and network instruments. See the [environment protocol](docs/environments.md).
-
-## Install
-
-Download a package for your platform from the CI artifacts or a release: an AppImage or `.deb` for
-Linux, a `.dmg` for macOS, or an NSIS installer for Windows. Packages are not yet code-signed.
-
-- **Linux:** make the AppImage executable (`chmod +x Delve-*.AppImage`) and run it, or install the Debian package with `sudo apt install ./Delve-*.deb`. AppImage requires FUSE 2 on distributions that do not include it; alternatively run the AppImage with `--appimage-extract` and launch `squashfs-root/AppRun`. Wayland sessions are selected automatically when available; X11 is also supported. For a standalone AppImage, register a desktop entry and link handler as described in [Linux setup](docs/linux.md).
-- **macOS:** open the DMG and drag Delve to Applications. For an unsigned build, open Delve once, then use System Settings → Privacy & Security → Open Anyway if Gatekeeper blocks it.
-- **Windows:** run the setup executable. If SmartScreen reports an unknown publisher, choose More info → Run anyway after verifying the release checksum.
-
-Compare the package's SHA-256 checksum with `SHA256SUMS` from the release before installation.
 
 To generate lessons, Delve uses a CLI you already have and are signed in to:
 [Claude Code](https://code.claude.com/docs/en/headless) (`claude`) or
