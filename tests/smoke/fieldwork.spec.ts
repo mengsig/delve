@@ -35,10 +35,25 @@ for (const explain of [false, true]) {
 
 test('switches choices by keyboard and restores scoped drafts and transcript position', async ({ desktop: { page } }) => {
   await page.setViewportSize({ width: 960, height: 611 });
+  // Exercise the hotkey as soon as the choices are interactive.
+  const firstKey = await page.evaluateHandle(() => {
+    const result = { handled: false };
+    const observer = new MutationObserver(() => {
+      const option = document.querySelectorAll<HTMLButtonElement>('.answer-options button')[3];
+      if (!option || option.disabled) return;
+      observer.disconnect();
+      result.handled = !option.dispatchEvent(new KeyboardEvent('keydown', { key: '4', bubbles: true, cancelable: true }));
+    });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    return result;
+  });
   await open(page).click();
   const options = page.locator('.answer-options button');
-  await expect(options).toHaveCount(4);
-  for (const key of ['4', '1', '3', '2']) {
+  await expect(options.nth(3)).toBeEnabled();
+  expect(await firstKey.evaluate(result => result.handled)).toBe(true);
+  await firstKey.dispose();
+  await expect(options.nth(3)).toHaveAttribute('aria-pressed', 'true');
+  for (const key of ['1', '4', '3', '2']) {
     await page.keyboard.press(key);
     await expect(options.nth(Number(key) - 1)).toHaveAttribute('aria-pressed', 'true');
   }

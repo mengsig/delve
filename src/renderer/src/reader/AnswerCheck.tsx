@@ -1,4 +1,4 @@
-import { useContext, useEffect, useEffectEvent, useRef } from 'react';
+import { useContext, useEffectEvent, useLayoutEffect, useRef } from 'react';
 import { CHECK_ANSWER_LIMIT } from '../../../shared/lesson-blocks';
 import type { ActiveMasteryCheck, TutorIntent } from '../../../shared/reader';
 import { EnvironmentActivity } from '../lab/EnvironmentActivity';
@@ -45,7 +45,7 @@ export function AnswerCheck({ check, revision, draft, change, disabled, submit, 
       send();
     }
   });
-  useEffect(() => {
+  useLayoutEffect(() => {
     const handle = (event: KeyboardEvent) => hotkey(event);
     window.addEventListener('keydown', handle);
     return () => window.removeEventListener('keydown', handle);
