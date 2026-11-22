@@ -12,13 +12,13 @@ function createRepository(directory: string, extraFiles: Record<string, string> 
   const repo = join(directory, 'dispatch');
   mkdirSync(repo);
   execFileSync('git', ['init', '--quiet', '--template=', '--initial-branch=main', repo]);
-  const data = (value: string) => 'data ' + Buffer.byteLength(value) + '\n' + value + '\n';
+  const data = (value: string) => 'data ' + Buffer.byteLength(value) + '\n' + value;
   const content = ['export const attempts = 1;\n', 'export const attempts = 3;\n'];
   const commits = content.map((file, i) => {
     const title = i ? 'Retry a failed dispatch' : 'Dispatch once';
     const files = i === 0 ? { 'dispatch.ts': file } : { 'dispatch.ts': file, ...extraFiles };
     return ['commit refs/heads/main', 'committer Fixture <fixture@example.invalid> ' + (1000000000 + i) + ' +0000',
-      data(title).trimEnd(), ...Object.entries(files).flatMap(([path, contents]) => [`M 100644 inline ${path}`, data(contents)])].join('\n');
+      data(title), ...Object.entries(files).flatMap(([path, contents]) => [`M 100644 inline ${path}`, data(contents)])].join('\n');
   });
   execFileSync('git', ['-C', repo, 'fast-import', '--quiet'], { input: commits.join('\n') + '\ndone\n' });
   return { repo, head: execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() };
