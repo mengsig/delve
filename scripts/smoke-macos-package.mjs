@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-async function smoke(executable, logFd, env = process.env, startupMarker = '[delve] main ready') {
+async function smoke(executable, logFd, env, startupMarker, expectedExitCode) {
   const child = spawn(executable, ['-ApplePersistenceIgnoreState', 'YES'], { env, stdio: ['ignore', logFd, logFd] });
   const exited = once(child, 'exit');
   try {
@@ -20,7 +20,7 @@ async function smoke(executable, logFd, env = process.env, startupMarker = '[del
     assert.ok(child.kill('SIGTERM'), 'Delve must still be running when SIGTERM is sent');
     const shutdown = await Promise.race([exited, delay(15_000, null, { ref: false })]);
     assert.notEqual(shutdown, null, 'Delve did not exit within 15 seconds of SIGTERM');
-    assert.deepEqual(shutdown, [0, null], 'Delve must exit cleanly after SIGTERM');
+    assert.deepEqual(shutdown, [expectedExitCode, null], 'Delve must exit with the expected code after SIGTERM');
     assert.ok(readFileSync('mac-launch.log', 'utf8').includes('[delve] received SIGTERM'), 'Delve did not handle SIGTERM');
   } catch (error) {
     console.error(`Delve process tree at failure (app PID ${child.pid ?? 'unknown'}):`);
@@ -65,7 +65,7 @@ try {
     const logFd = openSync(log, 'w');
     try {
       await smoke(executable, logFd, { ...process.env, DELVE_USER_DATA_DIR: data },
-        failure ? '[delve] error dialog open' : '[delve] main ready');
+        failure ? '[delve] error dialog open' : '[delve] main ready', failure ? 1 : 0);
     } catch (error) {
       console.error('Delve stdout and stderr:\n' + readFileSync(log, 'utf8'));
       throw error;
@@ -76,4 +76,4 @@ try {
 } finally {
   rmSync(directory, { recursive: true, force: true });
 }
-console.log('Packaged Delve exited cleanly after SIGTERM during normal startup and a startup error dialog.');
+console.log('Packaged Delve exited with the expected codes after SIGTERM during normal startup and a startup error dialog.');
