@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import type { Workspace } from '../../../shared/domain';
+import { DEPTHS, type Depth, type Workspace } from '../../../shared/domain';
 import type { WorkspaceGraph } from '../../../shared/graph';
 import { call } from '../api';
 import { ReadState } from '../ReadState';
 import { useRead } from '../useRead';
 import { Coverage } from './Coverage';
 import { EvidenceLedger } from './EvidenceLedger';
+import type { LearningProgress } from './model';
+import { ConceptMeter, WorkspaceMeter } from './ProgressMeters';
 import './progress.css';
 
 const readCoverage = () => call('progress:read', null);
@@ -14,12 +16,40 @@ interface Props {
   workspace: Workspace;
   workspaces: Workspace[];
   graph: WorkspaceGraph;
+  depth: Depth;
+  progress?: LearningProgress;
+  currentId?: number;
+  onDepth: (depth: Depth) => void;
   onSelect: (id: string) => void;
   onBack: () => void;
   onEvidence: () => void;
 }
 
-export function Progress({ workspace, graph, workspaces, onSelect, onBack, onEvidence }: Props) {
+function PathCoverage({ progress, currentId, depth, onDepth }: Pick<Props, 'progress' | 'currentId' | 'depth' | 'onDepth'>) {
+  const current = currentId === undefined ? undefined : progress?.byId.get(currentId);
+  const other = progress?.concepts.filter(concept => concept.onAtlas && concept.id !== currentId) ?? [];
+  return <section className="sheet progress-path" aria-label="Workspace learning path">
+    <div className="progress-path-heading">
+      <h2>Learning path</h2>
+      <label>Reading depth <select value={depth} onChange={event => {
+        const next = DEPTHS.find(item => item === event.target.value);
+        if (next) onDepth(next);
+      }}>
+        {DEPTHS.map(item => <option key={item} value={item}>{item}</option>)}
+      </select></label>
+    </div>
+    <WorkspaceMeter progress={progress} />
+    {progress?.available && <>
+      {current && <div className="progress-current"><ConceptMeter concept={current} current /></div>}
+      {other.length > 0 && <ul className="progress-concepts" aria-label="Concept progress" tabIndex={0}>
+        {other.map(concept => <li key={concept.id}><ConceptMeter concept={concept} /></li>)}
+      </ul>}
+      {!current && !other.length && <p>No concepts in this learning path yet.</p>}
+    </>}
+  </section>;
+}
+
+export function Progress({ workspace, graph, depth, progress, currentId, onDepth, workspaces, onSelect, onBack, onEvidence }: Props) {
   const coverage = useRead(readCoverage);
   const [notice, setNotice] = useState('');
   function evidenceChanged() {
@@ -34,6 +64,7 @@ export function Progress({ workspace, graph, workspaces, onSelect, onBack, onEvi
       <h1>Your field record.</h1>
       <p>How much of each terrain have you explored? Progress is tracked separately at each depth. Opening a lesson does not count.</p>
     </div>
+    <PathCoverage {...{ progress, currentId, depth, onDepth }} />
     {coverage.result.status === 'ready'
       ? <Coverage workspaces={workspaces} rows={coverage.result.value} activeId={workspace.id} onSelect={onSelect} />
       : <ReadState label="Workspace coverage" retry={coverage.refresh}

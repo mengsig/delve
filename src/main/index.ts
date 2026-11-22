@@ -88,7 +88,7 @@ function createWindow(labs: LabHost, shutdown: Shutdown): BrowserWindow {
 }
 
 function buildHandlers(db: Db, tutor: TutorSession, labs: LabHost, learning: RepositoryLearning, links: LearnInbox,
-  connections: ConnectionSession, detect: typeof detectProviders, signal: AbortSignal): IpcHandlers {
+  connections: ConnectionSession, detect: typeof detectProviders, signal: AbortSignal, cacheRoot: string): IpcHandlers {
   return {
     'workspaces:list': () => listWorkspaces(db),
     'workspaces:add': async (input) => {
@@ -112,7 +112,7 @@ function buildHandlers(db: Db, tutor: TutorSession, labs: LabHost, learning: Rep
     'providers:detect': () => detect(),
     ...readerHandlers(db),
     ...tutorHandlers(db, tutor),
-    ...graphHandlers(db),
+    ...graphHandlers(db, cacheRoot),
     ...connectionHandlers(db, connections, signal),
     'repo:stage': ({ source }) => learning.stage(source),
     'repo:attach': ({ token }) => {
@@ -162,7 +162,8 @@ async function start(links: LearnInbox, shutdown: Shutdown): Promise<void> {
       : link.toConceptId === conceptId ? [link.fromConceptId] : []);
     return { anchor, candidates: graph.concepts.filter(concept => concept.id !== conceptId), linkedConceptIds };
   }, runner);
-  const learning = new RepositoryLearning(db, join(app.getPath('userData'), 'repositories'), runner);
+  const cacheRoot = join(app.getPath('userData'), 'repositories');
+  const learning = new RepositoryLearning(db, cacheRoot, runner);
   const tutor = new TutorSession(db, createGenerator(runner));
   shutdown.setCleanup(async () => {
     const results = await Promise.allSettled([
@@ -177,7 +178,7 @@ async function start(links: LearnInbox, shutdown: Shutdown): Promise<void> {
   });
   seedDemoWorkspaces(db);
   const labs = new LabHost(db);
-  const handlers = buildHandlers(db, tutor, labs, learning, links, connections, detect, shutdown.signal);
+  const handlers = buildHandlers(db, tutor, labs, learning, links, connections, detect, shutdown.signal, cacheRoot);
   registerIpc(ipcMain, handlers, (url) => isAppUrl(url, devServerUrl), shutdown.signal);
   createWindow(labs, shutdown);
   console.error('[delve] main ready');

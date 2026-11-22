@@ -1,6 +1,6 @@
-import { useCallback, useEffect, type ReactNode } from 'react';
+import { useEffect, useMemo, type ReactNode } from 'react';
 import type { Workspace } from '../../shared/domain';
-import type { WorkspaceGraph } from '../../shared/graph';
+import type { ReaderLesson } from '../../shared/reader';
 import type { ChangeRef } from '../../shared/repository';
 import { demoBrief } from '../../shared/reader-demo';
 import { call } from './api';
@@ -14,10 +14,9 @@ import { Lesson } from './reader/Lesson';
 import type { ReaderProps } from './reader/ReaderHeader';
 import type { Activity } from './recentActivity';
 import { ReadState } from './ReadState';
-import { useRepositoryCompletion } from './repository/MapJobs';
 import { ProposedContext } from './repository/ProposedContext';
 import { RepositoryBaseline } from './repository/RepositoryBaseline';
-import { useRead } from './useRead';
+import { atlasGraph, type WorkspaceStudy } from './useWorkspaceStudy';
 
 interface Props {
   workspace: Workspace;
@@ -29,12 +28,15 @@ interface Props {
   onSwitch: () => void;
   onSelect: (id: string) => void;
   remember: (entry: Activity) => void;
+  study: WorkspaceStudy;
 }
 type LessonRoute = Extract<Route, {screen: 'lesson'}>;
 type ChangeRoute = Extract<Route, {screen: 'changes'}>;
 
-function StudyLesson({ route, common, remember, refresh, backTo }: {
-  route: LessonRoute; common: ReaderProps; remember: Props['remember']; refresh: () => void; backTo: DesktopNavigation['backTo'];
+function StudyLesson({ route, common, remember, commit, refresh, backTo }: {
+  route: LessonRoute; common: ReaderProps; remember: Props['remember']; commit: WorkspaceStudy['commit'];
+  refresh: WorkspaceStudy['refresh'];
+  backTo: DesktopNavigation['backTo'];
 }) {
   const { conceptId, change, environment } = route;
   const { depth, workspace, graph } = common;
@@ -49,8 +51,12 @@ function StudyLesson({ route, common, remember, refresh, backTo }: {
   function used(blockKey: string, name: string) {
     remember({ kind: 'environment', workspaceId, conceptId, depth, title: name, blockKey, change });
   }
+  function onEvidence(lesson?: ReaderLesson) {
+    if (lesson) commit({ workspaceId, conceptId, depth }, lesson);
+    else refresh();
+  }
   return <EnvironmentActivity.Provider value={{ resumeKey: environment, onUse: used, onRead: read }}>
-    <Lesson {...common} conceptId={conceptId} initialQuestion={route.question} initialReview={route.review} onEvidence={refresh}
+    <Lesson {...common} conceptId={conceptId} initialQuestion={route.question} initialReview={route.review} onEvidence={onEvidence}
       onBack={() => backTo({ screen: 'atlas', conceptId })}
       onBackToChange={change ? () => backTo({ screen: 'changes', change }) : undefined} />
   </EnvironmentActivity.Provider>;
@@ -75,43 +81,43 @@ function StudyChanges({ route, common, remember, visit }: {
     onAtlas={id => visit({ screen: 'atlas', focus: change ? { id, change } : undefined })} />;
 }
 
-function StudyPage({ props, graph, refresh }: { props: Props; graph: WorkspaceGraph; refresh: () => void }) {
-  const { workspace, view, onView, nav, remember, onSelect } = props;
+function StudyPage({ props, fullGraph }: { props: Props; fullGraph: NonNullable<WorkspaceStudy['graph']> }) {
+  const { workspace, view, onView, nav, remember, onSelect, study } = props;
   const { route, visit, depth, changeDepth } = nav;
+  const atlasOnly = useMemo(() => atlasGraph(fullGraph), [fullGraph]);
+  const graph = route.screen === 'lesson' || route.screen === 'progress' ? fullGraph : atlasOnly;
+  const activeConceptId = route.screen === 'lesson' ? route.conceptId : undefined;
   const openLesson = (conceptId: number, question?: string) => visit({ screen: 'lesson', conceptId, question });
-  const common = { workspace, graph, depth, view, onDepth: changeDepth, onBack: () => nav.backTo({ screen: 'atlas' }), onLesson: openLesson };
-  if (route.screen === 'lesson') return <StudyLesson key={route.conceptId} route={route} common={common} remember={remember} refresh={refresh} backTo={nav.backTo} />;
+  const common = { workspace, graph, depth, view, onDepth: changeDepth, onBack: () => nav.backTo({ screen: 'atlas' }),
+    onLesson: openLesson, onProgress: () => visit({ screen: 'progress', conceptId: activeConceptId }) } satisfies ReaderProps;
+  if (route.screen === 'lesson') return <StudyLesson key={route.conceptId} route={route} common={common} remember={remember}
+    commit={study.commit} refresh={study.refresh} backTo={nav.backTo} />;
   if (route.screen === 'changes') return <StudyChanges route={route} common={common} remember={remember} visit={visit} />;
-  if (route.screen === 'progress') return <Progress {...common} workspaces={nav.list.workspaces} onSelect={onSelect} onEvidence={refresh} />;
+  if (route.screen === 'progress') return <Progress {...common} progress={study.progress} currentId={route.conceptId}
+    workspaces={nav.list.workspaces} onSelect={onSelect} onEvidence={study.refresh} />;
   const atlas = route.screen === 'atlas' ? route : undefined;
   async function startTopic() {
     const conceptId = await call('reader:start-topic', { workspaceId: workspace.id });
-    refresh();
+    study.refresh();
     openLesson(conceptId);
   }
   return <>
     {atlas?.intent?.kind === 'proposed' && <ProposedContext intent={atlas.intent} graph={graph} depth={depth} onLesson={openLesson} />}
     <ChangeAtlas {...common} focus={atlas?.focus} onClearFocus={() => visit({ screen: 'atlas' }, true)} initialConceptId={atlas?.conceptId}
       onView={onView} onChanges={change => visit({ screen: 'changes', change })}
-      onStartTopic={startTopic} onProgress={() => visit({ screen: 'progress' })} onSwitch={props.onSwitch}
+      onStartTopic={startTopic} onSwitch={props.onSwitch}
       continueActivity={props.continueActivity} workspaceBar={props.workspaceBar} onMap={() => visit({ screen: 'baseline' })} />
   </>;
 }
 
 export function Study(props: Props) {
-  const { workspace, nav, view } = props;
+  const { workspace, nav, view, study } = props;
   const { route, depth } = nav;
-  const workspaceId = workspace.id;
-  const includeChangeLessons = route.screen === 'lesson' || route.screen === 'progress';
-  const query = useCallback(() => call('graph:read', { workspaceId, includeChangeLessons }), [workspaceId, includeChangeLessons]);
-  const { result, refresh } = useRead(query);
-  useRepositoryCompletion(workspaceId, refresh);
   if (route.screen === 'baseline' && workspace.kind !== 'topic') {
     const reviewJob = route.job?.kind === 'map' && route.job.phase === 'failed' ? route.job : undefined;
     return <RepositoryBaseline workspace={workspace} depth={depth} onDepth={nav.changeDepth}
       onBack={() => nav.backTo({ screen: 'atlas' })} reviewJob={reviewJob} />;
   }
-  if (result.status !== 'ready') return <ReadState label="Knowledge graph" retry={refresh}
-    message={result.status === 'error' ? result.message : undefined} />;
-  return <div className={view}><StudyPage props={props} graph={result.value} refresh={refresh} /></div>;
+  if (!study.graph) return <ReadState label="Knowledge graph" retry={study.refresh} message={study.error} />;
+  return <div className={view}><StudyPage props={props} fullGraph={study.graph} /></div>;
 }

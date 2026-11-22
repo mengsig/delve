@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Command } from './commands';
+import type { Workspace } from '../../shared/domain';
+import { paletteCommands, type Command } from './commands';
 import { filterCommands, isSwitcherShortcut, moveIndex } from './switcher';
 
 const key = (over: Partial<Parameters<typeof isSwitcherShortcut>[0]>) => ({ key: 'k', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...over });
@@ -34,4 +35,16 @@ describe('switcher filtering and movement', () => {
     expect(moveIndex(0, -1, 3)).toBe(2);
     expect(moveIndex(0, 1, 0)).toBe(-1);
   });
+});
+
+it('shows the shortest distinguishing local path and the GitHub owner in the picker', () => {
+  const workspace = (id: string, source: string, kind: Workspace['kind'] = 'git'): Workspace =>
+    ({ id, source, kind, name: 'repo', createdAt: '', lastOpenedAt: null });
+  const workspaces = [workspace('a', '/work/one/team/repo'), workspace('b', '/work/two/team/repo'),
+    workspace('c', '/work/solo/repo'), workspace('d', 'remote/repo', 'github')];
+  const commands = paletteCommands({ workspaces, active: workspaces[1], recent: [], select: async () => {},
+    resume: async () => {}, visit: () => {}, showMap: () => {} });
+  expect(commands.slice(0, 4).map(command => command.detail)).toEqual(['…/one/team/repo', '…/two/team/repo', '…/solo/repo', 'remote/repo']);
+  expect(commands.filter(command => command.current).map(command => command.id)).toEqual(['b']);
+  expect(filterCommands(commands, '/work/two').map(command => command.id)).toEqual(['b']);
 });

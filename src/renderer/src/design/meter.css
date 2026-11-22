@@ -1,0 +1,34 @@
+:root {
+  --mastery-fill: var(--green);
+  --mastery-track: var(--rule);
+  --mastery-progress: var(--green);
+  --mastery-retry: #9c481e;
+  --mastery-motion: 220ms;
+}
+html[data-theme="dark"] { --mastery-retry: var(--gold); }
+
+.learning-meter-label { display: flex; gap: .5rem; justify-content: space-between; align-items: baseline; }
+.learning-meter-label span + span { flex: none; color: var(--dim); font-size: .78em; }
+.learning-meter-track {
+  display: block;
+  width: 100%;
+  height: var(--meter-height, 5px);
+  margin-top: 4px;
+  appearance: none;
+  background: var(--mastery-track);
+  border-radius: 8px;
+}
+.learning-meter-track::-webkit-meter-bar { border: 0; background: var(--mastery-track); border-radius: inherit; }
+.learning-meter-track::-webkit-meter-optimum-value {
+  background: var(--mastery-fill);
+  border-radius: 8px;
+  transition: width var(--mastery-motion) var(--ease-out);
+}
+.learning-meter[data-tone="in-progress"] { --mastery-fill: var(--mastery-progress); }
+.learning-meter[data-hatched] .learning-meter-track {
+  background: repeating-linear-gradient(135deg, var(--mastery-track) 0 3px, transparent 3px 6px);
+  border: 1px solid var(--mastery-track);
+}
+@media (prefers-reduced-motion: reduce) {
+  .learning-meter-track::-webkit-meter-optimum-value { transition: none; }
+}

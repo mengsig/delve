@@ -44,7 +44,7 @@ function SwitcherSearch({ commands, onChoose, pending }: Pick<Props, 'commands'>
         onKeyDown={navigate} onChange={(event) => { setQuery(event.target.value); setHighlight(0); }} />
       <ul id={OPTIONS_ID} className="palette-list" role="listbox" aria-label="Destinations" aria-busy={pending}>
         {matches.map((command, index) => (
-          <li key={command.id} id={optionId(command.id)} role="option" aria-selected={index === current}
+          <li key={command.id} id={optionId(command.id)} role="option" aria-selected={index === current} aria-disabled={pending || undefined}
             ref={index === current ? selected : undefined} onClick={() => onChoose(command)}>
             <div>
               <strong>{command.label}</strong>
@@ -61,6 +61,7 @@ function SwitcherSearch({ commands, onChoose, pending }: Pick<Props, 'commands'>
 
 export function WorkspaceSwitcher({ commands, onClose, onAdd }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const opening = useRef(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
 
@@ -88,7 +89,8 @@ export function WorkspaceSwitcher({ commands, onClose, onAdd }: Props) {
   }, []);
 
   async function choose(command: Command) {
-    if (pending) return;
+    if (opening.current) return;
+    opening.current = true;
     setError('');
     setPending(true);
     try {
@@ -97,6 +99,7 @@ export function WorkspaceSwitcher({ commands, onClose, onAdd }: Props) {
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
+      opening.current = false;
       setPending(false);
     }
   }

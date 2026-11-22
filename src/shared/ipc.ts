@@ -1,7 +1,7 @@
 import type { RepositoryContract } from './repository';
 import type { ReaderContract, TutorContract } from './reader';
 import type { AddWorkspaceInput, Depth, ProviderStatus, Workspace, WorkspaceList } from './domain';
-import type { WorkspaceCoverage, WorkspaceGraph } from './graph';
+import type { WorkspaceCoverage, WorkspaceGraph, WorkspaceHead } from './graph';
 import type { LabContract } from './lab-ipc';
 import type { GlobalKnowledgeGraph, ConnectionPreview, ConnectionResult } from './knowledge';
 import type { ProviderId } from './domain';
@@ -16,7 +16,8 @@ export interface IpcContract extends RepositoryContract, ReaderContract, TutorCo
   'workspaces:switch': { request: { id: string }; response: WorkspaceList };
   'workspaces:pick-folder': { request: null; response: string | null };
   'providers:detect': { request: null; response: ProviderStatus[] };
-  'graph:read': { request: { workspaceId: string; includeChangeLessons?: boolean }; response: WorkspaceGraph };
+  'graph:read': { request: { workspaceId: string; includeChangeLessons?: boolean; depth?: Depth }; response: WorkspaceGraph };
+  'workspaces:head': { request: { workspaceId: string }; response: WorkspaceHead };
   'knowledge:read': { request: null; response: GlobalKnowledgeGraph };
   'knowledge:remove-link': { request: { id: number }; response: boolean };
   'connections:preview': { request: { provider: ProviderId; conceptId: number }; response: ConnectionPreview };
@@ -36,6 +37,7 @@ const CHANNEL_FLAGS: Record<IpcChannel, true> = {
   'workspaces:add': true,
   'workspaces:switch': true,
   'workspaces:pick-folder': true,
+  'workspaces:head': true,
   'providers:detect': true,
   'reader:lesson': true,
   'reader:start-topic': true,

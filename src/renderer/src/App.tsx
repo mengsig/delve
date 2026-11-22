@@ -19,6 +19,7 @@ import { isSwitcherShortcut } from './switcher';
 import { errorMessage, useRead } from './useRead';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { Knowledge } from './knowledge/Knowledge';
+import { useWorkspaceStudy } from './useWorkspaceStudy';
 
 const readWorkspaces = () => call('workspaces:list', null);
 
@@ -92,6 +93,7 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
   const destinations = useStudyDestinations(nav);
   const main = useRef<HTMLElement>(null);
   const { active, route } = nav;
+  const study = useWorkspaceStudy(active?.id, nav.depth);
   const setup = route.screen === 'setup' || route.screen === 'first-run' || !active;
   useEffect(() => {
     if (!setup) main.current?.focus({ preventScroll: true });
@@ -109,8 +111,8 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
   }
   return <>
     <a className="skip-link" href="#workspace-page">Skip to workspace</a>
-    <section className="shell" aria-label="Delve desktop">
-      <Header screen={route.screen} go={nav.openPrimary} openSwitcher={palette.show} />
+    <section className={route.screen === 'lesson' && !setup ? 'shell shell--lesson' : 'shell'} aria-label="Delve desktop">
+      <Header screen={route.screen} workspace={active} head={study.head} progress={study.progress} go={nav.openPrimary} openSwitcher={palette.show} />
       <main id="workspace-page" ref={main} tabIndex={-1} className="app">
         {nav.error && <div role="alert">{nav.error} <button onClick={palette.show}>Choose workspace</button> <button onClick={() => nav.setError('')}>Dismiss</button></div>}
         {nav.switching && <span className="workspace-wait" role="status">Opening workspace…</span>}
@@ -122,7 +124,7 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
               .catch(cause => nav.setError(errorMessage(cause)));
           }} /> : setup ? <AddWorkspaceForm onOpenSwitcher={palette.show} onAdded={added} onCancel={active ? nav.back : undefined}
             firstRun={route.screen === 'first-run' || !active} />
-            : <Study {...destinations} nav={nav} workspace={active} onSwitch={palette.show}
+            : <Study {...destinations} nav={nav} workspace={active} study={study} onSwitch={palette.show}
               onSelect={id => void nav.select(id, { screen: 'progress' }).catch(cause => nav.setError(errorMessage(cause)))} />}
         </div>
       </main>

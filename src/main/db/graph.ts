@@ -30,8 +30,21 @@ export function readWorkspaceGraph(db: Db, workspaceId: string, includeChangeLes
   const changeSuggestions = suggestedChanges(db, workspaceId);
   const suggestions = tutorSuggestions(db, workspaceId, ids);
   const baseline = db.prepare(`SELECT ref FROM repository_generations WHERE workspace_id = ? AND kind = 'baseline' ORDER BY last_used DESC LIMIT 1`).get(workspaceId);
-  const graph = { ...(Object.keys(changeSuggestions).length ? { changeSuggestions } : {}), ...(baseline ? { baselineCommit: String(baseline.ref) } : {}), workspaceId, concepts, edges, evidence, snapshot: snapshot?.commit_sha ?? null, demo: isDemoWorkspace(db, workspaceId) };
-  return Object.keys(suggestions).length ? { ...graph, suggestions } : graph;
+  return {
+    workspaceId, concepts, edges, evidence, snapshot: snapshot?.commit_sha ?? null, demo: isDemoWorkspace(db, workspaceId),
+    ...(includeChangeLessons ? { atlasConceptIds: atlasIds(db, workspaceId, ids) } : {}),
+    ...(Object.keys(changeSuggestions).length ? { changeSuggestions } : {}),
+    ...(Object.keys(suggestions).length ? { suggestions } : {}),
+    ...(baseline ? { baselineCommit: String(baseline.ref) } : {}),
+  };
+}
+
+function atlasIds(db: Db, workspaceId: string, ids: Set<number>): number[] {
+  return db.prepare('SELECT concept_id AS id FROM workspace_concepts WHERE workspace_id = ? AND on_atlas = 1')
+    .all(workspaceId).flatMap(({ id }) => {
+      assert.ok(typeof id === 'number' && Number.isSafeInteger(id) && id > 0);
+      return ids.has(id) ? [id] : [];
+    });
 }
 
 function suggestedChanges(db: Db, workspaceId: string): NonNullable<WorkspaceGraph['changeSuggestions']> {

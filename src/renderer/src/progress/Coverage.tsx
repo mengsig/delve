@@ -1,5 +1,6 @@
 import { DEPTHS, type Workspace } from '../../../shared/domain';
 import type { WorkspaceCoverage } from '../../../shared/graph';
+import { Meter } from '../design/Meter';
 
 interface CoverageProps {
   workspaces: Workspace[];
@@ -22,11 +23,8 @@ export function Coverage({ workspaces, rows, activeId, onSelect }: CoverageProps
           </button></th>
           {DEPTHS.map(depth => {
             if (!row) return <td key={depth}>Unavailable</td>;
-            const percent = row.total ? Math.round(100 * row.known[depth] / row.total) : 0;
             return <td key={depth}>
-              <b>{row.known[depth]} / {row.total}</b>
-              <meter aria-label={`${workspace.name}, ${depth} depth coverage`} min={0} max={100} value={percent} />
-              <small>{percent}% covered</small>
+              <Meter label={`${workspace.name} · ${depth} depth`} value={row.known[depth]} max={row.total} />
             </td>;
           })}
         </tr>;
