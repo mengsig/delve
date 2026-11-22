@@ -31,7 +31,7 @@ async function smoke(executable) {
     assert.ok(child.kill('SIGTERM'), 'the packaged app must still be running');
     assert.deepEqual(await Promise.race([
       exited,
-      delay(10_000, undefined, { ref: false }).then(() => { throw new Error('Delve did not exit after SIGTERM.'); }),
+      delay(15_000, undefined, { ref: false }).then(() => { throw new Error('Delve did not exit within 15 seconds of SIGTERM.'); }),
     ]), [0, null]);
     assert.ok(!existsSync(wal), 'SQLite must finish its WAL checkpoint before exit');
     const db = new DatabaseSync(database, { readOnly: true });

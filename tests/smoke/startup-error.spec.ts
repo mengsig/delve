@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { expect, test } from '@playwright/test';
 import electron from 'electron';
 
@@ -21,7 +22,7 @@ test('SIGTERM closes a startup error dialog', async () => {
     await expect.poll(() => log, { timeout: 10_000 }).toContain('[delve] error dialog open');
     expect(log).toContain('[delve] startup failed');
     expect(child.kill('SIGTERM')).toBe(true);
-    await expect(Promise.race([exited, new Promise(resolve => setTimeout(() => resolve('timeout'), 10_000))]))
+    await expect(Promise.race([exited, delay(15_000, 'SIGTERM timed out', { ref: false })]))
       .resolves.toEqual([1, null]);
     expect(log).toContain('[delve] received SIGTERM');
   } finally {

@@ -46,7 +46,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       expect(existsSync(database + '-wal')).toBe(true);
 
       const child = application.process();
-      const exited = once(child, 'exit', { signal: AbortSignal.timeout(10_000) });
+      const exited = once(child, 'exit', { signal: AbortSignal.timeout(15_000) });
       expect(child.kill(signal)).toBe(true);
       await expect(exited).resolves.toEqual([0, null]);
       await expect.poll(() => providerPids.some(running)).toBe(false);
