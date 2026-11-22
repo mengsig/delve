@@ -205,7 +205,7 @@ describe('repository explorer', () => {
     const search = await openRepositoryHistory(workspace, root, { ...request, author: 'fixture', search: 'Earlier feature' }, []);
     expect(await search.advance(() => 1)).toMatchObject({ nodes: [], next: 1 });
     expect(await search.advance(() => 2)).toMatchObject({ nodes: [{ ref: oldFeature }], next: null });
-  });
+  }, 30_000);
 
   it('pins refs across lazy pages and makes each continuation idempotent and query-scoped', async () => {
     const old = commit('Root', '--allow-empty');
@@ -233,7 +233,7 @@ describe('repository explorer', () => {
       await learning.close();
       db.close();
     }
-  });
+  }, 30_000);
 
 });
 

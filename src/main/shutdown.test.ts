@@ -32,6 +32,9 @@ describe('shutdown', () => {
       it(`quits on ${signal} on ${platform}`, () => {
         vi.stubGlobal('process', Object.defineProperty(Object.create(process), 'platform', { value: platform }));
         installShutdown();
+        const ready = app.on.mock.calls.find(([event]) => event === 'ready')?.[1];
+        expect(ready).toBeTypeOf('function');
+        ready();
         const handler = vi.mocked(process.on).mock.calls.find(([name]) => name === signal)?.[1];
         expect(handler).toBeTypeOf('function');
         (handler as () => void)();
