@@ -42,3 +42,17 @@ export function TutorPreviewDialog({ data, request, exact, approve, close, error
     </div>
   </dialog>;
 }
+
+export function TutorConsent({ data, request, approve, close, error }: {
+  data: TopicPreview; request: TutorRequest; approve: (always: boolean) => void; close: () => void; error: string;
+}) {
+  return <section className="inline-consent" aria-label="Review what will be sent">
+    <h3>Review what will be sent</h3><p><PreviewMetadata provider={request.provider} data={data} /></p>
+    <ExactRequest data={data} />
+    {error && <p role="alert">{error}</p>}
+    <div className="actions"><button className="primary-btn" onClick={() => approve(false)}>Allow once and continue</button>
+      <button onClick={() => approve(true)}>Always allow for this workspace</button>
+      <button onClick={close}>Close preview</button>
+    </div>
+  </section>;
+}

@@ -93,12 +93,21 @@ function useQueue() {
     dismiss: (job: TutorJob) => { if (!running.current.has(job.key)) replace(job); } };
 }
 
+export interface LessonDraft {
+  mode: 'answer' | 'ask';
+  question: string;
+  revision: string | null;
+  choice?: number;
+  reasoning: string;
+}
+
 function useTutorActivity() {
   const queue = useQueue();
-  const positions = useRef(new Map<string, number>());
+  const [positions] = useState(() => new Map<string, number>());
+  const [drafts] = useState(() => new Map<string, LessonDraft>());
   const [visible, setVisible] = useState<string>();
   const [openError, setOpenError] = useState('');
-  return { ...queue, positions, visible, setVisible, openError, setOpenError };
+  return { ...queue, positions, drafts, visible, setVisible, openError, setOpenError };
 }
 
 const TutorJobsContext = createContext<ReturnType<typeof useTutorActivity> | null>(null);

@@ -19,9 +19,24 @@ const runnable = (block: LessonBlock) => block.type === 'environment' && Boolean
 
 function latestInstrument(body: ReaderLesson): string | null {
   const message = body.messages.findLast(entry => entry.blocks?.some(runnable));
-  if (message?.blocks) return blockKey(message.id, message.blocks.findIndex(runnable));
-  const index = body.blocks.findIndex(runnable);
+  if (message?.blocks) return blockKey(message.id, message.blocks.findLastIndex(runnable));
+  const index = body.blocks.findLastIndex(runnable);
   return index >= 0 ? blockKey(null, index) : null;
+}
+
+export function LatestInstrumentLink({ body, onOpen }: { body: ReaderLesson; onOpen: () => void }) {
+  const scope = useContext(LabContext);
+  const latest = latestInstrument(body);
+  if (!scope || !latest) return null;
+  return <button onClick={() => {
+    onOpen();
+    scope.select(latest);
+    requestAnimationFrame(() => {
+      const chapter = document.getElementById('instrument');
+      chapter?.focus({ preventScroll: true });
+      chapter?.scrollIntoView({ block: 'start', behavior: 'instant' });
+    });
+  }}>Open latest Lab bench</button>;
 }
 
 function instrumentExists(body: ReaderLesson, key: string) {
