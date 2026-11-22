@@ -10,15 +10,17 @@ import type { Document } from './document';
 
 export function lessonContext(db: Db, address: LessonAddress): LessonContext {
   const { workspaceId, conceptId } = address;
-  const row = db.prepare(`SELECT c.key, c.title, c.summary, w.kind FROM workspace_concepts wc
+  const row = db.prepare(`SELECT c.key, c.title, c.summary, c.portable, w.kind FROM workspace_concepts wc
     JOIN concepts c ON c.id = wc.concept_id JOIN workspaces w ON w.id = wc.workspace_id
     WHERE wc.workspace_id = ? AND wc.concept_id = ? AND (c.portable = 1 OR c.workspace_id = w.id)`).get(workspaceId, conceptId);
   if (!row) throw new DomainError('CONCEPT_NOT_FOUND', 'This workspace does not contain the selected concept.');
   const snapshot = learningSnapshot(db, workspaceId, conceptId);
   assert.ok(typeof row.key === 'string' && typeof row.title === 'string' && typeof row.summary === 'string');
+  assert.ok(row.portable === 0 || row.portable === 1);
   assert.ok(!snapshot || (typeof snapshot.id === 'number' && typeof snapshot.commit_sha === 'string'));
   return {
-    workspaceId, conceptId, depth: address.depth, key: row.key, title: row.title, summary: row.summary, topic: row.kind === 'topic',
+    workspaceId, conceptId, depth: address.depth, key: row.key, title: row.title, summary: row.summary,
+    portable: row.portable === 1, topic: row.kind === 'topic',
     demo: isDemoWorkspace(db, workspaceId),
     snapshotId: snapshot ? Number(snapshot.id) : null,
     snapshot: snapshot ? String(snapshot.commit_sha) : null,

@@ -4,8 +4,10 @@ import { openDatabase, type Db } from '../db/connection';
 import { upsertConcept } from '../db/concepts';
 import { recordEvidence } from '../db/evidence';
 import { readWorkspaceCoverage, readWorkspaceGraph } from '../db/graph';
+import { getGlobalKnowledgeGraph } from '../db/knowledge';
 import { addWorkspace } from '../db/workspaces';
 import { readLesson } from '../reader/ipc';
+import { prepareTurn } from '../tutor/prompt';
 import { selectModel } from '../providers/model';
 import { baselineReply, changeReply } from './schemas';
 import { cachedGeneration, digest, latestBrief, persistGeneration, useCachedGeneration, type ApprovedSource } from './store';
@@ -35,6 +37,40 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
+it('plans local usage in a new repository and only tops up the missing portable depth', () => {
+  const first = workspaceId;
+  const map = (key: string, title: string, usage: string) => baselineReply.parse({
+    schema: 'delve.map/1',
+    concepts: [{ key, title, summary: 'A reliable ordered byte stream.', portable: true },
+      { key: usage, title: usage, summary: 'How the repository transports lease updates.', portable: false }],
+    edges: [{ concept: usage, prerequisite: key }],
+    recommendation: { key, reason: 'Start with the transport.' },
+  });
+  const selected = () => source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline);
+  persistGeneration(db, selected(), map('Transmission-Control-Protocol', 'Transmission Control Protocol', 'dispatch-transport'));
+  const tcp = readWorkspaceGraph(db, first).concepts.find(c => c.portable)!;
+  expect(tcp.key).toBe('tcp');
+  recordEvidence(db, { workspaceId: first, conceptId: tcp.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  workspaceId = addWorkspace(db, { kind: 'github', owner: 'acme', repo: 'worker' }).id;
+  persistGeneration(db, selected(), map(' TCP ', 'TCP', 'worker-lease-transport'));
+
+  const graph = readWorkspaceGraph(db, workspaceId);
+  const usage = graph.concepts.find(c => !c.portable)!;
+  expect(graph.concepts.filter(c => c.portable)).toEqual([tcp]);
+  expect(graph.evidence).toMatchObject([{ conceptId: tcp.id, depth: 'medium', workspaceId: first, status: 'demonstrated' }]);
+  expect(graph.suggestions?.medium?.conceptId).toBe(usage.id);
+  expect(getGlobalKnowledgeGraph(db).concepts.filter(c => c.portable)).toMatchObject([
+    { id: tcp.id, masteredDepth: 'medium', learnedWorkspaceId: first,
+      memberships: [{ workspaceId: first }, { workspaceId }] },
+  ]);
+  expect(graph.edges).toEqual([{ conceptId: usage.id, prerequisiteId: tcp.id }]);
+  const preview = { workspaceId, provider: 'codex', intent: { kind: 'teach' } } as const;
+  expect(prepareTurn(db, { ...preview, conceptId: usage.id, depth: 'medium' }).preview.prompt)
+    .toContain('The learner already understands Transmission Control Protocol at medium depth; teach only how this repository uses it.');
+  expect(prepareTurn(db, { ...preview, conceptId: tcp.id, depth: 'low' }).preview.prompt)
+    .toContain('Teach and check only the additional detail needed at low depth.');
+});
+
 describe('atomic repository generation', () => {
   it('preserves canonical portable knowledge at its demonstrated depth and binds both concepts to the approved commit', () => {
     const prior = addWorkspace(db, { kind: 'topic', title: 'Reverse proxies' });
@@ -51,8 +87,9 @@ describe('atomic repository generation', () => {
     expect(graph.suggestions?.medium?.reason).toContain('demonstrated');
     expect(graph.baselineCommit).toBe(baseline);
     expect(db.prepare('SELECT COUNT(*) AS n FROM snapshot_concepts').get()?.n).toBe(2);
-    expect(readLesson(db, { workspaceId, conceptId: portable.id, depth: 'high' }).reused).toBe(false);
+    expect(readLesson(db, { workspaceId, conceptId: portable.id, depth: 'high' }).reused).toBe(true);
     expect(readLesson(db, { workspaceId, conceptId: portable.id, depth: 'medium' }).reused).toBe(true);
+    expect(readLesson(db, { workspaceId, conceptId: portable.id, depth: 'low' }).reused).toBe(false);
   });
 
   it('restores the selected cached baseline and its local definitions after revisiting a revision', () => {

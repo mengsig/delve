@@ -4,7 +4,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { RepoRequest } from '../../shared/repository';
 import { openDatabase, type Db } from '../db/connection';
-import { listWorkspaces } from '../db/workspaces';
+import { addWorkspace, listWorkspaces } from '../db/workspaces';
+import { upsertConcept } from '../db/concepts';
+import { recordEvidence } from '../db/evidence';
 import { ProviderRunner } from '../providers/runner';
 import { makeShimDir, makeTempDir, setupRunner } from '../providers/test-helpers';
 import { RepositoryLearning } from './service';
@@ -49,6 +51,21 @@ it('rejects unlisted paths and stale approval tokens without creating a workspac
   expect(readFiles).not.toHaveBeenCalled();
   expect(() => learning.attach(randomUUID())).toThrow(/Refresh/);
   expect(listWorkspaces(db).activeId).toBeNull();
+});
+
+it('includes global verified depths before a repository is attached', async () => {
+  const prior = addWorkspace(db, { kind: 'git', path: '/prior' });
+  const tcp = upsertConcept(db, { key: 'tcp', title: 'TCP', portable: true, workspaceId: prior.id });
+  recordEvidence(db, { conceptId: tcp.id, workspaceId: prior.id, depth: 'medium', status: 'demonstrated',
+    source: 'check', masteryVerified: true });
+  const staged = await learning.stage({ kind: 'git', path: '/other' });
+  const request: Omit<RepoRequest, 'depth'> = { workspaceId: staged.workspace.id, provider: 'codex',
+    selection: { kind: 'baseline', paths: ['main.rs'], commit } };
+  const preview = await learning.preview({ ...request, depth: 'medium' });
+  const topUp = await learning.preview({ ...request, depth: 'low' });
+  expect(preview.prompt).toContain('worker-lease-transport requiring tcp');
+  expect(preview.prompt).toContain('"key":"tcp","title":"TCP","demonstratedDepth":"medium","known":true');
+  expect(topUp.prompt).toContain('"key":"tcp","title":"TCP","demonstratedDepth":"medium","known":false');
 });
 
 it('uses the Codex config model for repository generation and reports account rejection', async () => {

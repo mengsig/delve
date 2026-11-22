@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { DEPTHS } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
-import type { GraphEdge, WorkspaceCoverage, WorkspaceGraph } from '../../shared/graph';
+import type { WorkspaceCoverage, WorkspaceGraph } from '../../shared/graph';
 import { listWorkspaceConcepts } from './concepts';
 import type { Db } from './connection';
 import { isDemoWorkspace } from './demo';
 import { listWorkspaceEvidence } from './evidence';
 import { learningSnapshot } from './repository-snapshot';
 import { getWorkspace } from './workspaces';
+import { projectedEdges } from './migration-edges';
 
 export function readWorkspaceGraph(db: Db, workspaceId: string, includeChangeLessons = false): WorkspaceGraph {
   const workspace = getWorkspace(db, workspaceId);
@@ -17,13 +18,7 @@ export function readWorkspaceGraph(db: Db, workspaceId: string, includeChangeLes
     .map(({ id, key, title, summary, portable }) => ({ id, key, title, summary, portable }));
   const ids = new Set(concepts.map(({ id }) => id));
   assert.equal(ids.size, concepts.length, 'workspace concept membership must be unique');
-  const edgeRows = db.prepare(
-    `SELECT e.concept_id AS conceptId, e.prerequisite_id AS prerequisiteId
-     FROM workspace_concepts wc JOIN concept_edges e ON e.concept_id = wc.concept_id
-     WHERE wc.workspace_id = ?
-     ORDER BY e.concept_id, e.prerequisite_id`,
-  ).all(workspaceId) as unknown as GraphEdge[];
-  const edges = edgeRows.filter(({ conceptId, prerequisiteId }) => ids.has(conceptId) && ids.has(prerequisiteId));
+  const edges = projectedEdges(db, ids, workspaceId);
   const evidence = listWorkspaceEvidence(db, workspaceId, includeChangeLessons);
   assert.ok(evidence.every((row) => ids.has(row.conceptId)), 'evidence must be in the workspace graph');
   const snapshot = learningSnapshot(db, workspaceId);
@@ -49,12 +44,12 @@ function atlasIds(db: Db, workspaceId: string, ids: Set<number>): number[] {
 
 function suggestedChanges(db: Db, workspaceId: string): NonNullable<WorkspaceGraph['changeSuggestions']> {
   const query = db.prepare(`SELECT kind, ref, reason, json_extract(result, '$.brief.title') AS title,
-    json_extract(proposal, '$.recommendation.key') AS target FROM repository_generations
+    json_extract(result, '$.brief.conceptId') AS briefId, next_concept AS target FROM repository_generations
     WHERE workspace_id = ? AND depth = ? AND kind <> 'baseline' ORDER BY last_used DESC LIMIT 1`);
   const suggestions: NonNullable<WorkspaceGraph['changeSuggestions']> = {};
   for (const depth of DEPTHS) {
     const row = query.get(workspaceId, depth);
-    if (row && row.target === null) {
+    if (row && row.target === row.briefId) {
       assert.ok(row.kind === 'pr' || row.kind === 'commit');
       assert.ok(typeof row.title === 'string' && typeof row.reason === 'string' && typeof row.ref === 'string');
       suggestions[depth] = { kind: row.kind, ref: row.ref, title: row.title, reason: row.reason };
@@ -95,9 +90,9 @@ interface CoverageRow {
 export function readWorkspaceCoverage(db: Db): WorkspaceCoverage[] {
   const rows = db.prepare(
     `SELECT w.id AS workspaceId, COUNT(DISTINCT c.id) AS total,
-       SUM(CASE WHEN e.depth = 'high' THEN 1 ELSE 0 END) AS high,
-       SUM(CASE WHEN e.depth = 'medium' THEN 1 ELSE 0 END) AS medium,
-       SUM(CASE WHEN e.depth = 'low' THEN 1 ELSE 0 END) AS low
+       COUNT(DISTINCT CASE WHEN e.depth = 'high' OR (c.portable = 1 AND e.depth IN ('medium', 'low')) THEN c.id END) AS high,
+       COUNT(DISTINCT CASE WHEN e.depth = 'medium' OR (c.portable = 1 AND e.depth = 'low') THEN c.id END) AS medium,
+       COUNT(DISTINCT CASE WHEN e.depth = 'low' THEN c.id END) AS low
      FROM workspaces w
      LEFT JOIN workspace_concepts wc ON wc.workspace_id = w.id AND wc.on_atlas = 1
      LEFT JOIN concepts c ON c.id = wc.concept_id AND (c.portable = 1 OR c.workspace_id = w.id)

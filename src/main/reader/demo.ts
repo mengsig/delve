@@ -13,6 +13,7 @@ export interface LessonContext {
   title: string;
   summary: string;
   depth: Depth;
+  portable: boolean;
   topic: boolean;
   demo: boolean;
   snapshotId: number | null;

@@ -20,8 +20,9 @@ function saveOpening(db: Db, turn: PreparedTurn, lesson: Document) {
 }
 
 function reuseOpening(db: Db, turn: PreparedTurn): boolean {
-  if (turn.request.intent.kind !== 'teach' || turn.selected.invalidLatest) return false;
+  if (turn.request.intent.kind !== 'teach') return false;
   if (turn.reused) return true;
+  if (turn.selected.invalidLatest) return false;
   const cached = storedLesson(db, turn.context, turn.cacheKey);
   if (!cached.document || cached.invalidLatest || !freshCheckSchema.safeParse(checkIn(cached.document)).success) return false;
   const lesson = cached.document;

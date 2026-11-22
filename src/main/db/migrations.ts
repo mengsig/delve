@@ -220,6 +220,74 @@ export const MIGRATIONS: readonly Migration[] = [
     CREATE INDEX workspace_baselines ON repository_generations (workspace_id, last_used DESC) WHERE kind = 'baseline';
     CREATE INDEX workspace_snapshots ON snapshots (workspace_id, created_at DESC, id DESC);`,
   },
+  {
+    version: 7,
+    name: 'link duplicate repository concepts to portable identities',
+    sql: `CREATE TABLE concept_identity_links (
+      legacy_concept_id INTEGER PRIMARY KEY REFERENCES concepts ON DELETE CASCADE,
+      portable_concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
+      CHECK (legacy_concept_id <> portable_concept_id)
+    );
+    CREATE INDEX concept_identity_portable ON concept_identity_links (portable_concept_id);
+    CREATE TABLE migrated_evidence_archive (
+      id INTEGER PRIMARY KEY,
+      original_evidence_id INTEGER NOT NULL,
+      concept_id INTEGER NOT NULL,
+      portable_concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
+      depth TEXT NOT NULL, status TEXT NOT NULL, source TEXT NOT NULL, note TEXT NOT NULL,
+      workspace_id TEXT, snapshot_id INTEGER, revision INTEGER NOT NULL,
+      recorded_at TEXT NOT NULL, mastery_verified INTEGER NOT NULL
+    );
+    CREATE TEMP TABLE migration_candidates AS
+    SELECT c.id, c.workspace_id, substr(c.key, length('ws/' || c.workspace_id || '/') + 1) AS general_key,
+      lower(trim(c.title)) AS normalized_title
+    FROM concepts c JOIN workspaces w ON w.id = c.workspace_id
+    WHERE c.portable = 0 AND w.kind <> 'topic' AND w.source NOT LIKE 'Demo:%'
+      AND substr(c.key, 1, length('ws/' || c.workspace_id || '/')) = 'ws/' || c.workspace_id || '/'
+      AND substr(c.key, length('ws/' || c.workspace_id || '/') + 1) <> ''
+      AND substr(c.key, length('ws/' || c.workspace_id || '/') + 1) NOT LIKE 'change/%'
+      AND substr(c.key, length('ws/' || c.workspace_id || '/') + 1) NOT LIKE 'Demo:%'
+      AND c.title NOT LIKE 'Demo:%';
+    DELETE FROM migration_candidates WHERE general_key NOT IN (
+      SELECT general_key FROM migration_candidates GROUP BY general_key
+      HAVING count(DISTINCT workspace_id) >= 2 AND count(DISTINCT normalized_title) = 1
+    ) OR EXISTS (
+      SELECT 1 FROM concepts existing WHERE existing.key = migration_candidates.general_key
+        AND (existing.portable <> 1 OR lower(trim(existing.title)) <> migration_candidates.normalized_title)
+    );
+    INSERT INTO concepts (key, title, summary, portable, workspace_id, created_at, updated_at)
+    SELECT m.general_key, c.title, c.summary, 1, NULL, c.created_at, c.updated_at
+    FROM migration_candidates m JOIN concepts c ON c.id = m.id
+    WHERE m.id = (SELECT min(other.id) FROM migration_candidates other WHERE other.general_key = m.general_key)
+      AND NOT EXISTS (SELECT 1 FROM concepts existing WHERE existing.key = m.general_key);
+    INSERT INTO concept_identity_links (legacy_concept_id, portable_concept_id)
+    SELECT m.id, c.id FROM migration_candidates m JOIN concepts c ON c.key = m.general_key AND c.portable = 1;
+    INSERT INTO workspace_concepts (workspace_id, concept_id, on_atlas)
+    SELECT wc.workspace_id, l.portable_concept_id, max(wc.on_atlas)
+    FROM workspace_concepts wc JOIN concept_identity_links l ON l.legacy_concept_id = wc.concept_id
+    GROUP BY wc.workspace_id, l.portable_concept_id
+    ON CONFLICT (workspace_id, concept_id) DO UPDATE SET on_atlas = max(on_atlas, excluded.on_atlas);
+    UPDATE workspace_concepts SET on_atlas = 0 WHERE concept_id IN (SELECT legacy_concept_id FROM concept_identity_links);
+    INSERT INTO migrated_evidence_archive (original_evidence_id, concept_id, portable_concept_id, depth, status,
+      source, note, workspace_id, snapshot_id, revision, recorded_at, mastery_verified)
+    SELECT e.id, e.concept_id, l.portable_concept_id, e.depth, e.status, e.source, e.note,
+      e.workspace_id, e.snapshot_id, e.revision, e.recorded_at, e.mastery_verified
+    FROM evidence e JOIN concept_identity_links l ON l.legacy_concept_id = e.concept_id
+    UNION ALL
+    SELECT e.id, e.concept_id, e.concept_id, e.depth, e.status, e.source, e.note,
+      e.workspace_id, e.snapshot_id, e.revision, e.recorded_at, e.mastery_verified
+    FROM evidence e WHERE e.concept_id IN (SELECT portable_concept_id FROM concept_identity_links);
+    INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at, mastery_verified)
+    SELECT portable_concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at, mastery_verified
+    FROM (SELECT *, row_number() OVER (PARTITION BY portable_concept_id, depth ORDER BY mastery_verified DESC,
+      CASE status WHEN 'demonstrated' THEN 2 WHEN 'partial' THEN 1 ELSE 0 END DESC,
+      revision DESC, recorded_at DESC, original_evidence_id DESC) AS rank FROM migrated_evidence_archive)
+    WHERE rank = 1
+    ON CONFLICT (concept_id, depth) DO UPDATE SET status = excluded.status, source = excluded.source,
+      note = excluded.note, workspace_id = excluded.workspace_id, snapshot_id = excluded.snapshot_id,
+      revision = excluded.revision, recorded_at = excluded.recorded_at, mastery_verified = excluded.mastery_verified;
+    DROP TABLE migration_candidates;`,
+  },
 ];
 
 function assertOrdered(migrations: readonly Migration[]): void {

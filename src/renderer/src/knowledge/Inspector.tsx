@@ -8,6 +8,7 @@ import { LessonStart } from '../reader/LessonStart';
 import { useDetectedProvider, type useProviderDetection } from '../SetupProvider';
 import { errorMessage } from '../useRead';
 import { Connections } from './Connections';
+import { SharedMarker, UsedIn } from './SharedUsage';
 import { stateLabels, type Place } from './areas';
 import type { KnowledgeActions } from './Knowledge';
 
@@ -47,13 +48,13 @@ export function Inspector(props: Props) {
     <div className="knowledge-inspector-scroll">
       <div className="knowledge-status"><Icon name={state === 'mastered' ? 'check' : state === 'locked' ? 'lock' : 'route'} />
         {suggested ? 'Suggested next' : stateLabels[state]}</div>
-      <h3>{concept.title}</h3>{concept.summary && <p>{concept.summary}</p>}
+      <h3>{concept.title}</h3><SharedMarker concept={concept} />{concept.summary && <p>{concept.summary}</p>}
       <div className="knowledge-reason"><h4>{state === 'mastered' ? 'What you know' : state === 'locked' ? 'What comes first?' : 'Why learn this now?'}</h4>
-        <p>{state === 'mastered' ? 'You demonstrated this concept at ' + depth + ' depth.' : reason}</p></div>
+        <p>{state === 'mastered' ? 'You demonstrated this concept at ' + (concept.portable ? concept.masteredDepth ?? depth : depth) + ' depth.' : reason}</p></div>
       <button className="knowledge-disclosure" aria-expanded={details} onClick={() => setDetails(!details)}>
         <Icon name="knowledge" />Connections &amp; details <span aria-hidden="true">{details ? '−' : '+'}</span></button>
       {details && <div className="knowledge-more">
-        <p>{concept.bridge && 'Shared concept · '}Used in {concept.memberships.map(w => w.workspaceName).join(', ')}.</p>
+        <UsedIn concept={concept} />
         {concept.masteredDepth && <p>Deepest verified depth: {concept.masteredDepth}.</p>}
         {concept.masteryState === 'skipped' && <p>Practice was paused in a previous lesson.</p>}
         <div className="knowledge-actions"><button onClick={props.focus}>{props.focused ? 'Show all connections' : 'Focus neighbourhood'}</button>
