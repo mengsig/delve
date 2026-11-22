@@ -58,7 +58,7 @@ async function generateBrief(page: Page, directory: string, depth: 'medium' | 'l
   });
   if (depth === 'medium') {
     await page.getByRole('button', { name: 'Progress', exact: true }).click();
-    await expect(page.getByRole('progressbar')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Repository generation' }).getByRole('progressbar')).toBeVisible();
     unlinkSync(gate);
     const open = page.getByRole('button', { name: 'Open change brief', exact: true });
     await expect(open).toBeVisible();
@@ -100,9 +100,11 @@ async function askTutor(page: Page, directory: string) {
   const answer = 'A retry is useful when a failure can clear between attempts.';
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({ lesson: { schema: 'delve.lesson/1', source: null,
     blocks: [{ type: 'prose', heading: 'Transient failures', text: answer }] }, recommendation: null, assessment: null, observation: null }));
+  await page.getByRole('button', { name: 'Close preview' }).click();
+  await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
   await page.getByRole('textbox', { name: 'Ask your tutor' }).fill('When does another attempt help?');
   await page.getByRole('button', { name: 'Ask question' }).click();
-  const preview = page.getByRole('dialog', { name: 'Review what will be sent' });
+  const preview = page.getByRole('region', { name: 'Review what will be sent' });
   await preview.getByText('Exact request', { exact: true }).click();
   await expect(preview).toContainText('The attempts constant increases from 1 to 3.');
   await preview.getByRole('button', { name: 'Allow once and continue' }).click();

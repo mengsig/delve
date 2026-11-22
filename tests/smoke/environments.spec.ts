@@ -17,6 +17,7 @@ test('records a dispatch decision for practice without advancing the lesson', as
   await lab.getByRole('button', { name: 'Accept A’s write' }).click();
   await expect(page.getByRole('log')).toContainText('You accepted generation 7 while generation 8 was active.');
   await expect(page.getByRole('button', { name: /Next lesson:/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
   await page.getByRole('textbox', { name: 'Ask the demo tutor' }).fill('What should I practice next?');
   await page.getByRole('button', { name: 'Ask question' }).click();
   await expect(page.getByRole('log').getByRole('heading', { name: 'From your last run' })).toBeVisible();

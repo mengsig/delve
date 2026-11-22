@@ -5,11 +5,11 @@ import { test } from './desktop';
 async function checkClearance(page: Page, name: string) {
   const instrument = page.locator('.instrument-frame');
   const button = page.frameLocator('.instrument-frame').getByRole('button', { name: 'Advance one tick →' });
-  await instrument.scrollIntoViewIfNeeded();
+  await button.scrollIntoViewIfNeeded();
   await expect(button).toBeInViewport({ ratio: 1 });
-  await expect.poll(() => page.locator('.reader-scroll').evaluate(element => element.scrollHeight <= element.clientHeight)).toBe(true);
+  await expect.poll(() => page.locator('.reader-scroll').evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
   await expect.poll(async () => instrument.evaluate(frame => {
-    const box = frame.getBoundingClientRect();
+    const box = frame.closest('.reader-scroll')!.getBoundingClientRect();
     const composer = document.querySelector('.reader-composer')!.getBoundingClientRect();
     return composer.top - box.bottom;
   })).toBeGreaterThanOrEqual(0);
@@ -28,8 +28,9 @@ async function checkClearance(page: Page, name: string) {
 test('keeps lesson instruments clear at supported window sizes', async ({ desktop: { page, application } }) => {
   expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getMinimumSize())).toEqual([960, 640]);
   await page.getByRole('button', { name: 'Open lesson →' }).click();
+  await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
   await expect(page.frameLocator('.instrument-frame').getByRole('button', { name: 'Advance one tick →' })).toBeVisible();
-  for (const [name, width, height] of [['minimum', 960, 640], ['1280', 1280, 800], ['default', 1200, 800]] as const) {
+  for (const [name, width, height] of [['minimum', 960, 640], ['1280', 1280, 720], ['default', 1200, 800]] as const) {
     await application.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setSize(size.width, size.height), { width, height });
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getSize())).toEqual([width, height]);
     await checkClearance(page, name);

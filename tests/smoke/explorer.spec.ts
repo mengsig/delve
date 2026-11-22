@@ -14,7 +14,7 @@ async function mapFixture(page: Page, path: string, directory: string, fromAtlas
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({ ...baseline, schema: 'delve.map/1' }));
   if (fromAtlas) await page.getByRole('button', { name: 'Explore demo atlas' }).click();
   await withinBudget(page, 'Paste a repository and open its map', fromAtlas ? 2 : 1, async () => {
-    if (fromAtlas) await page.getByRole('button', { name: '+ Add', exact: true }).click();
+    if (fromAtlas) await page.getByRole('button', { name: 'Add a workspace', exact: true }).click();
     await expect(page.locator('#source-input')).toBeFocused();
     await page.keyboard.insertText(path);
     const build = page.getByRole('button', { name: 'Add and build map' });

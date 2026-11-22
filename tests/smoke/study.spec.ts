@@ -71,28 +71,28 @@ test('navigates the same graph by keyboard on the terrain and in Folio', async (
 test('lesson depth, local conversations and linked change concepts work offline', async ({ desktop: { page } }) => {
   await page.getByRole('button', { name: 'Open lesson →' }).click();
   await expect(page.getByRole('heading', { name: 'Worker leases', level: 1 })).toBeVisible();
-  await page.getByRole('button', { name: 'Low · Protocol detail' }).click();
+  await page.getByLabel('Reading depth').selectOption('low');
   await page.getByText('Text alternative', { exact: true }).click();
   await expect(page.locator('#instrument details')).toContainText('Compare before committing.');
   await expect(page.locator('pre mark')).toBeVisible();
+  await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
   await page.getByRole('textbox', { name: 'Ask the demo tutor' }).fill('How does the result writer check ownership?');
   await page.getByRole('button', { name: 'Ask question' }).click();
   await expect(page.getByRole('log')).toContainText('How does the result writer check ownership?');
   await expect(page.getByRole('log').getByRole('heading', { name: 'Follow the late result' })).toBeVisible();
+  await page.getByRole('button', { name: 'Answer check' }).click();
   await page.getByRole('button', { name: 'Task ID and worker start time' }).click();
-  await expect(page.getByRole('log')).toContainText('That answer was incorrect');
+  await page.getByRole('button', { name: 'Check answer' }).click();
+  await expect(page.getByRole('log')).toContainText('Correction');
   await expect(page.getByRole('button', { name: /Next lesson:/ })).toHaveCount(0);
   await expect(page.getByRole('log')).toContainText('Let’s look at the decision again');
-  for (const [question, answer] of [
-    ['The active claim is generation 21', 'Reject the stale generation'],
-    ['A result and a reassignment', 'Compare the active generation'],
-    ['A is replaced by B', 'A has a stale generation'],
-  ] as const) {
-    await expect(page.locator('#checkpoint')).toContainText(question);
-    await page.locator('#checkpoint textarea').fill(answer);
-    await page.getByRole('button', { name: 'Submit answer' }).click();
+  for (const option of [1, 2, 3]) {
+    const prompt = await page.locator('#check-prompt').innerText();
+    await page.locator('.answer-options button').nth(option).click();
+    await page.getByRole('button', { name: 'Check answer' }).click();
+    await expect(page.getByRole('heading', { name: prompt })).toHaveCount(0);
   }
-  await expect(page.getByRole('region', { name: 'Lesson complete' })).toContainText('You understand this concept');
+  await expect(page.getByRole('region', { name: 'Lesson complete' })).toContainText('Worker leases mastered');
   await page.getByRole('button', { name: '← Back to atlas' }).click();
   await page.getByRole('button', { name: 'Open lesson →' }).click();
   await expect(page.getByRole('log')).toContainText('How does the result writer check ownership?');

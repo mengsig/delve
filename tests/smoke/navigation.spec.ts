@@ -13,11 +13,21 @@ test('opens primary destinations and switches workspace in one action', async ({
       await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
     });
   }
+  const header = page.locator('.windowbar');
+  await button(page, 'Knowledge').click();
+  await expect(header).toContainText('Knowledge · All workspaces');
+  await expect(header).toContainText('Demo snapshot');
+  await expect(header.getByRole('meter', { name: /Workspace mastery/ })).toHaveJSProperty('value', 2);
+  await button(page, 'Add a workspace').click();
+  await expect(header).toContainText('Workspace setup');
+  await expect(header.locator('.workspace-identity')).toContainText('Archon (demo)');
+  await button(page, 'Atlas').click();
   const workspace = button(page, 'Photography (demo)');
   await withinBudget(page, 'Switch workspace directly from Atlas', 1, async () => {
     await expect(workspace).toBeInViewport({ ratio: 1 });
     await workspace.click();
     await expect(page.getByRole('heading', { name: 'Topic atlas.' })).toBeVisible();
+    await expect(header.locator('.workspace-identity')).toContainText('Photography (demo)');
   });
   const guide = page.getByRole('complementary', { name: 'Field guide' });
   await expect(guide.getByRole('button').first()).toBeInViewport({ ratio: 1 });
@@ -48,6 +58,7 @@ test('continues a lesson, environment or change in one click after a restart', a
   await withinBudget(page, 'Continue the exact environment across workspaces', 1, async () => {
     await button(page, /Continue environment The handoff bench/).click();
     await expect(page.locator('#instrument')).toBeFocused();
+    await expect(page.locator('.shell-location')).toHaveText('Study / Lab');
     await expect(page.frameLocator('.instrument-frame').getByRole('button', { name: 'Advance one tick →' })).toBeInViewport();
   });
   await button(page, 'Changes').click();
@@ -62,7 +73,7 @@ test('continues a lesson, environment or change in one click after a restart', a
 test('finds views, workspaces and recent lessons in the keyboard palette', async ({ desktop: { page } }) => {
   await button(page, 'Open lesson →').click();
   await expect(page.getByRole('heading', { name: 'Worker leases' })).toBeVisible();
-  await button(page, '+ Add').click();
+  await button(page, 'Add a workspace').click();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('heading', { name: 'Worker leases' })).toBeVisible();
   await button(page, 'Atlas').click();
@@ -88,6 +99,7 @@ test('finds views, workspaces and recent lessons in the keyboard palette', async
 
 test('preserves a draft when moving or selecting words with Option+Left', async ({ desktop: { page } }) => {
   await button(page, 'Open lesson →').click();
+  await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Ask the demo tutor' });
   const question = 'How does a lease expire?';
   await composer.fill(question);

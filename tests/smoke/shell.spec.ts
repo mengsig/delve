@@ -17,13 +17,13 @@ async function checkDocumentScroll(page: Page, name: string) {
   }
 }
 
-test('keeps the shell inset and document scrolling usable in both themes', async ({ desktop: { page, application } }) => {
+test('keeps the shell visible and route scrolling usable in both themes', async ({ desktop: { page, application } }) => {
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1280, 800));
   await expect(page.locator('.react-flow__node')).toHaveCount(6);
   for (const theme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
-    expect(await page.locator('.shell').evaluate(element => element.getBoundingClientRect().top)).toBe(12);
+    await expect(page.getByRole('button', { name: 'Switch workspace' })).toBeInViewport({ ratio: 1 });
     expect(await page.evaluate(() => getComputedStyle(document.documentElement, '::-webkit-scrollbar').width)).toBe('8px');
     expect(await page.evaluate(() => getComputedStyle(document.documentElement, '::-webkit-scrollbar-track').backgroundColor)).toBe('rgba(0, 0, 0, 0)');
     if (process.env.SHELL_CAPTURE) await page.screenshot({ path: `.archon/evidence/${process.env.SHELL_CAPTURE}-${theme}.png` });
@@ -59,7 +59,9 @@ test('keeps the shell inset and document scrolling usable in both themes', async
   await checkDocumentScroll(page, 'folio');
   await page.getByRole('button', { name: 'Open lesson →' }).click();
   await expect(page.getByRole('heading', { name: 'Worker leases', exact: true })).toBeVisible();
-  await checkDocumentScroll(page, 'lesson');
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(await page.evaluate(() => innerHeight));
+  await expect(page.getByRole('textbox', { name: /Explain your reasoning/ })).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole('meter', { name: /Workspace mastery/ })).toBeInViewport({ ratio: 1 });
   await page.getByRole('button', { name: 'Changes', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Reject late worker results.' })).toBeVisible();
   await checkDocumentScroll(page, 'change');

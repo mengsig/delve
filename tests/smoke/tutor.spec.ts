@@ -7,9 +7,9 @@ import { withinBudget } from './action-budget';
 test.use({ tutorCli: true });
 
 const explanation = { type: 'prose', heading: 'A narrower route', text: 'Compare the prefix lengths of routes that match the destination.' };
-const check = { type: 'check', kind: 'short-answer', prompt: 'Why is a /24 preferred to a matching /16?', expected: ['The prefix is longer.'] };
+const check = { type: 'check', kind: 'prediction', prompt: 'Why is a /24 preferred to a matching /16?', options: ['It is newer', 'It covers fewer addresses', 'It uses more hops', 'It ignores the destination'], expected: 1 };
 const envelope = { observation: null, assessment: null, recommendation: null };
-const add = (page: Page) => page.getByRole('button', { name: '+ Add', exact: true });
+const add = (page: Page) => page.getByRole('button', { name: 'Add a workspace', exact: true });
 const source = (page: Page) => page.getByRole('textbox', { name: 'Topic or repository' });
 const start = (page: Page) => page.getByRole('button', { name: 'Allow once and start lesson' });
 
@@ -58,8 +58,9 @@ test.describe('first run', () => {
     await withinBudget(page, 'Approve workspace tutoring from first run', 1, async () => {
       await page.getByRole('button', { name: 'Always allow for this workspace' }).click();
       await expect(page.getByRole('heading', { name: explanation.heading })).toBeInViewport();
-      await expect(page.getByRole('button', { name: 'Revoke workspace tutor permission' })).toBeVisible();
     });
+    await page.getByRole('button', { name: 'Lesson notes' }).click();
+    await expect(page.getByRole('button', { name: 'Revoke workspace tutor permission' })).toBeVisible();
   });
 });
 
@@ -94,24 +95,28 @@ test('shows the exact opening request before sending, then cancels, retries and 
   await expect(page.getByRole('alert')).toContainText('cancelled');
   unlinkSync(gate);
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Allow once and continue' }).click();
+  await page.getByRole('region', { name: 'Review what will be sent' }).getByRole('button', { name: 'Allow once and continue' }).click();
   await expect(page.getByRole('heading', { name: explanation.heading })).toBeVisible();
 
-  writeFileSync(responseFile, JSON.stringify({ assessment: true, observation: 'You recognized prefix specificity.',
+  writeFileSync(responseFile, JSON.stringify({ assessment: true, observation: 'You recognized prefix specificity.', reasoningFeedback: 'A smaller destination range makes the match more specific.',
     recommendation: null,
     lesson: { schema: 'delve.lesson/1', source: null, blocks: [{ type: 'trace', steps: ['Match destination', 'Compare lengths', 'Choose /24'] },
-      { type: 'check', kind: 'short-answer', prompt: 'A /20 and a /28 match. Which wins, and why?', expected: ['The /28 has the longer prefix.'] }] } }));
-  await page.getByRole('textbox', { name: check.prompt }).fill('It covers a smaller destination network.');
+      { type: 'check', kind: 'prediction', prompt: 'A /20 and a /28 match. Which wins, and why?', options: ['The /20', 'Whichever is older', 'The /28', 'Neither'], expected: 2 }] } }));
+  await page.getByRole('button', { name: 'It covers fewer addresses' }).click();
+  await page.getByRole('textbox', { name: /Explain your reasoning/ }).fill('It covers a smaller destination network.');
   await page.getByRole('button', { name: 'Preview answer', exact: true }).click();
   await expect(page.getByRole('dialog').getByLabel('Exact provider request')).toContainText('It covers a smaller destination network.');
+  const exactAnswer = await page.getByRole('dialog').getByLabel('Exact provider request').innerText();
   await page.keyboard.press(shortcut);
   await expect(page.locator('dialog[open]')).toHaveCount(1);
   await expect(page.getByRole('dialog', { name: 'Review what will be sent' })).toBeVisible();
-  await page.getByRole('dialog').getByRole('button', { name: 'Always allow for this workspace' }).click();
+  await exerciseAnswerRecovery(page, gate);
   await expect(page.getByRole('log')).toContainText('You recognized prefix specificity.');
+  await expect(page.getByRole('log')).toContainText('A smaller destination range makes the match more specific.');
   await expect(page.getByRole('log')).toContainText('Choose /24');
   await expect(page.getByRole('heading', { name: 'A /20 and a /28 match. Which wins, and why?' })).toBeVisible();
-  await expect(page.getByRole('complementary')).toContainText('Not yet marked understood');
+  expect(JSON.parse(readFileSync(receipt, 'utf8')).stdin).toBe(exactAnswer);
+  await expect(page.getByRole('meter', { name: 'Correct checks in a row' })).toHaveJSProperty('value', 1);
 });
 
 test('keeps an approved turn running in the background and reopens the lesson', async ({ desktop: { page, directory } }) => {
@@ -134,6 +139,21 @@ test('keeps an approved turn running in the background and reopens the lesson', 
   await expect(activity).toHaveCount(0);
 });
 
+async function exerciseAnswerRecovery(page: Page, gate: string) {
+  const choice = page.getByRole('button', { name: 'It covers fewer addresses' });
+  const rationale = page.getByRole('textbox', { name: /Explain your reasoning/ });
+  const meter = page.getByRole('meter', { name: 'Correct checks in a row' });
+  writeFileSync(gate, '');
+  await page.getByRole('dialog').getByRole('button', { name: 'Always allow for this workspace' }).click();
+  await page.getByRole('button', { name: 'Cancel tutor request' }).click();
+  await expect(page.getByRole('alert')).toContainText('cancelled');
+  await expect(choice).toHaveAttribute('aria-pressed', 'true');
+  await expect(rationale).toHaveValue('It covers a smaller destination network.');
+  await expect(meter).toHaveJSProperty('value', 0);
+  unlinkSync(gate);
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+}
+
 function writeReply(directory: string) {
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({
     ...envelope, lesson: { schema: 'delve.lesson/1', source: null, blocks: [
@@ -151,6 +171,7 @@ test('keeps reading position and scopes tutor permission to a workspace and prov
   await expect(page.getByRole('heading', { name: explanation.heading })).toBeVisible();
   writeReply(directory);
 
+  await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
   const draft = page.getByRole('textbox', { name: 'Ask your tutor' });
   await draft.fill('How does IPv6 work?');
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
@@ -160,38 +181,54 @@ test('keeps reading position and scopes tutor permission to a workspace and prov
   writeFileSync(gate, '');
   await dialog.getByRole('button', { name: 'Always allow for this workspace' }).click();
   await expect(page.getByText('Preparing response…')).toBeVisible();
-  const readPosition = () => page.evaluate(() => globalThis.scrollY);
-  await page.evaluate(() => globalThis.scrollTo(0, 200));
+  const transcript = page.locator('.reader-scroll');
+  const readPosition = () => transcript.evaluate(node => node.scrollTop);
+  await transcript.evaluate(node => node.scrollTo({ top: 30, behavior: 'instant' }));
   const position = await readPosition();
   expect(position).toBeGreaterThan(0);
   unlinkSync(gate);
   await expect(page.getByRole('log')).toContainText('The rule also applies to IPv6.');
   expect(await readPosition()).toBe(position);
+  await page.getByRole('button', { name: 'New reply' }).click();
+  await expect.poll(readPosition).toBeGreaterThan(position);
 
-  const restarted = await desktop.restart();
+  await verifyPermissionAfterRestart(await desktop.restart(), directory);
+});
+
+async function verifyPermissionAfterRestart(restarted: Page, directory: string) {
   await restarted.getByRole('button', { name: 'Open lesson →' }).click();
+  const notes = restarted.getByRole('button', { name: 'Lesson notes' });
+  const closeNotes = restarted.getByRole('dialog').getByRole('button', { name: 'Close', exact: true });
+  await notes.click();
   const revoke = restarted.getByRole('button', { name: 'Revoke workspace tutor permission' });
   await expect(revoke).toBeVisible();
   await restarted.getByLabel('Tutor', { exact: true }).selectOption('claude');
   await expect(revoke).toHaveCount(0);
   await restarted.getByLabel('Tutor', { exact: true }).selectOption('codex');
   await expect(revoke).toBeVisible();
+  await closeNotes.click();
+  await restarted.getByRole('button', { name: 'Ask tutor', exact: true }).click();
   await restarted.getByRole('textbox', { name: 'Ask your tutor' }).fill('Does this persist?');
   await restarted.getByRole('button', { name: 'Ask question' }).click();
   await expect(restarted.getByRole('log')).toContainText('Does this persist?');
+  await notes.click();
   await revoke.click();
+  await closeNotes.click();
   await restarted.getByRole('textbox', { name: 'Ask your tutor' }).fill('Another example?');
   await restarted.getByRole('button', { name: 'Ask question' }).click();
-  const afterRevoking = restarted.getByRole('dialog');
+  const afterRevoking = restarted.getByRole('region', { name: 'Review what will be sent' });
   await expect(afterRevoking.getByRole('button', { name: 'Allow once and continue' })).toBeVisible();
   await afterRevoking.getByRole('button', { name: 'Always allow for this workspace' }).click();
   await expect(restarted.getByRole('log')).toContainText('Another example?');
+  await notes.click();
   await expect(revoke).toBeVisible();
 
+  await closeNotes.click();
   writeOpening(directory);
   await add(restarted).click();
   await typeTopic(restarted, 'Acoustics');
   await start(restarted).click();
   await expect(restarted.getByRole('heading', { name: explanation.heading })).toBeVisible();
+  await notes.click();
   await expect(revoke).toHaveCount(0);
-});
+}

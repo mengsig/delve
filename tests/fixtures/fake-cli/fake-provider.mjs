@@ -52,7 +52,8 @@ function tutorFeedback(text, stdin) {
   const reason = check.reasoning?.trim().slice(0, 160);
   const verdict = check.correct ? 'matches the saved reference' : 'conflicts with the saved reference';
   return JSON.stringify({ ...reply, assessment: check.correct,
-    observation: `Selected “${check.answer.slice(0, 200)}” ${verdict}. ${reason ? 'Reasoning received: ' + reason : 'No reasoning supplied.'}` });
+    ...(reason && { reasoningFeedback: 'Reasoning received: ' + reason }),
+    observation: `Selected “${check.answer.slice(0, 200)}” ${verdict}.` });
 }
 
 function succeed(stdin) {
