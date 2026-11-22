@@ -6,6 +6,7 @@ installer=$repo/install.sh
 root=$(mktemp -d "${TMPDIR:-/tmp}/delve-installer-tests.XXXXXX")
 trap 'rm -rf "$root"' 0
 trap 'exit 1' HUP INT TERM
+root=$(cd "$root" && pwd -P)
 mkdir -p "$root/bin"
 
 cat > "$root/bin/uname" <<'MOCK'
@@ -229,13 +230,37 @@ done
 invoke_installer || fail 'install after uninstall failed'
 mv "${desktop%/*}" "$case_dir/desktop-files"
 ln -s "$case_dir/desktop-files" "${desktop%/*}"
-rm "$icon"
+mv "$icon" "$case_dir/original-icon"
 ln -s "$share/foreign.txt" "$icon"
 invoke_installer --uninstall || fail 'uninstall with symlinks failed'
 expect_output "Left $desktop"
 expect_output "Left $icon"
+expect_output 'Delve uninstall is incomplete.'
 [ -s "$case_dir/desktop-files/delve.desktop" ] || fail 'uninstall followed symlinked desktop directory'
 [ -L "$icon" ] && [ "$(cat "$icon")" = 'foreign file' ] || fail 'uninstall modified unrelated icon symlink'
+[ -f "$share/installed-version" ] || fail 'incomplete uninstall lost the installed-version receipt'
+rm "${desktop%/*}" "$icon"
+mv "$case_dir/desktop-files" "${desktop%/*}"
+mv "$case_dir/original-icon" "$icon"
+invoke_installer --uninstall || fail 'retry after restoring install paths failed'
+expect_absent "$desktop"
+expect_absent "$icon"
+expect_absent "$share/installed-version"
+expect_output 'Delve uninstalled.'
+
+prepare_case linux-home-alias Linux x86_64 "$linux_asset" success 0.1.0
+invoke_installer || fail 'install in real directory failed'
+installed_home=$home
+ln -s "$case_dir" "$root/home-alias"
+home=$root/home-alias/home
+if invoke_installer; then fail 'install traversed a symlink above HOME'; fi
+expect_output 'contains a symlink'
+if invoke_installer --uninstall; then fail 'uninstall traversed a symlink above HOME'; fi
+expect_output 'contains a symlink'
+[ -x "$installed_home/.local/share/delve/Delve.AppImage" ] || fail 'uninstall removed files through the symlink'
+home=$installed_home
+invoke_installer --uninstall || fail 'uninstall from the physical HOME failed'
+expect_absent "$installed_home/.local/share/delve/Delve.AppImage"
 
 prepare_case linux-foreign-only Linux x86_64 "$linux_asset" success 0.1.0
 mkdir -p "$home/.local/share/applications"
@@ -269,7 +294,16 @@ expect_absent "$app/Contents/program"
 expect_absent "$framework/Versions/Current"
 [ "$(cat "$app/Contents/keep")" = 'foreign bundle file' ] || fail 'macOS uninstall removed a foreign file'
 [ "$(cat "$case_dir/external/file")" = 'mock framework' ] || fail 'macOS uninstall followed a bundle symlink'
+expect_output "Removed 2 recorded files and directories from $app"
 expect_output "Left $app"
+expect_output 'Delve uninstall is incomplete.'
+[ -f "$home/.local/share/delve/mac-install-dir" ] || fail 'incomplete macOS uninstall lost the receipt'
+rm "$framework/Versions/A" "$app/Contents/keep"
+mv "$case_dir/external" "$framework/Versions/A"
+invoke_installer --uninstall || fail 'macOS uninstall retry failed'
+expect_absent "$app"
+expect_absent "$home/.local/share/delve/mac-install-dir"
+expect_output 'Delve uninstalled.'
 
 prepare_case mac-legacy Darwin arm64 "$mac_asset" success 0.1.0
 app=$home/Applications/Delve.app

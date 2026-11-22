@@ -55,12 +55,21 @@ valid_version() {
 }
 safe_directory() {
   case $1 in ''|/) return 0 ;; esac
-  if [ "$1" != "$HOME" ]; then safe_directory "${1%/*}" || return 1; fi
+  safe_directory "${1%/*}" || return 1
   [ ! -L "$1" ] && { [ ! -e "$1" ] || [ -d "$1" ]; }
 }
 
 leave() { printf 'Left %s\n' "$1"; }
+defer_removal() {
+  uninstall_pending=yes
+  leave "$1"
+}
+
 report_uninstall() {
+  if [ "$uninstall_pending" = yes ]; then
+    printf 'Delve uninstall is incomplete. Fix the paths listed above and retry.\n'
+    return
+  fi
   if [ -L "$1" ] || [ -e "$1" ]; then
     printf 'Delve uninstall finished.\n'
   else
@@ -70,14 +79,14 @@ report_uninstall() {
 
 remove_entry() {
   if ! safe_directory "${1%/*}"; then
-    leave "$1 (parent is a symlink or is not a directory)"
+    defer_removal "$1 (parent is a symlink or is not a directory)"
     return
   fi
   if [ ! -e "$1" ] && [ ! -L "$1" ]; then return; fi
   case $2 in
     d)
       if [ -L "$1" ] || [ ! -d "$1" ]; then
-        leave "$1 (unexpected file type)"
+        defer_removal "$1 (unexpected file type)"
         return
       fi
       if ! rmdir "$1" 2>/dev/null; then
@@ -88,20 +97,25 @@ remove_entry() {
     f|l)
       if { [ "$2" = f ] && { [ -L "$1" ] || [ ! -f "$1" ]; }; } ||
         { [ "$2" = l ] && [ ! -L "$1" ]; }; then
-        leave "$1 (unexpected file type)"
+        defer_removal "$1 (unexpected file type)"
         return
       fi
       rm -f "$1" || die "Could not remove $1."
       ;;
     *) die 'Invalid installation record.' ;;
   esac
-  if [ "${3:-}" != quiet ]; then printf 'Removed %s\n' "$1"; fi
+  if [ "${3:-}" = bundle ]; then
+    bundle_removed=$((bundle_removed + 1))
+  else
+    printf 'Removed %s\n' "$1"
+  fi
 }
 
 installed_bin() { [ -L "$bin" ] && [ "$(readlink "$bin")" = "$launcher" ]; }
+has_linux_receipt() { [ ! -L "$version_file" ] && [ -f "$version_file" ]; }
 linux_installation_present() {
   safe_directory "$share" || return 1
-  if [ ! -L "$version_file" ] && [ -f "$version_file" ]; then return 0; fi
+  if has_linux_receipt; then return 0; fi
   # The original installer had no version record.
   # shellcheck disable=SC2016
   [ ! -L "$launcher" ] && [ -f "$launcher" ] &&
@@ -109,21 +123,32 @@ linux_installation_present() {
 }
 
 uninstall_linux() {
+  safe_directory "$share" || die "$share contains a symlink or is not a directory. Left existing files in place."
   if ! linux_installation_present; then
     printf 'No Delve installation found. Left existing files in place.\n'
     return
   fi
   if ! safe_directory "${bin%/*}"; then
-    leave "$bin (parent is a symlink or is not a directory)"
+    defer_removal "$bin (parent is a symlink or is not a directory)"
   elif installed_bin; then
     remove_entry "$bin" l
   elif [ -e "$bin" ] || [ -L "$bin" ]; then
     leave "$bin (points elsewhere or is not a symlink)"
   fi
-  for path in "$appimage" "$launcher" "$desktop" "$icon" "$version_file"; do
+  for path in "$appimage" "$desktop" "$icon"; do
     remove_entry "$path" f
   done
-  remove_entry "$share" d
+  if [ "$uninstall_pending" = no ] || has_linux_receipt; then
+    remove_entry "$launcher" f
+  else
+    leave "$launcher (kept to retry uninstall)"
+  fi
+  if [ "$uninstall_pending" = yes ]; then
+    if has_linux_receipt; then leave "$version_file (kept to retry uninstall)"; fi
+  else
+    if has_linux_receipt; then remove_entry "$version_file" f; fi
+    remove_entry "$share" d
+  fi
   report_uninstall "$appimage"
 }
 
@@ -140,6 +165,7 @@ read_mac_receipt() {
 }
 
 remove_mac_bundle() {
+  bundle_removed=0
   {
     IFS= read -r location || die 'Invalid installation record.'
     IFS= read -r installed_version || die 'Invalid installation record.'
@@ -148,12 +174,15 @@ remove_mac_bundle() {
     while IFS=$tab read -r type entry; do
       case /$entry/ in */../*|*/./*|*//*) die 'Invalid installation record.' ;; esac
       case $entry in
-        Delve.app/*) remove_entry "$recorded_dir/$entry" "$type" quiet ;;
+        Delve.app/*) remove_entry "$recorded_dir/$entry" "$type" bundle ;;
         Delve.app) [ "$type" = d ] || die 'Invalid installation record.' ;;
         *) die 'Invalid installation record.' ;;
       esac
     done
   } < "$mac_location"
+  if [ "$bundle_removed" -gt 0 ]; then
+    printf 'Removed %s recorded files and directories from %s/Delve.app\n' "$bundle_removed" "$recorded_dir"
+  fi
   remove_entry "$recorded_dir/Delve.app" d
 }
 
@@ -171,13 +200,18 @@ uninstall_mac() {
     leave "$recorded_dir/Delve.app (installed without a file list). Move it to Trash to uninstall."
     return
   fi
-  remove_entry "$mac_location" f
-  remove_entry "$share" d
+  if [ "$uninstall_pending" = yes ]; then
+    leave "$mac_location (kept to retry uninstall)"
+  else
+    remove_entry "$mac_location" f
+    remove_entry "$share" d
+  fi
   report_uninstall "$recorded_dir/Delve.app"
 }
 
 uninstall() {
   ensure_stopped
+  uninstall_pending=no
   case $(uname -s) in
     Linux) uninstall_linux ;;
     Darwin) uninstall_mac ;;
