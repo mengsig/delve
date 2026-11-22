@@ -101,6 +101,7 @@ body:has(.knowledge) { padding-bottom: 0; }
 .knowledge-list-row { position: absolute; left: 0; width: 100%; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--rule); padding-inline: 7px; }
 .knowledge-list-select { flex: 1; display: grid; gap: 3px; text-align: left; padding: 8px; border: 0; background: transparent; }
 .knowledge-list-select > * { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.knowledge-list-row button:focus-visible { outline-offset: -3px; }
 .knowledge-list span { color: var(--dim); font-size: 12px; }
 .knowledge-list > p { padding: 16px; }
 .knowledge-preview { width: min(760px, 90vw); max-height: 80vh; overflow: auto; padding: 25px; background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 12px; }

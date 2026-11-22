@@ -64,7 +64,9 @@ maintainer's approval. Design reference: `docs/design/proposal-v1.html`.
   bridges, prerequisite and transfer links, and its mastery state and depth. Search, filter by
   workspace, state and depth, focus a neighbourhood, and preserve filters and map position. Offer a
   virtualized, recent-first list of understood concepts, grouped by workspace or flat, with dates,
-  depths and transfers. A concept's detail provides its summary, relationships, workspaces and
+  depths and transfers. In the learned list, Tab reaches each concept and lesson action; Arrow Up,
+  Arrow Down, Home and End move between rows and scroll the focused row into view. Preserve the
+  current concept's position when grouping or filtering. A concept's detail provides its summary, relationships, workspaces and
   one-click lesson, review and Atlas actions. A learner may preview and explicitly approve an
   on-demand model request for transfer suggestions, inspect their reasons and provenance, and remove
   incorrect links. Keep data local and validate links and model output. Support light and dark themes,
