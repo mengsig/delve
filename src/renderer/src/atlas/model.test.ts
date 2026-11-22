@@ -33,19 +33,20 @@ describe('Atlas graph projection', () => {
     expect(model.byId.get(3)?.dependents.map(c => c.id)).toEqual([4]);
   });
 
-  it('counts only demonstrated evidence at the chosen depth, including exact portable matches', () => {
+  it('uses deeper portable evidence and requires an exact depth for local evidence', () => {
     const data = graph();
     data.evidence = [
       evidence(1, { workspaceId: 'there', workspaceName: 'There' }),
-      evidence(2, { depth: 'low' }), evidence(3, { status: 'partial' }),
+      evidence(2, { depth: 'low' }), evidence(3, { status: 'partial' }), evidence(3, { depth: 'low' }),
     ];
     const model = buildAtlas(data, 'medium');
-    expect(model.learned).toBe(1);
+    expect(model.learned).toBe(2);
     expect(statusText(model.byId.get(1)!, 'here')).toBe('Known from There');
     expect(statusText(model.byId.get(3)!, 'here')).toBe('Partially demonstrated');
-    expect(nextConcept(model)?.id).toBe(2);
-    data.evidence.push(evidence(2));
-    expect(nextConcept(buildAtlas(data, 'medium'))?.id).toBe(3);
+    expect(nextConcept(model)?.id).toBe(3);
+    expect(buildAtlas(data, 'low').byId.get(1)?.evidence).toBeUndefined();
+    data.evidence.push(evidence(2, { status: 'partial' }));
+    expect(buildAtlas(data, 'medium').byId.get(2)?.evidence?.depth).toBe('low');
   });
 
   it('selects a ready follow-up before another missing foundation and makes fully learned paths optional', () => {

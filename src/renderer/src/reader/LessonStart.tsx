@@ -7,6 +7,20 @@ import { hasTutorApproval } from './tutorApproval';
 import { lessonKey, useTutorJobs } from './TutorJobs';
 import { ExactRequest, PreviewMetadata } from './TutorPreview';
 
+export function LessonRecovery({ body, tutor }: {
+  body: Pick<ReaderLesson, 'invalidLatest' | 'revision'>;
+  tutor: Pick<LessonTutor, 'pending' | 'signedIn' | 'provider' | 'prepare'>;
+}) {
+  if (!body.invalidLatest) return null;
+  const disabled = tutor.pending || !tutor.signedIn;
+  return <section className="reader-notice" role="status">
+    <p>{body.revision ? 'The newest lesson could not be displayed. You can continue with the last readable version.'
+      : 'The stored lesson could not be displayed. You can generate it again.'}</p>
+    <button disabled={disabled} onClick={() => tutor.prepare({ kind: 'teach' })}>Retry lesson generation</button>
+    {tutor.provider !== 'demo' && <button disabled={disabled} onClick={() => tutor.prepare({ kind: 'teach' }, true)}>Preview lesson request</button>}
+  </section>;
+}
+
 export function openingIntent(body: ReaderLesson): TutorIntent | null {
   if (body.mastery.needsAdaptation && body.mastery.revision) return { kind: 'adapt', revision: body.mastery.revision };
   if (body.invalidLatest) return null;

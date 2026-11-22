@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { RepoSelection } from '../../shared/repository';
 import { openDatabase, type Db } from '../db/connection';
 import { upsertConcept } from '../db/concepts';
-import { recordEvidence } from '../db/evidence';
+import { recordEvidence, resetEvidence } from '../db/evidence';
 import { readWorkspaceCoverage, readWorkspaceGraph } from '../db/graph';
+import { getGlobalKnowledgeGraph } from '../db/knowledge';
 import { addWorkspace } from '../db/workspaces';
 import { readLesson } from '../reader/ipc';
+import { prepareTurn } from '../tutor/prompt';
 import { selectModel } from '../providers/model';
 import { baselineReply, changeReply } from './schemas';
 import { cachedGeneration, digest, latestBrief, persistGeneration, useCachedGeneration, type ApprovedSource } from './store';
@@ -35,6 +37,126 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
+it('plans local usage in a new repository and only tops up the missing portable depth', () => {
+  const first = workspaceId;
+  const map = (key: string, title: string, usage: string) => baselineReply.parse({
+    schema: 'delve.map/1',
+    concepts: [{ key: 'logging', title: 'Service logs', summary: 'Where the service writes logs.', portable: false },
+      { key, title, summary: 'A reliable ordered byte stream.', portable: true },
+      { key: usage, title: usage, summary: 'How the repository transports lease updates.', portable: false }],
+    edges: [{ concept: usage, prerequisite: key }],
+    recommendation: { key, reason: 'Start with the transport.' },
+  });
+  const selected = () => source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline);
+  persistGeneration(db, selected(), map('Transmission-Control-Protocol', 'Transmission Control Protocol', 'dispatch-transport'));
+  const tcp = readWorkspaceGraph(db, first).concepts.find(c => c.portable)!;
+  expect(tcp.key).toBe('tcp');
+  recordEvidence(db, { workspaceId: first, conceptId: tcp.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  workspaceId = addWorkspace(db, { kind: 'github', owner: 'acme', repo: 'worker' }).id;
+  persistGeneration(db, selected(), map(' TCP ', 'TCP', 'worker-lease-transport'));
+
+  const graph = readWorkspaceGraph(db, workspaceId);
+  const usage = graph.concepts.find(c => c.key.endsWith('/worker-lease-transport'))!;
+  expect(graph.concepts.filter(c => c.portable)).toEqual([tcp]);
+  expect(graph.evidence).toMatchObject([{ conceptId: tcp.id, depth: 'medium', workspaceId: first, status: 'demonstrated' }]);
+  expect(graph.suggestions?.medium?.conceptId).toBe(usage.id);
+  expect(getGlobalKnowledgeGraph(db).concepts.filter(c => c.portable)).toMatchObject([
+    { id: tcp.id, masteredDepth: 'medium', learnedWorkspaceId: first,
+      memberships: [{ workspaceId: first }, { workspaceId }] },
+  ]);
+  expect(graph.edges).toEqual([{ conceptId: usage.id, prerequisiteId: tcp.id }]);
+  const preview = { workspaceId, provider: 'codex', intent: { kind: 'teach' } } as const;
+  expect(prepareTurn(db, { ...preview, conceptId: usage.id, depth: 'medium' }).preview.prompt)
+    .toContain('The learner already understands Transmission Control Protocol at medium depth; teach only how this repository uses it.');
+  const deeperUsage = prepareTurn(db, { ...preview, conceptId: usage.id, depth: 'low' }).preview.prompt;
+  expect(deeperUsage).toContain('cover only the additional detail needed at low depth');
+  expect(deeperUsage).not.toContain('medium depth; teach only how this repository uses it.');
+  expect(prepareTurn(db, { ...preview, conceptId: tcp.id, depth: 'low' }).preview.prompt)
+    .toContain('Teach and check only the additional detail needed at low depth.');
+});
+
+it('opens a saved change with the current global evidence and teaches its repository usage', () => {
+  const selection = { kind: 'pr', ref: '19' } as const;
+  const selected = source(selection, previous);
+  const reply = { ...change, recommendation: { key: 'nginx/proxy', reason: 'Learn about proxies.' } };
+  const result = persistGeneration(db, selected, reply);
+  if (result.kind !== 'change') throw new Error('Expected a change brief');
+  const proxy = result.brief.recommendation.conceptId;
+  const origin = addWorkspace(db, { kind: 'git', path: '/upstream' });
+  recordEvidence(db, { workspaceId: origin.id, conceptId: proxy, depth: 'medium', status: 'demonstrated',
+    source: 'check', masteryVerified: true });
+  const brief = latestBrief(db, { ...selection, workspaceId, depth: 'medium', provider: 'codex' });
+  expect(brief?.recommendation.conceptId).toBe(result.brief.conceptId);
+  expect(brief?.what).toEqual(result.brief.what);
+  expect(useCachedGeneration(db, selected)).toEqual({ kind: 'change', brief });
+  const preview = { workspaceId, provider: 'codex', intent: { kind: 'teach' }, depth: 'medium' } as const;
+  for (const conceptId of [result.brief.conceptId, ...result.brief.touched.filter(c => c.id !== proxy).map(c => c.id)]) {
+    expect(prepareTurn(db, { ...preview, conceptId }).preview.prompt)
+      .toContain('The learner already understands Proxy at medium depth; teach only how this repository uses it.');
+  }
+});
+
+it('restores the original saved recommendation after portable evidence is reset', () => {
+  const selection = { kind: 'pr', ref: '20' } as const;
+  const selected = source(selection, previous);
+  const proxy = upsertConcept(db, { workspaceId, portable: true, key: 'nginx/proxy', title: 'Proxy' });
+  recordEvidence(db, { workspaceId, conceptId: proxy.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const reply = { ...change, recommendation: { key: proxy.key, reason: 'Learn about proxies.' } };
+  const result = persistGeneration(db, selected, reply);
+  if (result.kind !== 'change') throw new Error('Expected a change brief');
+  expect(result.brief.recommendation.conceptId).toBe(result.brief.conceptId);
+  resetEvidence(db, proxy.id, { workspaceId, depth: 'medium' });
+  const reopened = latestBrief(db, { ...selection, workspaceId, depth: 'medium', provider: 'codex' });
+  expect(reopened?.recommendation).toEqual({ conceptId: proxy.id, reason: 'Learn about proxies.', title: 'Proxy' });
+  expect(useCachedGeneration(db, selected)).toEqual({ kind: 'change', brief: reopened });
+});
+
+it('suggests the PR usage in Atlas only while current portable evidence covers the selected depth', () => {
+  const selection = { kind: 'pr', ref: '21' } as const;
+  persistGeneration(db, source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline), mapped);
+  const selected = source(selection, previous);
+  const reply = { ...change, recommendation: { key: 'nginx/proxy', reason: 'Learn about proxies.' } };
+  const result = persistGeneration(db, selected, reply);
+  if (result.kind !== 'change') throw new Error('Expected a change brief');
+  const proxy = result.brief.recommendation.conceptId;
+  const origin = addWorkspace(db, { kind: 'git', path: '/upstream' });
+  const graph = () => readWorkspaceGraph(db, workspaceId);
+  const address = { ...selection, workspaceId, depth: 'medium', provider: 'codex' } as const;
+  const before = graph();
+  expect(before.changeSuggestions?.medium).toBeUndefined();
+  expect(before.suggestions?.medium).toEqual({ conceptId: proxy, reason: reply.recommendation.reason });
+  const prove = (depth: 'high' | 'low') => recordEvidence(db, { workspaceId: origin.id, conceptId: proxy, depth,
+    status: 'demonstrated', source: 'check', masteryVerified: true });
+  prove('high');
+  expect(graph().changeSuggestions?.medium).toBeUndefined();
+  prove('low');
+  const live = latestBrief(db, address)?.recommendation;
+  expect(live?.conceptId).toBe(result.brief.conceptId);
+  expect(graph().changeSuggestions?.medium).toEqual({ ...selection, reason: live?.reason, title: result.brief.title });
+  expect(graph().suggestions?.medium?.conceptId).toBe(before.concepts.find(c => !c.portable)?.id);
+  expect(resetEvidence(db, proxy, { workspaceId: origin.id, depth: 'low' })).toBe(1);
+  expect(graph().changeSuggestions?.medium).toBeUndefined();
+  expect(graph().suggestions?.medium).toEqual(before.suggestions?.medium);
+  expect(latestBrief(db, address)?.recommendation).toEqual(result.brief.recommendation);
+});
+
+it('recommends the missing prerequisite of the linked usage before an unrelated ready concept', () => {
+  const portable = upsertConcept(db, { workspaceId, portable: true, key: 'nginx/proxy', title: 'Proxy' });
+  recordEvidence(db, { workspaceId, conceptId: portable.id, depth: 'medium', status: 'demonstrated',
+    source: 'check', masteryVerified: true });
+  const proposal = { ...mapped, concepts: [
+    { key: 'log-format', title: 'Log format', summary: 'A project rule.', portable: false },
+    ...mapped.concepts,
+    { key: 'http', title: 'HTTP', summary: 'A request and response protocol.', portable: true },
+  ], edges: [...mapped.edges, { concept: 'web/route', prerequisite: 'http' }],
+  recommendation: { key: 'nginx/proxy', reason: 'Study the proxy first.' } };
+  persistGeneration(db, source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline), proposal);
+  persistGeneration(db, source({ kind: 'baseline', commit: previous, paths: ['src/ports.ts'] }, previous),
+    { ...mapped, recommendation: proposal.recommendation });
+  const graph = readWorkspaceGraph(db, workspaceId);
+  expect(graph.suggestions?.medium?.conceptId).toBe(graph.concepts.find(c => c.key === 'http')?.id);
+});
+
 describe('atomic repository generation', () => {
   it('preserves canonical portable knowledge at its demonstrated depth and binds both concepts to the approved commit', () => {
     const prior = addWorkspace(db, { kind: 'topic', title: 'Reverse proxies' });
@@ -51,8 +173,9 @@ describe('atomic repository generation', () => {
     expect(graph.suggestions?.medium?.reason).toContain('demonstrated');
     expect(graph.baselineCommit).toBe(baseline);
     expect(db.prepare('SELECT COUNT(*) AS n FROM snapshot_concepts').get()?.n).toBe(2);
-    expect(readLesson(db, { workspaceId, conceptId: portable.id, depth: 'high' }).reused).toBe(false);
+    expect(readLesson(db, { workspaceId, conceptId: portable.id, depth: 'high' }).reused).toBe(true);
     expect(readLesson(db, { workspaceId, conceptId: portable.id, depth: 'medium' }).reused).toBe(true);
+    expect(readLesson(db, { workspaceId, conceptId: portable.id, depth: 'low' }).reused).toBe(false);
   });
 
   it('restores the selected cached baseline and its local definitions after revisiting a revision', () => {

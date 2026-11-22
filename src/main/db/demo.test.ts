@@ -55,6 +55,6 @@ describe('demo workspaces', () => {
     seedDemoWorkspaces(db);
     expect(listWorkspaces(db).workspaces).toHaveLength(5);
     expect(listWorkspaces(db).activeId).toBe(realTopic.id);
-    expect(readWorkspaceCoverage(db).find(({ workspaceId }) => workspaceId === relay.id)?.known).toEqual({ high: 4, medium: 1, low: 1 });
+    expect(readWorkspaceCoverage(db).find(({ workspaceId }) => workspaceId === relay.id)?.known).toEqual({ high: 4, medium: 2, low: 1 });
   });
 });

@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { DEPTHS, type Depth } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
 import type {
-  GlobalKnowledgeGraph, KnowledgeConcept, MasteryState, KnowledgeEdge, KnowledgeMembership, TransferLink, TransferLinkInput,
+  GlobalKnowledgeGraph, KnowledgeConcept, MasteryState, KnowledgeMembership, TransferLink, TransferLinkInput,
 } from '../../shared/knowledge';
 import { getConcept } from './concepts';
 import { nowIso, transaction, type Db } from './connection';
 import { getWorkspace, listWorkspaces } from './workspaces';
 import { matchesDemo } from './demo-fixtures';
+import { projectedEdges } from './migration-edges';
 
 interface ConceptRow {
   id: number;
@@ -47,7 +48,8 @@ function groupMemberships(db: Db, demo: boolean): Map<number, KnowledgeMembershi
      FROM workspace_concepts wc
      JOIN workspaces w ON w.id = wc.workspace_id
      JOIN concepts c ON c.id = wc.concept_id
-     WHERE c.portable = 1 OR c.workspace_id = wc.workspace_id
+     WHERE (c.portable = 1 OR c.workspace_id = wc.workspace_id)
+       AND NOT EXISTS (SELECT 1 FROM concept_identity_links l WHERE l.legacy_concept_id = c.id)
      ORDER BY wc.concept_id, w.name, w.id`,
   ).all() as unknown as MembershipRow[];
   const byConcept = new Map<number, KnowledgeMembership[]>();
@@ -90,7 +92,8 @@ function summarizeMastery(db: Db): Map<number, Mastered> {
 /** Concepts with an unfinished or skipped guided lesson, from the persisted lesson cycle stage. */
 function summarizeLessonStages(db: Db): { inProgress: Set<number>; skipped: Set<number> } {
   const rows = db.prepare(
-    `SELECT concept_id AS conceptId, json_extract(state, '$.stage') AS stage FROM lesson_mastery WHERE state IS NOT NULL`,
+    `SELECT coalesce(l.portable_concept_id, m.concept_id) AS conceptId, json_extract(m.state, '$.stage') AS stage
+     FROM lesson_mastery m LEFT JOIN concept_identity_links l ON l.legacy_concept_id = m.concept_id WHERE m.state IS NOT NULL`,
   ).all() as unknown as { conceptId: number; stage: string }[];
   const inProgress = new Set<number>();
   const skipped = new Set<number>();
@@ -131,11 +134,26 @@ export function getGlobalKnowledgeGraph(db: Db, demo = false): GlobalKnowledgeGr
   }
   assert.equal(new Set(concepts.map(({ id }) => id)).size, concepts.length, 'global concepts must be unique');
   const ids = new Set(concepts.map(({ id }) => id));
-  const edgeRows = db.prepare(
-    'SELECT concept_id AS conceptId, prerequisite_id AS prerequisiteId FROM concept_edges ORDER BY concept_id, prerequisite_id',
-  ).all() as unknown as KnowledgeEdge[];
-  const edges = edgeRows.filter((e) => ids.has(e.conceptId) && ids.has(e.prerequisiteId));
-  return { concepts, edges, links: listTransferLinks(db).filter((l) => ids.has(l.fromConceptId) && ids.has(l.toConceptId)) };
+  const edges = projectedEdges(db, ids);
+  const links = projectedTransferLinks(db, ids);
+  return { concepts, edges, links };
+}
+
+function projectedTransferLinks(db: Db, ids: Set<number>): TransferLink[] {
+  assert.ok(ids instanceof Set);
+  const rows = db.prepare(`SELECT t.id, coalesce(a.portable_concept_id, t.from_concept_id) AS fromConceptId,
+    coalesce(b.portable_concept_id, t.to_concept_id) AS toConceptId, t.reason, t.provider, t.model,
+    t.workspace_id AS workspaceId, t.created_at AS createdAt FROM transfer_links t
+    LEFT JOIN concept_identity_links a ON a.legacy_concept_id = t.from_concept_id
+    LEFT JOIN concept_identity_links b ON b.legacy_concept_id = t.to_concept_id ORDER BY t.id`).all() as unknown as LinkRow[];
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    assert.ok(row.id > 0 && row.fromConceptId > 0 && row.toConceptId > 0);
+    const key = [row.fromConceptId, row.toConceptId].sort((a, b) => a - b).join(':');
+    if (row.fromConceptId === row.toConceptId || !ids.has(row.fromConceptId) || !ids.has(row.toConceptId) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function listTransferLinks(db: Db): TransferLink[] {

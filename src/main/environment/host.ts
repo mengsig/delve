@@ -25,10 +25,13 @@ function active(db: Db, address: LessonAddress): void {
   if (!isActiveWorkspace(db, address.workspaceId)) fail('Switch to this workspace to use its activity.');
 }
 
-function messageDocument(db: Db, request: OpenRequest, snapshotId: number | null): Document {
+function messageDocument(db: Db, request: OpenRequest, canonicalId: number, snapshotId: number | null): Document {
   const row = db.prepare(`SELECT m.body FROM messages m JOIN conversations c ON c.id = m.conversation_id
-    WHERE m.id = ? AND c.workspace_id = ? AND c.concept_id = ? AND c.depth = ? AND m.role = 'tutor'
-    AND length(CAST(m.body AS BLOB)) <= 524288`).get(request.messageId, request.workspaceId, request.conceptId, request.depth);
+    WHERE m.id = :message AND c.workspace_id = :workspace AND c.depth = :depth AND m.role = 'tutor'
+    AND (c.concept_id = :concept OR c.concept_id IN
+      (SELECT legacy_concept_id FROM concept_identity_links WHERE portable_concept_id = :concept))
+    AND length(CAST(m.body AS BLOB)) <= 524288`)
+    .get({ message: request.messageId, workspace: request.workspaceId, concept: canonicalId, depth: request.depth });
   if (!row || typeof row.body !== 'string') return fail('This activity is no longer available.');
   let raw: unknown;
   try { raw = JSON.parse(row.body); } catch { return fail('This activity has an invalid saved message.'); }
@@ -43,7 +46,7 @@ function resolveActivity(db: Db, request: OpenRequest) {
   const context = lessonContext(db, request);
   const selected = selectLesson(db, context);
   if (selected.revision !== request.revision) return fail('The lesson changed. Reopen this activity.');
-  const document = request.messageId === null ? selected.document : messageDocument(db, request, context.snapshotId);
+  const document = request.messageId === null ? selected.document : messageDocument(db, request, context.canonicalConceptId, context.snapshotId);
   const block = document?.blocks[request.blockIndex];
   if (!block || block.type !== 'environment') return fail('This activity is no longer available.');
   const config = block.config ?? (block.pack ? defaultPack(block.pack) : null);
@@ -65,9 +68,9 @@ function suggestedConcept(db: Db, workspaceId: string, demo: boolean, key?: stri
 function saveAssessment(db: Db, activity: ReturnType<typeof resolveActivity>, assessment: Assessment): void {
   const { context, lessonId } = activity;
   const observation = assessment.observation + ' ' + assessment.reason;
-  const prior = listEvidence(db, context.conceptId).find(e => e.depth === context.depth);
+  const prior = listEvidence(db, context.canonicalConceptId).find(e => e.depth === context.depth);
   const foreignOrigin = prior?.workspaceId && prior.workspaceId !== context.workspaceId;
-  if (!foreignOrigin && prior?.status !== 'demonstrated' && assessment.status !== 'practice') recordEvidenceInTransaction(db, { workspaceId: context.workspaceId, conceptId: context.conceptId,
+  if (!foreignOrigin && prior?.status !== 'demonstrated' && assessment.status !== 'practice') recordEvidenceInTransaction(db, { workspaceId: context.workspaceId, conceptId: context.canonicalConceptId,
     depth: context.depth, snapshotId: context.snapshotId ?? undefined, status: 'partial',
     source: 'environment', note: observation });
   const targetId = suggestedConcept(db, context.workspaceId, context.demo, assessment.targetKey);

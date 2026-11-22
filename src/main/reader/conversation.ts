@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { z } from 'zod';
-import type { LessonAddress, ReaderMessage } from '../../shared/reader';
+import type { ReaderMessage } from '../../shared/reader';
 import { nowIso, transaction, type Db } from '../db/connection';
 import { demoReply, type LessonContext } from './demo';
 import { documentSchema, publicBlocks, type Document } from './document';
@@ -39,11 +39,13 @@ function decodeMessage(row: Record<string, unknown>): ReaderMessage {
     observation: entry.observation, correct: entry.correct, reasoningFeedback: entry.reasoningFeedback, recommendation: entry.recommendation };
 }
 
-export function readHistory(db: Db, { workspaceId, conceptId, depth }: LessonAddress) {
+export function readHistory(db: Db, { workspaceId, canonicalConceptId, depth }: LessonContext) {
   const rows = db.prepare(`SELECT m.id, m.role, m.body FROM messages m JOIN conversations c ON c.id = m.conversation_id
     LEFT JOIN lessons l ON l.id = c.lesson_id
-    WHERE c.workspace_id = ? AND c.concept_id = ? AND coalesce(c.depth, l.depth) = ?
-    ORDER BY m.id DESC LIMIT ?`).all(workspaceId, conceptId, depth, historyLimit + 1);
+    WHERE c.workspace_id = :workspace AND coalesce(c.depth, l.depth) = :depth
+    AND (c.concept_id = :concept OR c.concept_id IN
+      (SELECT legacy_concept_id FROM concept_identity_links WHERE portable_concept_id = :concept))
+    ORDER BY m.id DESC LIMIT :limit`).all({ workspace: workspaceId, concept: canonicalConceptId, depth, limit: historyLimit + 1 });
   const messages = rows.slice(0, historyLimit).reverse().map(decodeMessage);
   return { messages, earlierMessages: rows.length > historyLimit };
 }

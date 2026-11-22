@@ -6,8 +6,8 @@ const MAX_DOCUMENT_BYTES = 512 * 1024;
 export const boundedLessonBody = `CASE WHEN l.schema_version = 'delve.lesson/1'
   AND length(CAST(l.body AS BLOB)) <= ${MAX_DOCUMENT_BYTES} THEN l.body END`;
 
-export function lessonScopeSql(concept: string, depth: string, workspace: string, snapshot: string, demo: string): string {
-  return `l.concept_id = ${concept} AND l.depth = ${depth} AND (l.workspace_id = ${workspace} OR l.workspace_id IS NULL)
+export function lessonScopeSql(concepts: string, depth: string, workspace: string, snapshot: string, demo: string): string {
+  return `l.concept_id IN (${concepts}) AND l.depth = ${depth} AND (l.workspace_id = ${workspace} OR l.workspace_id IS NULL)
     AND (l.snapshot_id IS NULL OR l.snapshot_id = ${snapshot}) AND (l.provider <> 'demo' OR ${demo} = 1)`;
 }
 

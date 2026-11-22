@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { DEPTHS, type Depth } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
+import { coversDepth } from '../../shared/evidence-depth';
 import type { GraphEvidence } from '../../shared/graph';
 import { getConceptByKey } from './concepts';
 import { nowIso, transaction, type Db } from './connection';
@@ -116,6 +117,9 @@ export function listEvidence(db: Db, conceptId: number): Evidence[] {
   return rows.map((row) => ({ ...evidenceDetails(row), id: row.id, snapshotId: row.snapshot_id }));
 }
 
+export const portableProofAtDepth = (db: Db, conceptId: number, depth: Depth) =>
+  listEvidence(db, conceptId).some(e => e.masteryVerified && coversDepth(e.depth, depth));
+
 export function listWorkspaceEvidence(db: Db, workspaceId: string, includeChangeLessons = false): GraphEvidence[] {
   const rows = db.prepare(
     `SELECT e.*, origin.name AS workspace_name
@@ -124,6 +128,7 @@ export function listWorkspaceEvidence(db: Db, workspaceId: string, includeChange
      JOIN evidence e ON e.concept_id = c.id
      LEFT JOIN workspaces origin ON origin.id = e.workspace_id
      WHERE wc.workspace_id = ? AND (wc.on_atlas = 1 OR ? = 1)
+       AND NOT EXISTS (SELECT 1 FROM concept_identity_links l WHERE l.legacy_concept_id = c.id)
        AND (c.portable = 1 OR (c.workspace_id = wc.workspace_id AND e.workspace_id = wc.workspace_id))
      ORDER BY e.concept_id, CASE e.depth WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END`,
   ).all(workspaceId, Number(includeChangeLessons)) as unknown as (EvidenceRow & { workspace_name: string | null })[];

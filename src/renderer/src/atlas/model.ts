@@ -1,4 +1,5 @@
 import type { Depth } from '../../../shared/domain';
+import { coversDepth, deepestEvidence } from '../../../shared/evidence-depth';
 import type { GraphConcept, GraphEvidence, WorkspaceGraph } from '../../../shared/graph';
 
 export interface AtlasConcept extends GraphConcept {
@@ -59,18 +60,23 @@ export function buildAtlas(graph: WorkspaceGraph, depth: Depth): AtlasModel {
     concept.prerequisites.push(prior);
     prior.dependents.push(concept);
   }
-  let learned = 0;
   for (const evidence of graph.evidence) {
-    if (evidence.depth !== depth) continue;
     const concept = byId.get(evidence.conceptId);
     if (!concept) throw new Error('Evidence points outside this workspace.');
-    if (concept.evidence) throw new Error('Duplicate evidence for a concept at the same depth.');
+    const exact = evidence.depth === depth;
+    const transferable = concept.portable && evidence.status === 'demonstrated' && coversDepth(evidence.depth, depth);
+    if (!exact && !transferable) continue;
+    if (concept.evidence?.depth === evidence.depth) throw new Error('Duplicate evidence for a concept at the same depth.');
     if (!concept.portable && evidence.workspaceId !== graph.workspaceId) {
       throw new Error('Local evidence belongs to a different workspace.');
     }
-    concept.evidence = evidence;
-    if (isLearned(concept)) learned++;
+    if (transferable) {
+      concept.evidence = deepestEvidence(isLearned(concept) ? concept.evidence : undefined, evidence);
+    } else if (!isLearned(concept)) {
+      concept.evidence = evidence;
+    }
   }
+  const learned = [...byId.values()].filter(isLearned).length;
   return { byId, learned, layers: dependencyLayers(byId) };
 }
 

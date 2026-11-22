@@ -60,8 +60,11 @@ pull requests. Delve uses read-only operations with that login.
 Select the files to include and review their names, sizes, revision and exact provider request.
 **Add and build map** attaches the repository and starts generation with one confirmation.
 The progress panel stays visible as you explore another workspace. The Atlas fills in when the map is ready. If you have left the Atlas, **Open map** takes you back.
-Demonstrated portable concepts carry their evidence across repositories. Choose **Map more files** to
-expand a map. Each slice contains at most 128 text files, 128 KiB per file and 1 MiB total.
+Portable concepts such as TCP have one entry in Knowledge. Verified understanding carries across
+repositories at the demonstrated depth and shallower. The learning path then recommends how the
+current repository uses the concept, or offers a top-up when you choose a deeper lesson. **Used in**
+lists the repositories that link to the shared concept. Choose **Map more files** to expand a map.
+Each slice contains at most 128 text files, 128 KiB per file and 1 MiB total.
 
 In **Changes**, select a commit or pull request from the branch timeline. Search by title or
 reference, narrow the list by branch, author or change type, or switch to **Folio** for its list

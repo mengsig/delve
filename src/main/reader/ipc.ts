@@ -27,8 +27,8 @@ function lessonState(db: Db, address: LessonAddress, loadDemo: boolean) {
 }
 
 export function readLesson(db: Db, address: LessonAddress): ReaderLesson {
-  const { selected, mastery } = lessonState(db, address, true);
-  const { messages, earlierMessages } = readHistory(db, address);
+  const { context, selected, mastery } = lessonState(db, address, true);
+  const { messages, earlierMessages } = readHistory(db, context);
   return { reused: mastery.stage === 'understood', blocks: selected.document ? publicBlocks(selected.document) : [],
     revision: selected.revision, invalidLatest: selected.invalidLatest, source: selected.source, mastery: publicMastery(mastery),
     messages: canRecommend(mastery) ? messages : messages.map(({ recommendation: _recommendation, ...message }) => message),

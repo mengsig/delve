@@ -41,3 +41,21 @@ it('updates eligibility and workspace mastery together from a committed lesson r
   expect(eligibleNext(model, 2)?.id).toBe(3);
   expect(eligibleNext(model, 3)?.id).toBe(4);
 });
+
+it('plans local usage before any new portable lesson when another repository proved the foundation', () => {
+  const graph = fixture();
+  graph.concepts = [
+    { id: 1, key: 'tcp', title: 'TCP', summary: '', portable: true },
+    { id: 2, key: 'lease-transport', title: 'Lease transport', summary: '', portable: false },
+  ];
+  graph.evidence = [evidence(1, 'demonstrated')];
+  graph.edges = [{ conceptId: 2, prerequisiteId: 1 }];
+  graph.progress = { depth: 'medium', checks: [] };
+  graph.suggestions = { medium: { conceptId: 1, reason: 'Review the transport.' } };
+  const selected = buildLearningProgress(graph, 'medium');
+  expect(selected.byId.get(1)?.state).toBe('mastered');
+  expect(selected.concepts.filter(c => c.state === 'ready').map(c => c.id)).toEqual([2]);
+  expect(eligibleNext(selected)?.id).toBe(2);
+  expect(eligibleNext(buildLearningProgress(graph, 'high'))?.id).toBe(2);
+  expect(eligibleNext(buildLearningProgress(graph, 'low'))?.id).toBe(1);
+});

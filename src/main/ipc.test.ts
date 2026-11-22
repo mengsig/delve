@@ -126,7 +126,7 @@ describe('graph IPC', () => {
       expect(await dispatch(h, 'workspaces:head', { workspaceId: origin.id })).toEqual({ ok: true, value: { kind: 'topic' } });
       expect(await dispatch(h, 'progress:read', null)).toEqual({
         ok: true,
-        value: [origin, linked].map(({ id }) => ({ workspaceId: id, total: 1, known: { high: 0, medium: 1, low: 0 } })),
+        value: [origin, linked].map(({ id }) => ({ workspaceId: id, total: 1, known: { high: 1, medium: 1, low: 0 } })),
       });
       const reset = { workspaceId: origin.id, conceptId: concept.id, depth: 'medium' };
       expect(await dispatch(h, 'evidence:reset', { ...reset, workspaceId: linked.id })).toMatchObject({

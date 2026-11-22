@@ -47,8 +47,8 @@ describe('workspace graph and coverage', () => {
     expect(secondGraph.edges).toEqual([{ conceptId: shared.id, prerequisiteId: unlinked.id }]);
     expect(secondGraph.evidence.every((row) => row.conceptId === shared.id)).toBe(true);
     expect(readWorkspaceCoverage(db)).toEqual([
-      { workspaceId: first, total: 2, known: { high: 0, medium: 1, low: 0 } },
-      { workspaceId: second, total: 2, known: { high: 0, medium: 1, low: 0 } },
+      { workspaceId: first, total: 2, known: { high: 1, medium: 1, low: 0 } },
+      { workspaceId: second, total: 2, known: { high: 1, medium: 1, low: 0 } },
       { workspaceId: empty, total: 0, known: { high: 0, medium: 0, low: 0 } },
     ]);
   });
