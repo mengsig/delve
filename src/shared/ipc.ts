@@ -46,6 +46,7 @@ const CHANNEL_FLAGS: Record<IpcChannel, true> = {
   'tutor:run': true,
   'tutor:cancel': true,
   'tutor:jobs': true,
+  'tutor:dismiss-unreadable': true,
   'tutor:wait': true,
   'tutor:retry': true,
   'tutor:dismiss': true,

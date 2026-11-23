@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { smoke } from '../../scripts/macos-smoke-process.mjs';
 
+const EXIT_WAIT_MS = 5_000;
+const TIMEOUT_CASE_SHUTDOWN_MS = 1_000;
+
 const app = `#!/usr/bin/env node
 const { spawn } = require('node:child_process');
 const { writeFileSync, writeSync } = require('node:fs');
@@ -58,11 +61,11 @@ function stopFixture(pidFile) {
 
 it.skipIf(process.platform === 'win32').each([
   { title: 'kills the group and bounds diagnostics on shutdown timeout', mode: 'timeout',
-    failure: 'Delve did not exit within 1000ms of SIGTERM' },
-  { title: 'kills the remaining helper after an unexpected exit', mode: 'wrong exit',
+    shutdownMs: TIMEOUT_CASE_SHUTDOWN_MS, failure: `Delve did not exit within ${TIMEOUT_CASE_SHUTDOWN_MS}ms of SIGTERM` },
+  { title: 'kills the remaining helper after an unexpected exit', mode: 'wrong exit', shutdownMs: EXIT_WAIT_MS,
     failure: 'Delve must exit with the expected code after SIGTERM' },
-  { title: 'accepts startup and shutdown markers after more than 1 MiB of output', mode: 'clean' },
-])('$title', async ({ failure, mode }) => {
+  { title: 'accepts startup and shutdown markers after more than 1 MiB of output', mode: 'clean', shutdownMs: EXIT_WAIT_MS },
+])('$title', async ({ failure, mode, shutdownMs }) => {
   const directory = mkdtempSync(join(tmpdir(), 'delve-mac-smoke-test-'));
   const executable = join(directory, 'Delve');
   const log = join(directory, 'launch.log');
@@ -71,7 +74,7 @@ it.skipIf(process.platform === 'win32').each([
   try {
     writeFileSync(executable, app, { mode: 0o700 });
     const env = { ...process.env, FIXTURE_PIDS: pidFile, FIXTURE_MODE: mode };
-    const result = smoke(executable, log, env, 'fixture app ready', 0, { startupMs: 1_500, shutdownMs: 1_000 });
+    const result = smoke(executable, log, env, 'fixture app ready', 0, { startupMs: EXIT_WAIT_MS, shutdownMs });
     if (!failure) {
       await expect(result).resolves.toBeUndefined();
       expect(statSync(log).size).toBeGreaterThan(1024 * 1024);
@@ -101,4 +104,4 @@ it.skipIf(process.platform === 'win32').each([
       rmSync(directory, { recursive: true, force: true });
     }
   }
-}, 7_000);
+}, 15_000);

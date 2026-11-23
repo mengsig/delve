@@ -98,7 +98,8 @@ export type SavedTutorJob = {
   submittedAnswer?: string;
 } & ({ phase: 'running' | 'ready' } | { phase: 'failed'; code: string; message: string });
 
-export type UnreadableTutorJob = { phase: 'unreadable'; rowKey: string; message: string };
+export type UnreadableTutorJobIdentity = { jobKey: string; version: string };
+export type UnreadableTutorJob = UnreadableTutorJobIdentity & { phase: 'unreadable'; message: string };
 export type TutorJobEntry = SavedTutorJob | UnreadableTutorJob;
 
 export interface TutorContract {
@@ -110,4 +111,5 @@ export interface TutorContract {
   'tutor:wait': { request: { requestId: string }; response: ReaderLesson };
   'tutor:retry': { request: { requestId: string; provider: TutorRequest['provider'] }; response: ReaderLesson };
   'tutor:dismiss': { request: { requestId: string }; response: boolean };
+  'tutor:dismiss-unreadable': { request: UnreadableTutorJobIdentity; response: 'dismissed' | 'changed' | 'active' };
 }

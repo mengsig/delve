@@ -10,6 +10,7 @@ import { seedDemoWorkspaces } from '../db/demo';
 import { listEvidence, recordEvidence, resetEvidence } from '../db/evidence';
 import { readWorkspaceGraph } from '../db/graph';
 import { bindSnapshot, getLessonByCacheKey, lessonCacheKey, saveLesson } from '../db/lessons';
+import { MIGRATIONS, migrate } from '../db/migrations';
 import { addWorkspace } from '../db/workspaces';
 import { makeShimDir, makeTempDir, setupRunner } from '../providers/test-helpers';
 import { readLesson, readerHandlers } from '../reader/ipc';
@@ -305,10 +306,85 @@ it.each([
   await session.run({ ...request, token, requestId: id });
 
   expect(tutorHandlers(db, session)['tutor:jobs'](null)).toMatchObject([
-    { phase: 'unreadable', rowKey: expect.any(String), message: 'A saved tutor request could not be read and was skipped.' },
+    { phase: 'unreadable', jobKey: expect.any(String), version: expect.any(String), message: 'A saved tutor request could not be read and was skipped.' },
     { id, phase: 'ready', request },
   ]);
   expect(await session.wait(id)).toMatchObject({ blocks: expect.arrayContaining([explanation]) });
+});
+
+function saveUnreadableJob(id: string = randomUUID()): void {
+  const { workspaceId, conceptId, depth } = request;
+  const result = db.prepare(`INSERT INTO tutor_jobs (id, workspace_id, concept_id, depth, token, detail, phase)
+    VALUES (?, ?, ?, ?, ?, '{}', 'running')`).run(id, workspaceId, conceptId, depth, 'a'.repeat(64));
+  expect(result.changes).toBe(1);
+}
+
+function unreadableIdentity() {
+  const entries = session.jobs();
+  expect(entries).toHaveLength(1);
+  const job = entries[0];
+  if (job?.phase !== 'unreadable') throw new Error('Expected an unreadable tutor job.');
+  return { jobKey: job.jobKey, version: job.version };
+}
+
+it('dismisses an unreadable interrupted job without requiring a valid UUID', () => {
+  saveUnreadableJob('malformed job id');
+  const identity = unreadableIdentity();
+  expect(tutorHandlers(db, session)['tutor:dismiss-unreadable'](identity)).toBe('dismissed');
+  expect(session.jobs()).toEqual([]);
+  expect(session.dismissUnreadable(identity)).toBe('changed');
+});
+
+it('preserves a job that replaced an unreadable row through a new turn', async () => {
+  saveUnreadableJob();
+  const identity = unreadableIdentity();
+  const original = db.prepare('SELECT rowid FROM tutor_jobs').get();
+  await run(request.intent);
+  expect(db.prepare('SELECT rowid FROM tutor_jobs').get()).toEqual(original);
+  expect(session.dismissUnreadable(identity)).toBe('changed');
+  expect(session.jobs()).toMatchObject([{ phase: 'ready', request }]);
+});
+
+it('preserves a replacement with the same reused rowid and job id', () => {
+  const id = randomUUID();
+  saveUnreadableJob(id);
+  const identity = unreadableIdentity();
+  const original = db.prepare('SELECT rowid, id FROM tutor_jobs').get();
+  db.exec('DELETE FROM tutor_jobs');
+  saveUnreadableJob(id);
+  expect(db.prepare('SELECT rowid, id FROM tutor_jobs').get()).toEqual(original);
+  expect(unreadableIdentity()).toMatchObject({ jobKey: identity.jobKey });
+  expect(unreadableIdentity().version).not.toBe(identity.version);
+  expect(session.dismissUnreadable(identity)).toBe('changed');
+  expect(session.jobs()).toMatchObject([{ phase: 'unreadable' }]);
+});
+
+it('refuses dismissal of an unreadable active job and lets its turn commit', async () => {
+  let release!: (reply: TutorReply) => void;
+  const reply = new Promise<TutorReply>(resolve => { release = resolve; });
+  session = new TutorSession(db, () => reply);
+  const turn = run(request.intent);
+  db.exec("UPDATE tutor_jobs SET detail = '{}'");
+  const identity = unreadableIdentity();
+  const result = session.dismissUnreadable(identity);
+  const during = db.prepare('SELECT phase FROM tutor_jobs').get();
+  release(opening);
+  await expect(turn).resolves.toMatchObject({ blocks: expect.arrayContaining([explanation]) });
+  expect(result).toBe('active');
+  expect(during).toMatchObject({ phase: 'running' });
+  expect(db.prepare('SELECT phase FROM tutor_jobs').get()).toMatchObject({ phase: 'ready' });
+  expect(session.dismissUnreadable(identity)).toBe('changed');
+  expect(session.dismissUnreadable(unreadableIdentity())).toBe('dismissed');
+});
+
+it('assigns dismissal identities to existing version 8 tutor jobs', () => {
+  db.exec('DROP TRIGGER tutor_jobs_version_insert; DROP TRIGGER tutor_jobs_version_update; '
+    + 'ALTER TABLE tutor_jobs DROP COLUMN version; PRAGMA user_version = 8;');
+  saveUnreadableJob();
+  expect(migrate(db)).toBe(MIGRATIONS.length);
+  const identity = unreadableIdentity();
+  expect(tutorSchemas['tutor:dismiss-unreadable'].parse(identity)).toEqual(identity);
+  expect(session.dismissUnreadable(identity)).toBe('dismissed');
 });
 
 it('reports an out-of-range stored concept id without blocking valid jobs', async () => {
@@ -418,28 +494,32 @@ it('runs an opening, a miss and two applied passes through the fake CLI', async 
   expect(listEvidence(db, request.conceptId)).toMatchObject([{ status: 'demonstrated', masteryVerified: true }]);
 });
 
-it('persists the low-depth cycle and budget across restarts, then supports review and skip', async () => {
+function reopenMasteryFixture(file: string): void {
   session.close();
   db.close();
-  const file = join(await makeTempDir('mastery-db'), 'delve.sqlite');
   db = openDatabase(file);
+  // Reopening exercises logical persistence. The fixture does not simulate power loss.
+  db.exec('PRAGMA synchronous = OFF; PRAGMA busy_timeout = 0');
+  session = new TutorSession(db);
+}
+
+it('persists the low-depth cycle and budget across restarts, then supports review and skip', async () => {
+  const file = join(await makeTempDir('mastery-db'), 'delve.sqlite');
+  reopenMasteryFixture(file);
   seedDemoWorkspaces(db);
   const workspaceId = 'de100000-0000-4000-8000-000000000001';
   const lease = readWorkspaceGraph(db, workspaceId).concepts.find(c => c.title === 'Worker leases')!;
   request = { ...request, workspaceId, conceptId: lease.id, depth: 'low', provider: 'demo' };
-  session = new TutorSession(db);
   const opening = readLesson(db, request);
   expect(opening.mastery).toMatchObject({ requiredCorrectAnswers: 3, maxAttempts: 6 });
   let lesson = await run({ kind: 'answer', revision: opening.mastery.revision!, answer: 0 });
   expect(lesson.mastery).toMatchObject({ attempts: 1, correctAnswers: 1, activeCheck: { kind: 'applied' } });
-  session.close();
-  db.close();
-  db = openDatabase(file);
-  session = new TutorSession(db);
+  reopenMasteryFixture(file);
   expect(readLesson(db, request)).toEqual(lesson);
   expect(() => run({ kind: 'answer', revision: opening.mastery.revision!, answer: 0 })).toThrow(/current check/);
   const prompts = new Set([opening.mastery.activeCheck!.prompt]);
-  while (lesson.mastery.stage === 'checking') {
+  for (let attempt = 1; attempt < opening.mastery.maxAttempts; attempt++) {
+    expect(lesson.mastery).toMatchObject({ stage: 'checking', attempts: attempt });
     const { prompt } = lesson.mastery.activeCheck!;
     expect(prompts.has(prompt)).toBe(false);
     prompts.add(prompt);
@@ -452,10 +532,7 @@ it('persists the low-depth cycle and budget across restarts, then supports revie
   expect(prompts.has(review.mastery.activeCheck!.prompt)).toBe(false);
   const skipped = readerHandlers(db)['reader:skip']({ ...request, revision: review.mastery.revision! });
   expect(skipped.mastery).toMatchObject({ stage: 'skipped', activeCheck: null });
-  session.close();
-  db.close();
-  db = openDatabase(file);
-  session = new TutorSession(db);
+  reopenMasteryFixture(file);
   expect(readLesson(db, request).mastery).toEqual(skipped.mastery);
   expect(listEvidence(db, lease.id)).toMatchObject([{ status: 'partial', masteryVerified: false }]);
 });

@@ -29,6 +29,7 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
     'tutor:wait': unexpected,
     'tutor:retry': unexpected,
     'tutor:dismiss': () => false,
+    'tutor:dismiss-unreadable': unexpected,
     'reader:start-topic': () => { throw new Error('Unexpected topic request'); },
     'reader:lesson': () => { throw new Error('Unexpected lesson request'); },
     'reader:message': () => { throw new Error('Unexpected message request'); },
@@ -49,6 +50,23 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
 }
 
 describe('dispatch', () => {
+  it('validates unreadable tutor job identity before dismissing', async () => {
+    const dismiss = vi.fn(() => 'changed' as const);
+    const h = handlers({ 'tutor:dismiss-unreadable': dismiss });
+    const identity = { jobKey: 'ABCD', version: 'a'.repeat(32) };
+    for (const malformed of [
+      { jobKey: identity.jobKey }, { ...identity, jobKey: 27 }, { ...identity, jobKey: 'A' },
+      { ...identity, jobKey: 'ZZ' }, { ...identity, version: 'a'.repeat(31) }, { ...identity, rowid: 27 },
+    ]) {
+      expect(await dispatch(h, 'tutor:dismiss-unreadable', malformed)).toMatchObject({
+        ok: false, error: { code: 'INVALID_REQUEST' },
+      });
+    }
+    expect(dismiss).not.toHaveBeenCalled();
+    expect(await dispatch(h, 'tutor:dismiss-unreadable', identity)).toEqual({ ok: true, value: 'changed' });
+    expect(dismiss).toHaveBeenCalledExactlyOnceWith(identity);
+  });
+
   it('validates requests before reaching the handler', async () => {
     const add = vi.fn(() => workspace);
     const h = handlers({ 'workspaces:add': add });

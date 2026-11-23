@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { DomainError } from '../../shared/errors';
-import { lessonKey, type ReaderLesson, type SavedTutorJob, type TutorContract, type TutorJobEntry } from '../../shared/reader';
+import { lessonKey, type ReaderLesson, type SavedTutorJob, type TutorContract, type TutorJobEntry, type UnreadableTutorJobIdentity } from '../../shared/reader';
 import type { Db } from '../db/connection';
 import { readLesson } from '../reader/ipc';
-import { findTutorJob, listTutorJobs, markTutorJobFailed, markTutorJobReady, removeTutorJob, storeTutorJob } from './jobs';
+import { dismissUnreadableJob, findTutorJob, listTutorJobs, markTutorJobFailed, markTutorJobReady, removeTutorJob, storeTutorJob } from './jobs';
 import { createGenerator, type Generate } from './provider';
 import { checkedTurn, executeTurn } from './turn';
 
@@ -83,6 +83,10 @@ export class TutorSession {
   dismiss(id: string): boolean {
     const saved = findTutorJob(this.db, id);
     return Boolean(saved && !this.active(saved.job) && removeTutorJob(this.db, id));
+  }
+
+  dismissUnreadable(identity: UnreadableTutorJobIdentity) {
+    return dismissUnreadableJob(this.db, identity, id => [...this.turns.values()].some(turn => turn.id === id));
   }
 
   private requireJob(id: string) {

@@ -3,6 +3,7 @@ import { DEPTHS, PROVIDER_IDS } from '../../shared/domain';
 import type { Db } from '../db/connection';
 import { prepareTurn, previewNewTopic } from './prompt';
 import { digest, tutorRequest } from './request';
+import { unreadableJobIdentity } from './jobs';
 import type { TutorSession } from './session';
 import type { IpcHandlers } from '../ipc';
 
@@ -16,6 +17,7 @@ export const tutorSchemas = {
   'tutor:wait': jobAddress,
   'tutor:retry': jobAddress.extend({ provider: tutorRequest.shape.provider }),
   'tutor:dismiss': jobAddress,
+  'tutor:dismiss-unreadable': unreadableJobIdentity,
 };
 
 export function tutorHandlers(db: Db, session: TutorSession): Pick<IpcHandlers, keyof typeof tutorSchemas> {
@@ -28,5 +30,6 @@ export function tutorHandlers(db: Db, session: TutorSession): Pick<IpcHandlers, 
     'tutor:wait': ({ requestId }) => session.wait(requestId),
     'tutor:retry': ({ requestId, provider }) => session.retry(requestId, provider),
     'tutor:dismiss': ({ requestId }) => session.dismiss(requestId),
+    'tutor:dismiss-unreadable': identity => session.dismissUnreadable(identity),
   };
 }
