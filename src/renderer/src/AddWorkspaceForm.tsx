@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type RefObject } from 'react';
 import { DEFAULT_DEPTH, DEPTHS, type Depth, type ProviderId, type WorkspaceKind } from '../../shared/domain';
 import type { TopicPreview } from '../../shared/reader';
 import { call } from './api';
@@ -6,6 +6,7 @@ import { PROVIDER_LABELS } from './preferences';
 import { SetupProvider, providerHint, useDetectedProvider, useProviderDetection } from './SetupProvider';
 import { Terrain } from './Terrain';
 import { errorMessage } from './useRead';
+import { shouldFocusSource, type FocusWatch } from './sourceErrors';
 import { droppedSource, repositoryInput } from './workspaceSource';
 import { useAttachFiles, useAttachInventory, useAttachPreview } from './repository/AttachReads';
 import { AttachReview } from './repository/AttachReview';
@@ -22,11 +23,14 @@ interface Props {
 
 const DEPTH_LABELS = { high: 'High · Overview', medium: 'Medium · Mechanics', low: 'Low · Detail' } as const;
 
-function SourceFields({ value, onValue, onPick, onDrop }: ReturnType<typeof useSourceFields>) {
+const SETUP_ERROR_ID = 'setup-error';
+
+function SourceFields({ value, onValue, onPick, onDrop, invalid }: ReturnType<typeof useSourceFields> & { invalid: boolean }) {
   return <div className="formrow">
     <label htmlFor="source-input">Topic or repository</label>
     <div className="source-control" onDrop={onDrop} onDragOver={event => event.preventDefault()}>
-      <input id="source-input" autoFocus aria-describedby="source-hint" required placeholder="Photography or https://github.com/owner/repo"
+      <input id="source-input" autoFocus required aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? `source-hint ${SETUP_ERROR_ID}` : 'source-hint'} placeholder="Photography or https://github.com/owner/repo"
         value={value} maxLength={4096} onChange={event => onValue(event.target.value)} />
       <button type="button" onClick={onPick}>Choose folder…</button>
     </div>
@@ -151,7 +155,7 @@ function StartActions({ topic, signedIn, blocked, pending, attach, attachFailed,
 function SetupFeedback({ error, onOpenSwitcher }: { error: string; onOpenSwitcher: Props['onOpenSwitcher'] }) {
   if (!error) return null;
   return <div className="attach-feedback">
-    <p role="alert" className="setup-error">{error}</p>
+    <p role="alert" id={SETUP_ERROR_ID} className="setup-error">{error}</p>
     {error.includes('workspace switcher') && onOpenSwitcher
       ? <button type="button" onClick={onOpenSwitcher}>Open workspace switcher</button>
       : <button type="button" onClick={() => document.getElementById('source-input')?.focus()}>Edit source</button>}
@@ -170,11 +174,40 @@ function TopicReview({ provider, request }: { provider: ProviderId; request: Ret
   </div>;
 }
 
+/** Refocuses the rejected source unless the user moved focus (focusin, or a press outside the form) mid-request. */
+function useSourceErrorFocus(form: RefObject<HTMLFormElement | null>, pending: boolean, rejected: boolean) {
+  const watchRef = useRef<FocusWatch | null>(null);
+  useLayoutEffect(() => {
+    if (!pending) return;
+    const watch: FocusWatch = { start: document.activeElement, moved: false };
+    watchRef.current = watch;
+    const focused = () => { watch.moved = true; };
+    const pressed = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !form.current?.contains(event.target)) watch.moved = true;
+    };
+    document.addEventListener('focusin', focused, true);
+    document.addEventListener('pointerdown', pressed, true);
+    return () => {
+      document.removeEventListener('focusin', focused, true);
+      document.removeEventListener('pointerdown', pressed, true);
+    };
+  }, [form, pending]);
+  useEffect(() => {
+    if (!rejected) return;
+    const source = document.getElementById('source-input');
+    const settled = watchRef.current;
+    watchRef.current = null;
+    if (shouldFocusSource(settled, document.activeElement, document.body, source)) source?.focus();
+  }, [rejected]);
+}
+
 function WorkspaceEditor(props: Props) {
   const [depth, setDepth] = useState<Depth>(DEFAULT_DEPTH);
   const detection = useProviderDetection();
   const { provider, choose, cli } = useDetectedProvider(detection.statuses);
   const actions = useStartWorkspace(props.onAdded, depth, provider);
+  const form = useRef<HTMLFormElement>(null);
+  useSourceErrorFocus(form, actions.pending !== null, actions.sourceError && !actions.pending);
   const source = useSourceFields(actions);
   const attach = useAttachRequest(source.repository, depth, provider, cli);
   const topic = source.kind === 'topic';
@@ -196,9 +229,9 @@ function WorkspaceEditor(props: Props) {
     else addOnly();
   }
 
-  return <form className="setup-grid" aria-label="Add workspace" onSubmit={submit}>
+  return <form ref={form} className="setup-grid" aria-label="Add workspace" onSubmit={submit}>
     <fieldset className="sheet setup-form" disabled={actions.pending !== null}>
-      <SourceFields {...source} />
+      <SourceFields {...source} invalid={actions.sourceError} />
       <p className="smallprint setup-cli-status" role="status">{detection.error ? 'Could not check sign-in. Open Advanced options to retry.' :
         cli ? providerHint(cli) : 'Checking installed CLIs…'}</p>
       <details className="setup-advanced">

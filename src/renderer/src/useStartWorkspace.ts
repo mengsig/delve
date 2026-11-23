@@ -8,7 +8,7 @@ import { useTutorJobs } from './reader/TutorJobs';
 import { useMapJobs } from './repository/MapJobs';
 import { setRepositoryApproval } from './repository/repositoryApproval';
 import { errorMessage } from './useRead';
-import { workspaceInput } from './workspaceSource';
+import { SourceError, sourceInput, sourceRejection } from './sourceErrors';
 
 export type WorkspaceAdded = (workspace: Workspace, depth: Depth, conceptId?: number, notice?: string) => void;
 
@@ -21,21 +21,24 @@ function addError(cause: unknown, action: string) {
   return (action === 'map' ? 'Could not attach the reviewed map request. ' : 'Could not add the workspace. ') + message;
 }
 
+interface ActionError { message: string; source: boolean }
+const NO_ERROR: ActionError = { message: '', source: false };
+
 function useWorkspaceActions() {
   const locked = useRef(false);
   const [pending, setPending] = useState<'pick' | 'add' | 'map' | null>(null);
-  const [error, setError] = useState('');
+  const [failure, setFailure] = useState<ActionError>(NO_ERROR);
   const [failedToken, setFailedToken] = useState<string>();
 
   async function run(action: NonNullable<typeof pending>, apply: () => Promise<void>, preview?: RepoPreview) {
     if (locked.current) return;
     locked.current = true;
     setPending(action);
-    setError('');
+    setFailure(NO_ERROR);
     try {
       await apply();
     } catch (cause) {
-      setError(addError(cause, action));
+      setFailure({ message: addError(cause, action), source: cause instanceof SourceError });
       if (preview) setFailedToken(preview.token);
     } finally {
       setPending(null);
@@ -43,7 +46,11 @@ function useWorkspaceActions() {
     }
   }
 
-  return { pending, error, failedToken, setError, run, clearError: () => setError('') };
+  return {
+    pending, error: failure.message, sourceError: failure.source, failedToken, run,
+    setError: (message: string) => setFailure({ message, source: false }),
+    clearError: () => setFailure(NO_ERROR),
+  };
 }
 
 function sameRequest(reviewed: TopicPreview, current: TopicPreview) {
@@ -60,10 +67,11 @@ export function useStartWorkspace(onAdded: WorkspaceAdded, depth: Depth, provide
 
   function addOnly(kind: WorkspaceKind, value: string, reviewed?: TopicPreview, rememberTutor = false) {
     void actions.run('add', async () => {
-      const input = workspaceInput(kind, value);
-      if (input.kind !== 'topic') return onAdded(await call('workspaces:add', input), depth);
+      const input = sourceInput(kind, value);
+      const add = () => call('workspaces:add', input).catch(cause => { throw sourceRejection(cause); });
+      if (input.kind !== 'topic') return onAdded(await add(), depth);
       const saved = incompleteTopic.current;
-      const workspace = saved?.name === input.title ? saved : await call('workspaces:add', input);
+      const workspace = saved?.name === input.title ? saved : await add();
       incompleteTopic.current = workspace;
       const conceptId = await call('reader:start-topic', { workspaceId: workspace.id });
       incompleteTopic.current = null;

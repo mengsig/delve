@@ -76,7 +76,7 @@ function StudyChanges({ route, common, remember, visit }: {
       change: { kind: 'pr', ref: '184' }, title: 'Reject late worker results' });
   }, [change, title, workspace.id, depth, demo, remember]);
   return <Changes {...common} onAdd={() => visit({ screen: 'setup' })} selected={change} openedJob={job?.kind === 'change' ? job : undefined}
-    onSelect={(selection: ChangeRef, label?: string) => visit({ screen: 'changes', change: selection, title: label }, true)}
+    onSelect={(selection?: ChangeRef, label?: string) => visit({ screen: 'changes', change: selection, title: label }, true)}
     onLesson={conceptId => visit({ screen: 'lesson', conceptId, change: change ?? (demo ? { kind: 'pr', ref: '184' } : undefined) })}
     onAtlas={id => visit({ screen: 'atlas', focus: change ? { id, change } : undefined })} />;
 }
