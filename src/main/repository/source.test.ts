@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DomainError } from '../../shared/errors';
 import { openDatabase } from '../db/connection';
@@ -18,6 +18,8 @@ import * as sourceProcess from './source-process';
 let root: string;
 let repo: string;
 let workspace: Workspace;
+
+const INVALID_LOG_CONFIG = /^Could not read Git history\. fatal: bad (?:boolean config value for log\.abbrevcommit|numeric config value)$/;
 
 function git(...args: string[]): string {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -331,20 +333,30 @@ describe('Git change reachability with missing parents', () => {
   });
 });
 
-it.each(['an uppercase tree ID', 'a negative author timestamp'])('preserves a Git-readable commit with %s during repair', async variant => {
+it.each([
+  'an uppercase tree ID', 'a negative author timestamp', 'an uppercase parent ID', 'a later parent-shaped header',
+  'no message separator',
+])('preserves a Git-readable commit with %s during repair', async variant => {
   const base = commit('Base', '--allow-empty');
   const tree = git('rev-parse', `${base}^{tree}`);
   const missing = 'a'.repeat(tree.length);
   const treeField = variant === 'an uppercase tree ID' ? tree.toUpperCase() : tree;
   const authorDate = variant === 'a negative author timestamp' ? -1 : 1700000000;
   const missingLine = `parent ${missing}\n`;
-  const raw = `tree ${treeField}\n${missingLine}parent ${base}\n`
+  const uppercaseParent = variant === 'an uppercase parent ID';
+  const parents = uppercaseParent ? [base, missing] : [missing, base];
+  const parentLines = uppercaseParent ? `parent ${base.toUpperCase()}\n${missingLine}` : `${missingLine}parent ${base}\n`;
+  const extraHeader = variant === 'a later parent-shaped header' ? missingLine : '';
+  const hasMessage = variant !== 'no message separator';
+  const title = hasMessage ? 'Boundary' : 'Untitled change';
+  const raw = `tree ${treeField}\n${parentLines}`
     + `author Fixture User <fixture@example.invalid> ${authorDate} +0000\n`
-    + 'committer Fixture User <fixture@example.invalid> 1700000000 +0000\n\nBoundary\n\nOriginal body.\n';
+    + `committer Fixture User <fixture@example.invalid> 1700000000 +0000\n${extraHeader}`
+    + (hasMessage ? '\nBoundary\n\nOriginal body.\n' : '');
   const boundary = execFileSync('git', ['-C', repo, 'hash-object', '-w', '-t', 'commit', '--literally', '--stdin'],
     { input: raw, encoding: 'utf8' }).trim();
   git('update-ref', 'refs/heads/main', boundary);
-  expect(git('rev-list', '--no-walk', '--parents', boundary, '--')).toBe(`${boundary} ${missing} ${base}`);
+  expect(git('rev-list', '--no-walk', '--parents', boundary, '--')).toBe([boundary, ...parents].join(' '));
 
   const { gitSource } = sourceProcess;
   const staged: string[] = [];
@@ -356,10 +368,11 @@ it.each(['an uppercase tree ID', 'a negative author timestamp'])('preserves a Gi
     const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
     const page = await history.advance(() => 1);
     expect(page.nodes.map(node => node.ref)).toEqual([boundary, base]);
-    expect(page.nodes[0]).toMatchObject({ title: 'Boundary', author: 'Fixture User', parents: [missing, base] });
+    expect(page.nodes[0]).toMatchObject({ title, author: 'Fixture User', parents });
     expect(page.warning).toContain(missing);
     await expect(readChangeDetail(repo, workspace, 'commit', boundary)).resolves.toMatchObject({
-      node: { ref: boundary, title: 'Boundary', parents: [missing, base] }, description: 'Original body.', partial: true,
+      node: { ref: boundary, title, parents }, base: parents[0], description: hasMessage ? 'Original body.' : undefined,
+      partial: !uppercaseParent,
     });
     expect(staged.length).toBeGreaterThan(0);
     for (const replacement of staged) {
@@ -371,13 +384,102 @@ it.each(['an uppercase tree ID', 'a negative author timestamp'])('preserves a Gi
   }
 });
 
+it('repairs a linked worktree through the common object store and its relative alternate', async () => {
+  const base = commit('Base', '--allow-empty');
+  const tree = git('rev-parse', `${base}^{tree}`);
+  const objects = join(repo, '.git', 'objects');
+  const alternate = join(root, 'alternate objects');
+  await rename(objects, alternate);
+  await mkdir(join(objects, 'info'), { recursive: true });
+  await writeFile(join(objects, 'info', 'alternates'), relative(objects, alternate).split('\\').join('/') + '\n');
+  const missing = 'a'.repeat(tree.length);
+  const boundary = writeCommitObject(tree, [missing, base], 'Boundary');
+  git('update-ref', 'refs/heads/main', boundary);
+  const linked = join(root, 'linked worktree');
+  git('worktree', 'add', '--detach', linked, base);
+  const linkedWorkspace = { ...workspace, source: linked };
+  const history = await openRepositoryHistory(linkedWorkspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+  const page = await history.advance(() => 1);
+  expect(page.nodes.map(node => node.ref)).toEqual([boundary, base]);
+  await expect(readChangeDetail(linked, linkedWorkspace, 'commit', boundary)).resolves.toMatchObject({
+    node: { ref: boundary, parents: [missing, base] }, base: missing, partial: true,
+  });
+});
+
+it.runIf(process.platform === 'linux')('repairs a linked worktree whose common path contains non-UTF-8 bytes', async () => {
+  const base = commit('Base', '--allow-empty');
+  const tree = git('rev-parse', `${base}^{tree}`);
+  const missing = 'a'.repeat(tree.length);
+  const boundary = writeCommitObject(tree, [missing, base], 'Boundary');
+  git('update-ref', 'refs/heads/main', boundary);
+  const linked = join(root, 'linked worktree');
+  git('worktree', 'add', '--detach', linked, base);
+  const gitDir = join(repo, '.git');
+  const rawGitDir = Buffer.concat([Buffer.from(gitDir + '-'), Buffer.from([0xff])]);
+  await rename(gitDir, rawGitDir);
+  await symlink(rawGitDir, gitDir);
+  const reader = await gitReader(linked);
+  const objects = await reader.run(['rev-parse', '--git-path', 'objects']);
+  expect(objects.status, objects.diagnostic).toBe(0);
+  expect(objects.output.includes(0xff)).toBe(true);
+  await expect(readChangeDetail(linked, { ...workspace, source: linked }, 'commit', boundary)).resolves.toMatchObject({
+    node: { ref: boundary, parents: [missing, base] }, partial: true,
+  });
+});
+
+it('keeps user Git configuration out of the private repository setup', async () => {
+  const base = commit('Base', '--allow-empty');
+  const tree = git('rev-parse', `${base}^{tree}`);
+  const missing = 'a'.repeat(tree.length);
+  const boundary = writeCommitObject(tree, [missing, base], 'Boundary');
+  git('update-ref', 'refs/heads/main', boundary);
+  const home = join(root, 'user-config');
+  await mkdir(home);
+  await writeFile(join(home, '.gitconfig'), '[init]\n\tdefaultBranch = "invalid branch"\n');
+  vi.stubEnv('HOME', home);
+  vi.stubEnv('XDG_CONFIG_HOME', home);
+  await expect(readChange(repo, workspace, 'commit', boundary)).resolves.toMatchObject({ commit: boundary, partial: true });
+});
+
+it('repairs history with Git 2.30 path output', async () => {
+  const base = commit('Base', '--allow-empty');
+  const tree = git('rev-parse', `${base}^{tree}`);
+  const missing = 'a'.repeat(tree.length);
+  const boundary = writeCommitObject(tree, [missing, base], 'Boundary');
+  git('update-ref', 'refs/heads/main', boundary);
+  const { gitSource } = sourceProcess;
+  const paths: string[] = [];
+  const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation(async (args, options) => {
+    if (!args.includes('--git-path')) return gitSource(args, options);
+    const entry = args.at(-1)!;
+    paths.push(entry);
+    const path = relative(options?.cwd ?? dirname(process.execPath), join(repo, '.git', entry));
+    const echo = args.includes('--path-format=absolute') ? '--path-format=absolute\n' : '';
+    return { status: 0, truncated: false, diagnostic: '', output: Buffer.from(echo + path + '\n') };
+  });
+  try {
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const page = await history.advance(() => 1);
+    expect(page.nodes.map(node => node.ref)).toEqual([boundary, base]);
+    expect(paths).toEqual(expect.arrayContaining(['objects', 'shallow']));
+  } finally {
+    spy.mockRestore();
+  }
+});
+
 describe('Git changes in detached or shallow history', () => {
-  it('opens a missing-parent boundary reachable only from detached HEAD', async () => {
+  it.each(['no tag', 'a SHA-named tag', 'a HEAD-named tag'])('opens a missing-parent boundary reachable only from detached HEAD with %s', async collision => {
     const parent = commit('Missing parent', '--allow-empty');
     const boundary = commit('Boundary', '--allow-empty');
     commit('Tip', '--allow-empty');
     git('checkout', '--detach');
     git('update-ref', '-d', 'refs/heads/main');
+    if (collision !== 'no tag') {
+      const tree = git('rev-parse', `${boundary}^{tree}`);
+      const unrelated = git('commit-tree', tree, '-m', 'Unrelated tag target');
+      git('update-ref', `refs/tags/${collision === 'a SHA-named tag' ? boundary : 'HEAD'}`, unrelated);
+      git('config', 'core.warnAmbiguousRefs', 'false');
+    }
     await rm(join(repo, '.git', 'objects', parent.slice(0, 2), parent.slice(2)));
     await expect(readChange(repo, workspace, 'commit', boundary)).resolves.toMatchObject({ commit: boundary, partial: true });
   });
@@ -520,7 +622,7 @@ it.each(['loose', 'packed'])('keeps source Git metadata unchanged when a matchin
     expect(after).toEqual(before);
     const writes = spy.mock.calls.filter(([args]) => args.includes('hash-object') && args.includes('-w'));
     expect(writes.length).toBeGreaterThan(0);
-    expect(writes.every(([, options]) => options?.isolatedGit === undefined)).toBe(true);
+    expect(writes.every(([, options]) => options?.isolatedGit?.alternate === undefined)).toBe(true);
   } finally {
     spy.mockRestore();
   }
@@ -549,8 +651,7 @@ it('repairs a SHA-256 boundary through an annotated tag without changing the rep
     await expect(readChange(repo, workspace, 'commit', boundary)).resolves.toMatchObject({
       commit: boundary, title: 'Tag boundary', base: missing, partial: true,
     });
-    const privateDirs = spy.mock.calls.filter(([, options]) => options?.isolatedGit)
-      .map(([args]) => args.find(arg => arg.startsWith('--git-dir='))!.slice('--git-dir='.length));
+    const privateDirs = spy.mock.calls.flatMap(([, options]) => options?.isolatedGit ? [options.isolatedGit.directory] : []);
     expect(privateDirs.length).toBeGreaterThan(0);
     for (const directory of new Set(privateDirs)) {
       await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -571,7 +672,7 @@ it('reports a Git log configuration failure instead of marking healthy tips as d
   git('config', 'log.abbrevCommit', 'invalid');
 
   await expect(openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []))
-    .rejects.toMatchObject({ code: 'SOURCE_READ_FAILED', message: expect.stringMatching(/bad boolean config value.*log\.abbrevcommit/i) });
+    .rejects.toMatchObject({ code: 'SOURCE_READ_FAILED', message: expect.stringMatching(INVALID_LOG_CONFIG) });
 });
 
 it.each(['single line', 'multiple lines'])('redacts a real Git config value on %s', async shape => {
@@ -583,8 +684,7 @@ it.each(['single line', 'multiple lines'])('redacts a real Git config value on %
   const failure = await history.advance(() => 1).catch((error: unknown) => error);
   expect(failure instanceof DomainError && failure.code).toBe('SOURCE_READ_FAILED');
   expect(failure instanceof DomainError && !failure.message.includes('synthetic-')).toBe(true);
-  expect(failure instanceof DomainError && failure.message ===
-    'Could not read Git history. fatal: bad boolean config value for log.abbrevcommit').toBe(true);
+  expect(failure instanceof DomainError && failure.message).toMatch(INVALID_LOG_CONFIG);
 });
 
 it('does not recover from a bad-object diagnostic when the named commit is readable', async () => {
@@ -809,7 +909,7 @@ it('validates the source log configuration on a repaired continuation and allows
   expect(first.warning).toContain(missing);
   git('config', 'log.abbrevCommit', 'synthetic-invalid-boolean');
   await expect(history.advance(() => 2)).rejects.toMatchObject({
-    code: 'SOURCE_READ_FAILED', message: 'Could not read Git history. fatal: bad boolean config value for log.abbrevcommit',
+    code: 'SOURCE_READ_FAILED', message: expect.stringMatching(INVALID_LOG_CONFIG),
   });
   git('config', '--unset', 'log.abbrevCommit');
   const retried = await history.advance(() => 2);
@@ -999,8 +1099,7 @@ describe('explorer detail and offline history', () => {
       const failure = await readChangeDetail(repo, workspace, 'commit', head).catch((error: unknown) => error);
       expect(failure instanceof DomainError && failure.code).toBe('SOURCE_READ_FAILED');
       expect(failure instanceof DomainError && !failure.message.includes('synthetic-detail-value')).toBe(true);
-      expect(failure instanceof DomainError && failure.message ===
-        'Could not read Git history. fatal: bad boolean config value for log.abbrevcommit').toBe(true);
+      expect(failure instanceof DomainError && failure.message).toMatch(INVALID_LOG_CONFIG);
     } finally {
       spy.mockRestore();
     }

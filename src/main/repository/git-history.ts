@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import type { HistoryNode } from '../../shared/explorer';
 import { DomainError } from '../../shared/errors';
 import { withBoundaries, type BrokenBoundary } from './git-boundaries';
+import { commitParentHeaders } from './git-commit-headers';
 import { gitReadFailed, gitReadState } from './git-diagnostics';
 import { changeTitle, checkReachability, gitReader, headTip, isMissingCommit, nulRecords, reachabilityDiagnostics, reachabilityFailed,
   REACHABILITY_REVISIONS, type GitReader } from './git-reader';
@@ -167,15 +168,10 @@ async function brokenParent(reader: GitReader, revisions: string[], original: Gi
   const { object: missing, child: commit } = read.failure;
   const result = await original.run(['cat-file', 'commit', commit], WALK_LIMIT);
   const content = gitReadState(result, WALK_LIMIT) === 'limited' ? result.output : completeHistoryOutput(result);
-  const end = content.indexOf('\n\n');
-  if (end < 0) {
-    if (result.truncated) historyReadFailed(result);
-    return null;
-  }
-  const headers = content.subarray(0, end).toString('utf8');
-  const parents = [...headers.matchAll(/^parent ([a-f0-9]+)$/gm)].map(match => match[1] ?? '');
-  if (!parents.every(parent => OBJECT_ID.test(parent)) || !parents.includes(missing)) return null;
-  return { commit, missing, parents };
+  const headers = commitParentHeaders(content, commit, result.truncated);
+  if (!headers) historyReadFailed(result);
+  if (!headers.parents.includes(missing)) return null;
+  return { commit, missing, parents: headers.parents };
 }
 
 function missingReachabilityParent(result: CommandResult): string | undefined {

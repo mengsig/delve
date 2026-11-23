@@ -3,13 +3,14 @@ import { randomBytes } from 'node:crypto';
 import { constants, createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { DomainError } from '../../shared/errors';
+import { commitParentHeaders } from './git-commit-headers';
 import { gitOutput, gitReadFailed, gitReadState } from './git-diagnostics';
 import { headTip, REACHABILITY_REFS, reachabilityDiagnostics, type GitReader } from './git-reader';
 import { OBJECT_ID } from './source-policy';
-import { gitSource } from './source-process';
+import { gitSource, SOURCE_CWD } from './source-process';
 
 export interface BrokenBoundary {
   missing: Set<string>;
@@ -38,13 +39,23 @@ async function* limitBytes(chunks: AsyncIterable<Buffer>, budget: ByteBudget) {
   }
 }
 
-async function repositoryPath(reader: GitReader, entry: 'objects' | 'shallow'): Promise<string> {
-  const result = await reader.run(['rev-parse', '--path-format=absolute', '--git-path', entry], 64 * 1024);
-  const output = gitOutput(result, SETUP_FAILED).toString('utf8');
-  assert.ok(output.endsWith('\n'));
-  const path = output.slice(0, -1);
-  assert.ok(isAbsolute(path) && !path.includes('\0'));
-  return path;
+async function repositoryPath(reader: GitReader, entry: 'objects' | 'shallow'): Promise<Buffer> {
+  const result = await reader.run(['rev-parse', '--git-path', entry], 64 * 1024);
+  const output = gitOutput(result, SETUP_FAILED);
+  const bytes = output.subarray(0, -1);
+  if (output.at(-1) !== 10 || bytes.length === 0 || bytes.includes(0)) {
+    throw new DomainError('SOURCE_READ_FAILED', SETUP_FAILED);
+  }
+  assert.ok(isAbsolute(SOURCE_CWD));
+  // POSIX file names may be non-UTF-8, and a symlink can change how ".." resolves.
+  if (process.platform !== 'win32') {
+    return bytes[0] === 47 ? bytes : Buffer.concat([Buffer.from(SOURCE_CWD + '/'), bytes]);
+  }
+  const path = bytes.toString('utf8');
+  if (!Buffer.from(path).equals(bytes)) throw new DomainError('SOURCE_READ_FAILED', SETUP_FAILED);
+  const absolute = resolve(SOURCE_CWD, path);
+  assert.ok(isAbsolute(absolute));
+  return Buffer.from(absolute);
 }
 
 async function copyShallowFile(reader: GitReader, directory: string): Promise<void> {
@@ -75,35 +86,45 @@ async function copyReachabilityRefs(reader: GitReader, directory: string): Promi
   await writeFile(join(directory, 'HEAD'), head ? head + '\n' : 'ref: refs/delve/unborn\n');
 }
 
-async function* withoutMissingParents(stream: AsyncIterable<Buffer>, commit: string, { parents, missing }: BrokenBoundary) {
+function* repairedCommitPrefix(content: Buffer, commit: string, { parents, missing }: BrokenBoundary, truncated: boolean) {
+  const headers = commitParentHeaders(content, commit, truncated);
+  if (!headers || headers.parents.length !== parents.length || !headers.parents.every((id, i) => id === parents[i])) {
+    throw new DomainError('SOURCE_READ_FAILED', SETUP_FAILED);
+  }
+  const { treeEnd, parentsEnd } = headers;
+  const parentBytes = commit.length + 'parent \n'.length;
+  assert.equal(parentsEnd - treeEnd, parents.length * parentBytes);
+  assert.ok(parentsEnd <= content.length);
+  yield content.subarray(0, treeEnd);
+  for (const [index, parent] of parents.entries()) {
+    if (missing.has(parent)) continue;
+    const offset = treeEnd + index * parentBytes;
+    yield content.subarray(offset, offset + parentBytes);
+  }
+  yield content.subarray(parentsEnd);
+}
+
+async function* withoutMissingParents(stream: AsyncIterable<Buffer>, commit: string, boundary: BrokenBoundary) {
+  const { parents, missing } = boundary;
   assert.ok(OBJECT_ID.test(commit) && parents.every(parent => parent.length === commit.length && OBJECT_ID.test(parent)));
   assert.ok(missing.size > 0 && [...missing].every(parent => parents.includes(parent)));
-  const expected = Buffer.from(parents.map(parent => `parent ${parent}\n`).join(''));
-  const kept = Buffer.from(parents.filter(parent => !missing.has(parent)).map(parent => `parent ${parent}\n`).join(''));
-  const treeLength = commit.length + 'tree \n'.length;
-  const headerLength = treeLength + expected.length;
+  const headerLength = commit.length + 'tree \n'.length + parents.length * (commit.length + 'parent \n'.length);
+  const lookahead = headerLength + 'parent '.length;
   const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of stream) {
-    if (bytes >= headerLength) {
+    if (bytes >= lookahead) {
       yield chunk;
       continue;
     }
     chunks.push(chunk);
     bytes += chunk.length;
-    if (bytes < headerLength) continue;
+    if (bytes < lookahead) continue;
     const prefix = Buffer.concat(chunks, bytes);
     chunks.length = 0;
-    const tree = prefix.subarray(0, treeLength);
-    if (!/^tree [a-fA-F0-9]+\n$/.test(tree.toString('latin1'))
-      || !prefix.subarray(treeLength, headerLength).equals(expected)) {
-      throw new DomainError('SOURCE_READ_FAILED', SETUP_FAILED);
-    }
-    yield tree;
-    yield kept;
-    yield prefix.subarray(headerLength);
+    yield* repairedCommitPrefix(prefix, commit, boundary, true);
   }
-  if (bytes < headerLength) throw new DomainError('SOURCE_READ_FAILED', SETUP_FAILED);
+  if (bytes < lookahead) yield* repairedCommitPrefix(Buffer.concat(chunks, bytes), commit, boundary, false);
 }
 
 async function* withReplacementHeader(chunks: AsyncIterable<Buffer>) {
@@ -149,7 +170,7 @@ async function writeReplacement(reader: GitReader, directory: string,
   gitOutput(original, SETUP_FAILED);
   // Keep the source alternate off writes, and retain metadata Git can read even if it would fail fsck.
   const result = await gitSource(['--bare', `--git-dir=${directory}`, 'hash-object', '-w', '-t', 'commit',
-    '--literally', '--', file], { maxBytes: 4096 });
+    '--literally', '--', file], { maxBytes: 4096, isolatedGit: { directory } });
   const replacement = gitOutput(result, SETUP_FAILED).toString('ascii').trim();
   assert.ok(OBJECT_ID.test(replacement) && replacement.length === commit.length);
   assert.notEqual(replacement, commit);
@@ -157,8 +178,16 @@ async function writeReplacement(reader: GitReader, directory: string,
   await rm(file);
 }
 
-function privateRead(reader: GitReader, directory: string, alternate: string, commit: string): GitReader['run'] {
-  assert.ok(isAbsolute(directory) && isAbsolute(alternate));
+async function warnAmbiguousRefs(reader: GitReader): Promise<boolean> {
+  const result = await reader.run(['config', '--type=bool', '--default=true', '--get', 'core.warnAmbiguousRefs'], 1024);
+  if (reachabilityDiagnostics(result).length) gitReadFailed(result, SETUP_FAILED);
+  const value = gitOutput(result, SETUP_FAILED).toString('ascii');
+  assert.ok(value === 'true\n' || value === 'false\n');
+  return value === 'true\n';
+}
+
+function privateRead(reader: GitReader, directory: string, alternate: Buffer, commit: string, config: string[]): GitReader['run'] {
+  assert.ok(isAbsolute(directory) && alternate.length > 0);
   assert.ok(OBJECT_ID.test(commit));
   return async (args, maxBytes) => {
     if (args[0] === 'log') {
@@ -167,7 +196,8 @@ function privateRead(reader: GitReader, directory: string, alternate: string, co
       if (gitReadState(probe) !== 'complete') return probe;
       assert.equal(probe.output.length, 0);
     }
-    return gitSource(['--bare', `--git-dir=${directory}`, '--literal-pathspecs', ...args], { maxBytes, isolatedGit: { alternate } });
+    return gitSource(['--bare', `--git-dir=${directory}`, '--literal-pathspecs', ...config, ...args],
+      { maxBytes, isolatedGit: { directory, alternate } });
   };
 }
 
@@ -180,18 +210,19 @@ export async function withBoundaries<T>(reader: GitReader, boundaries: Map<strin
   assert.ok(commit && OBJECT_ID.test(commit));
   assert.ok(entries.every(([id]) => OBJECT_ID.test(id) && id.length === commit.length));
   const alternate = await repositoryPath(reader, 'objects');
+  const config = scope === 'reachability' ? ['-c', `core.warnAmbiguousRefs=${await warnAmbiguousRefs(reader)}`] : [];
   const directory = await mkdtemp(join(tmpdir(), 'delve-history-'));
   try {
     const objectFormat = commit.length === 40 ? 'sha1' : 'sha256';
     const init = await gitSource(['-c', 'init.defaultRefFormat=files', 'init', '--quiet', '--bare', '--template=',
-      `--object-format=${objectFormat}`, directory]);
+      `--object-format=${objectFormat}`, directory], { isolatedGit: { directory } });
     gitOutput(init, SETUP_FAILED);
     await copyShallowFile(reader, directory);
     if (scope === 'reachability') await copyReachabilityRefs(reader, directory);
     await mkdir(join(directory, 'refs', 'replace'));
     const budget = { remaining: MAX_REPAIR_COMMIT_BYTES };
     for (const [id, boundary] of entries) await writeReplacement(reader, directory, id, boundary, budget);
-    return await action({ run: privateRead(reader, directory, alternate, commit), stream: reader.stream });
+    return await action({ run: privateRead(reader, directory, alternate, commit, config), stream: reader.stream });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

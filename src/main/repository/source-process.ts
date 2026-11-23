@@ -10,6 +10,7 @@ const PROCESS_ENV = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONF
   'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR'];
 const GITHUB_ENV = ['GH_CONFIG_DIR', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy'];
 export const GIT_NULL_FILE = '/dev/null';
+export const SOURCE_CWD = dirname(process.execPath);
 const SOURCE_TIMEOUT_MS = 8_000;
 const STREAM_DIAGNOSTIC_LIMIT = 4096;
 
@@ -44,7 +45,7 @@ interface CommandOptions {
   timeoutMs?: number;
   authenticated?: boolean;
   cwd?: string;
-  isolatedGit?: { alternate: string };
+  isolatedGit?: { directory: string; alternate?: Buffer };
 }
 
 export interface CommandResult {
@@ -54,16 +55,29 @@ export interface CommandResult {
   diagnostic: string;
 }
 
+function quoteAlternate(path: Buffer): string {
+  assert.ok(isAbsolute(path.toString('latin1')));
+  assert.ok(!path.includes(0));
+  const quoted = Array.from(path, byte => byte >= 32 && byte <= 126 && byte !== 34 && byte !== 92
+    ? String.fromCharCode(byte)
+    : '\\' + byte.toString(8).padStart(3, '0')).join('');
+  return '"' + quoted + '"';
+}
+
 export async function sourceCommand(bin: 'git' | 'gh', args: string[], options: CommandOptions = {}): Promise<CommandResult> {
-  const { maxBytes = 1024 * 1024, timeoutMs = SOURCE_TIMEOUT_MS, authenticated = false, cwd = dirname(process.execPath), isolatedGit } = options;
+  const { maxBytes = 1024 * 1024, timeoutMs = SOURCE_TIMEOUT_MS, authenticated = false, cwd = SOURCE_CWD, isolatedGit } = options;
   assert.ok(maxBytes > 0 && timeoutMs > 0);
   assert.ok(isAbsolute(cwd));
   const env = commandEnv(authenticated);
   if (isolatedGit) {
     assert.equal(bin, 'git');
-    assert.ok(!authenticated && isAbsolute(isolatedGit.alternate));
-    delete env.GIT_NO_REPLACE_OBJECTS;
-    env.GIT_ALTERNATE_OBJECT_DIRECTORIES = '"' + isolatedGit.alternate.replace(/[\\"]/g, '\\$&') + '"';
+    assert.ok(!authenticated && isAbsolute(isolatedGit.directory));
+    // Git 2.30 still looks under HOME and XDG_CONFIG_HOME despite GIT_CONFIG_GLOBAL.
+    env.HOME = env.XDG_CONFIG_HOME = isolatedGit.directory;
+    if (isolatedGit.alternate !== undefined) {
+      delete env.GIT_NO_REPLACE_OBJECTS;
+      env.GIT_ALTERNATE_OBJECT_DIRECTORIES = quoteAlternate(isolatedGit.alternate);
+    }
   }
   const executable = await findExecutable(bin, env);
   if (!executable) {
@@ -108,7 +122,7 @@ export async function streamGitSource(args: string[], write: (stream: Readable) 
   const executable = await findExecutable('git', env);
   if (!executable) throw new DomainError('GIT_REQUIRED', 'Install Git to read repository snapshots.');
   const child = spawn(executable, [...GIT_SAFETY, ...args], {
-    cwd: dirname(process.execPath), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: SOURCE_CWD, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS), killSignal: 'SIGKILL',
   });
   const diagnostic = Buffer.alloc(STREAM_DIAGNOSTIC_LIMIT);
