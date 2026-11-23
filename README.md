@@ -96,9 +96,10 @@ The demo tutor runs entirely offline. The Archon demo includes an illustrative b
 Portable concepts can carry verified understanding across repositories at the same depth.
 Generated lessons stay bound to their workspace and snapshot; workspace-independent lessons can be reused.
 A portable match requires a shared provider key or recognized alias and the same description after
-Unicode, case, and whitespace normalization. Ambiguous concepts stay in their repository with their
-own evidence and lessons. Compatible aliases that depend on local concepts share one repository
-entry. A concept introduced only in a change brief stays with that commit when it is repository-specific.
+Unicode, case, and whitespace normalization. Ambiguous concepts, including those whose key and title
+name different known aliases, stay in their repository with their own evidence and lessons. Compatible
+aliases that depend on local concepts share one repository entry. A concept introduced only in a change
+brief stays with that commit when it is repository-specific.
 Upgrading an older profile preserves the original evidence for concepts whose descriptions differ.
 
 Open **Knowledge** in the header or through Ctrl/⌘-K. The map starts in your workspace’s area when

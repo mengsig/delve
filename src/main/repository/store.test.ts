@@ -274,6 +274,43 @@ it('requires more than a matching title and summary for an unrecognized alias', 
   expect(graph.concepts[0]!.id).not.toBe(existing.id);
 });
 
+it.each([{ linked: false, portable: true }, { linked: true, portable: false }])(
+  'scopes disagreeing known aliases (migrated link=$linked, portable proposal=$portable)', ({ linked, portable }) => {
+    const origin = workspaceId;
+    const summary = 'A reliable ordered byte stream.';
+    const tcp = upsertConcept(db, { key: 'tcp', title: 'TCP', summary, portable: true, workspaceId: origin });
+    recordEvidence(db, { workspaceId: origin, conceptId: tcp.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+    workspaceId = addWorkspace(db, { kind: 'git', path: '/transport' }).id;
+    if (linked) {
+      const legacy = upsertConcept(db, { key: 'tcp', title: 'TCP', summary, portable: false, workspaceId });
+      db.prepare('INSERT INTO concept_identity_links VALUES (?, ?)').run(legacy.id, tcp.id);
+      db.prepare('UPDATE workspace_concepts SET on_atlas = 0 WHERE concept_id = ?').run(legacy.id);
+    }
+    const conflicting = { key: 'tcp', title: 'HTTP', summary, portable };
+    const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [conflicting], edges: [],
+      recommendation: { key: conflicting.key, reason: 'Start here.' } });
+    const selected = source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline);
+    persistGeneration(db, selected, proposal);
+    const graph = readWorkspaceGraph(db, workspaceId);
+    expect(graph.concepts).toMatchObject([{ title: 'HTTP', portable: false, key: expect.stringContaining(`ws/${workspaceId}/`) }]);
+    const scoped = graph.concepts[0]!;
+    expect(scoped.id).not.toBe(tcp.id);
+    expect(graph.evidence).toEqual([]);
+    expect(readLesson(db, { workspaceId, conceptId: scoped.id, depth: 'medium' }).reused).toBe(false);
+    useCachedGeneration(db, selected);
+    expect(readWorkspaceGraph(db, workspaceId).concepts).toEqual([scoped]);
+
+    const next = source({ kind: 'baseline', commit: previous, paths: ['src/routes.ts'] }, previous);
+    persistGeneration(db, next, baselineReply.parse({ ...proposal, concepts: [conflicting,
+      { key: 'transmission-control-protocol', title: 'Transmission Control Protocol', summary, portable: true },
+    ] }));
+    expect(readWorkspaceGraph(db, workspaceId).concepts).toEqual(expect.arrayContaining([scoped,
+      expect.objectContaining({ id: tcp.id, portable: true }),
+    ]));
+    expect(readWorkspaceGraph(db, workspaceId).evidence).toMatchObject([{ conceptId: tcp.id, workspaceId: origin }]);
+  },
+);
+
 it.each([true, false])('keeps conflicting regenerated migrated concepts separate (portable=%s)', portable => {
   const summary = 'A collection that processes queued jobs in first in first out order.';
   const conflict = 'A collection that processes queued jobs in last in first out order.';

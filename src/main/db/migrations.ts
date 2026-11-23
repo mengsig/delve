@@ -10,10 +10,11 @@ export interface Migration {
 }
 
 function registerPortableIdentity(db: DatabaseSync): void {
-  db.function('delve_portable_alias', { deterministic: true, directOnly: true }, (key, title) => {
-    assert.equal(typeof key, 'string');
-    assert.equal(typeof title, 'string');
-    return portableAlias(String(key), String(title)) ?? null;
+  db.function('delve_portable_key', { deterministic: true, directOnly: true }, (key, title) => {
+    assert.ok(typeof key === 'string');
+    assert.ok(typeof title === 'string');
+    const alias = portableAlias(key, title);
+    return alias === undefined ? key : alias;
   });
   db.function('delve_compatible_descriptions', { deterministic: true, directOnly: true }, (left, right) => {
     assert.equal(typeof left, 'string');
@@ -265,8 +266,8 @@ export const MIGRATIONS: readonly Migration[] = [
       recorded_at TEXT NOT NULL, mastery_verified INTEGER NOT NULL
     );
     CREATE TEMP TABLE migration_candidates AS
-    SELECT id, workspace_id, coalesce(delve_portable_alias(local_key, title), local_key) AS general_key,
-      coalesce(delve_portable_alias('', title), delve_normalized_concept(title)) AS normalized_title,
+    SELECT id, workspace_id, delve_portable_key(local_key, title) AS general_key,
+      delve_portable_key(delve_normalized_concept(title), '') AS normalized_title,
       delve_normalized_concept(summary) AS normalized_summary
     FROM (SELECT c.*, substr(c.key, length('ws/' || c.workspace_id || '/') + 1) AS local_key
     FROM concepts c JOIN workspaces w ON w.id = c.workspace_id
@@ -278,8 +279,8 @@ export const MIGRATIONS: readonly Migration[] = [
       AND c.title NOT LIKE 'Demo:%');
     CREATE INDEX migration_candidates_key ON migration_candidates(general_key, workspace_id);
     CREATE TEMP TABLE migration_portable AS
-    SELECT id, coalesce(delve_portable_alias(key, title), key) AS general_key,
-      coalesce(delve_portable_alias('', title), delve_normalized_concept(title)) AS normalized_title,
+    SELECT id, delve_portable_key(key, title) AS general_key,
+      delve_portable_key(delve_normalized_concept(title), '') AS normalized_title,
       delve_normalized_concept(summary) AS normalized_summary
     FROM concepts WHERE portable = 1 AND key NOT LIKE 'Demo:%';
     CREATE INDEX migration_portable_key ON migration_portable(general_key);
@@ -288,7 +289,7 @@ export const MIGRATIONS: readonly Migration[] = [
     SELECT general_key, min(id) AS sample_id, min(normalized_title) AS normalized_title,
       count(DISTINCT workspace_id) AS workspace_count,
       CASE WHEN count(DISTINCT normalized_summary) = 1 AND min(normalized_summary) <> '' THEN min(normalized_summary) END AS shared_summary
-    FROM migration_candidates
+    FROM migration_candidates WHERE general_key IS NOT NULL
     GROUP BY general_key HAVING count(DISTINCT normalized_title) = 1 AND count(DISTINCT workspace_id) = count(*);
     CREATE INDEX migration_groups_key ON migration_groups(general_key);
     ALTER TABLE migration_groups ADD COLUMN portable_id INTEGER;

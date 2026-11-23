@@ -14,10 +14,10 @@ maintainer's approval. Design reference: `docs/design/proposal-v1.html`.
 - **R4 Knowledge graph.** One local SQLite database owned by the main process: workspaces, canonical
   concepts, prerequisite edges, snapshot bindings, validated lessons, per-depth evidence. Portable
   concepts are shared across workspaces when a provider key or recognized alias and descriptions
-  matching after Unicode, case, and whitespace normalization corroborate identity. Ambiguous concepts
-  keep their evidence and lessons in the repository. Compatible aliases with a repository-specific
-  prerequisite share one local identity. Verified understanding of a shared concept at a depth
-  carries across workspaces.
+  matching after Unicode, case, and whitespace normalization corroborate identity. Ambiguous concepts,
+  including those whose key and title name different known aliases, keep their evidence and lessons in
+  the repository. Compatible aliases with a repository-specific prerequisite share one local identity.
+  Verified understanding of a shared concept at a depth carries across workspaces.
 - **R5 Depths.** High / Medium / Low as defined in `docs/product.md`; default Medium; switching depth
   keeps the same concept; reuse requires an exact portable concept at a demonstrated depth.
 - **R6 Lesson blocks.** Agents emit versioned JSON (`delve.lesson/1`) of typed blocks (prose, diagram,

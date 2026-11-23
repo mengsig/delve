@@ -18,6 +18,7 @@ export function portableConceptLookup(db: Db) {
   return (key: string, title: string, summary: string): { key: string; concept: Concept | null; portable: boolean } => {
     const normalizedKey = key.trim().toLowerCase();
     const alias = portableAlias(normalizedKey, title);
+    if (alias === null) return { key: normalizedKey, concept: null, portable: false };
     const keys = new Set([normalizedKey, ...(alias ? byAlias.get(alias) ?? [] : [])]);
     const candidates = [...keys].map(candidate => getConceptByKey(db, candidate)).filter((c): c is Concept => c !== null);
     const pendingKeys = [...keys].filter(candidate => pending.has(candidate) && !candidates.some(concept => concept.key === candidate));
@@ -29,8 +30,10 @@ export function portableConceptLookup(db: Db) {
       return { key: normalizedKey, concept: null, portable: false };
     }
     if (candidates.length) {
-      if (candidates.length === 1 && candidates[0]!.portable && compatibleDescriptions(summary, candidates[0]!.summary)) {
-        return { key: candidates[0]!.key, concept: candidates[0]!, portable: true };
+      const [candidate] = candidates;
+      if (candidates.length === 1 && candidate?.portable && portableAlias(candidate.key, candidate.title) !== null
+        && compatibleDescriptions(summary, candidate.summary)) {
+        return { key: candidate.key, concept: candidate, portable: true };
       }
       return { key: normalizedKey, concept: null, portable: false };
     }

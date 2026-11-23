@@ -36,8 +36,16 @@ type ResolvedConcept = Pick<ProposalConcept, 'key' | 'portable'> & { concept: Co
 
 function scopedFingerprint(input: ProposalConcept): string {
   const key = input.key.trim().toLowerCase();
-  const identity = input.portable ? portableAlias(key, input.title) ?? key : key;
-  return digest([identity, normalizedConceptName(input.summary)]);
+  const alias = portableAlias(key, input.title);
+  const summary = normalizedConceptName(input.summary);
+  if (alias === null) {
+    const keyAlias = portableAlias(key, '');
+    const titleAlias = portableAlias('', input.title);
+    assert.ok(keyAlias && titleAlias);
+    assert.notEqual(keyAlias, titleAlias);
+    return digest([keyAlias, titleAlias, summary]);
+  }
+  return digest([input.portable ? alias ?? key : key, summary]);
 }
 
 function baselineScope(db: Db, workspaceId: string) {
@@ -93,7 +101,8 @@ function proposalConceptLookup(db: Db, workspaceId: string) {
     if (typeof linked?.key === 'string') {
       const canonical = getConceptByKey(db, linked.key);
       assert.ok(canonical?.portable, 'a migrated identity must point to a portable concept');
-      if (compatibleDescriptions(input.summary, canonical.summary)) {
+      if (portableAlias(input.key, input.title) !== null && portableAlias(canonical.key, canonical.title) !== null
+        && compatibleDescriptions(input.summary, canonical.summary)) {
         return { ...input, key: canonical.key, concept: canonical, portable: true };
       }
       return { key: input.key, portable: false, concept: null, needsScope: true };

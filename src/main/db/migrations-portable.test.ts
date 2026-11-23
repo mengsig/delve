@@ -346,3 +346,28 @@ it('does not merge opposite high-overlap descriptions into an existing portable 
     expect(readWorkspaceGraph(db, 'b').concepts.map(concept => concept.id)).toEqual([2]);
   } finally { db.close(); }
 });
+
+it.each([{ portableTitle: 'TCP', localTitle: 'HTTP' }, { portableTitle: 'HTTP', localTitle: 'TCP' }])(
+  'does not link disagreeing known aliases during the v0.1.0 upgrade ($portableTitle, $localTitle)', ({ portableTitle, localTitle }) => {
+    const db = new DatabaseSync(':memory:');
+    try {
+      migrate(db, MIGRATIONS.slice(0, 5));
+      db.exec("INSERT INTO workspaces (id,kind,name,source,created_at) VALUES ('a','git','A','/a','t'), ('b','git','B','/b','t')");
+      const concept = db.prepare(`INSERT INTO concepts (id,key,title,summary,portable,workspace_id,created_at,updated_at)
+        VALUES (?,?,?,'A reliable ordered byte stream.',?,?,'t','t')`);
+      concept.run(1, 'tcp', portableTitle, 1, null);
+      concept.run(2, 'ws/b/tcp', localTitle, 0, 'b');
+      db.exec(`INSERT INTO workspace_concepts (workspace_id,concept_id) VALUES ('a',1),('b',2);
+        INSERT INTO evidence (concept_id,depth,status,source,note,workspace_id,recorded_at) VALUES
+        (1,'medium','demonstrated','check','Original proof','a','t'), (2,'low','partial','check','Local proof','b','t');`);
+
+      expect(migrate(db)).toBe(MIGRATIONS.length);
+      expect(db.prepare('SELECT * FROM concept_identity_links').all()).toEqual([]);
+      expect(readWorkspaceGraph(db, 'b').concepts).toMatchObject([{ id: 2, title: localTitle, portable: false }]);
+      expect(readWorkspaceGraph(db, 'b').evidence).toMatchObject([{ conceptId: 2, note: 'Local proof' }]);
+      expect(readWorkspaceGraph(db, 'a').evidence).toMatchObject([{ conceptId: 1, note: 'Original proof' }]);
+    } finally {
+      db.close();
+    }
+  },
+);
