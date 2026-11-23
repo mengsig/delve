@@ -227,7 +227,6 @@ describe('Git changes with missing parents', () => {
       coverageNote: note + ' File and line totals are unavailable.',
     });
   });
-
 });
 
 describe('Git change reachability with missing parents', () => {
@@ -275,7 +274,9 @@ describe('Git change reachability with missing parents', () => {
       spy.mockRestore();
     }
   });
+});
 
+describe('Git changes in detached or shallow history', () => {
   it('opens a missing-parent boundary reachable only from detached HEAD', async () => {
     const parent = commit('Missing parent', '--allow-empty');
     const boundary = commit('Boundary', '--allow-empty');
