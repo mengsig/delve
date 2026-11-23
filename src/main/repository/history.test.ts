@@ -6,8 +6,14 @@ describe('history warnings', () => {
     const login = 'Run gh auth login to read GitHub pull requests.';
     const install = 'Install GitHub CLI and run gh auth login to read this repository.';
     const shallow = 'Git history is limited to this shallow snapshot. Run git fetch --unshallow to see older commits.';
-    expect(distinctWarnings([login, install, login, shallow, 'Run gh auth login and make sure the account can read this repository.']))
-      .toEqual([login, install, shallow]);
+    expect(distinctWarnings([login, install, login, shallow, shallow])).toEqual([login, install, shallow]);
+  });
+
+  it('keeps account-access advice beside pull-request login advice, in either order', () => {
+    const login = 'Run gh auth login to read GitHub pull requests.';
+    const access = 'Run gh auth login and make sure the account can read this repository.';
+    expect(distinctWarnings([login, access, login])).toEqual([login, access]);
+    expect(distinctWarnings([access, login, access])).toEqual([access, login]);
   });
 
   it('keeps login advice that also reports the local snapshot, in either order', () => {

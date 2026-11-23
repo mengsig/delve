@@ -74,8 +74,6 @@ const changeKey = (node: HistoryNode) => node.kind + '/' + node.ref;
 const EQUIVALENT_ADVICE = new Map([
   ['Install GitHub CLI and run gh auth login.', 'github:install'],
   ['Install GitHub CLI and run gh auth login to read this repository.', 'github:install'],
-  ['Run gh auth login to read GitHub pull requests.', 'github:login'],
-  ['Run gh auth login and make sure the account can read this repository.', 'github:login'],
 ]);
 
 const adviceKey = (warning: string) => EQUIVALENT_ADVICE.get(warning) ?? warning;

@@ -65,19 +65,6 @@ test('validates a local working tree and exposes the new empty atlas', async ({ 
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
 });
 
-test('leaves focus and source validity alone when the workspace is already added', async ({ desktop }) => {
-  const { page } = desktop;
-  await add(page, 'https://github.com/octo/site.git');
-  await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
-  await add(page, 'https://github.com/octo/site.git');
-  await expect(page.getByRole('alert')).toContainText('workspace switcher');
-  await expect(page.getByRole('button', { name: 'Open workspace switcher' })).toBeVisible();
-  const source = page.getByLabel('Topic or repository');
-  await expect(source).not.toBeFocused();
-  await expect(source).not.toHaveAttribute('aria-invalid');
-  await expect(source).toHaveAttribute('aria-describedby', 'source-hint');
-});
-
 type Handler = (event: Electron.IpcMainInvokeEvent, request: unknown) => Promise<unknown>;
 
 // Holds each call on a real IPC channel until released, so input can arrive while the request runs.
@@ -113,6 +100,22 @@ async function expectUnmarked(source: Locator) {
   await expect(source).not.toHaveAttribute('aria-invalid');
   await expect(source).toHaveAttribute('aria-describedby', 'source-hint');
 }
+
+test('leaves focus and source validity alone when the workspace is already added', async ({ desktop }) => {
+  const { page, application } = desktop;
+  await add(page, 'https://github.com/octo/site.git');
+  await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
+  const release = await hold(application, 'workspaces:add');
+  const opener = page.locator('header').getByRole('button', { name: 'Switch workspace', exact: true });
+  await add(page, 'https://github.com/octo/site.git');
+  await expect(page.getByRole('button', { name: 'Opening…' })).toBeDisabled();
+  await opener.focus();
+  await release.evaluate(resume => resume());
+  await expect(page.getByRole('alert')).toContainText('workspace switcher');
+  await expect(page.getByRole('button', { name: 'Open workspace switcher' })).toBeVisible();
+  await expect(opener).toBeFocused();
+  await expectUnmarked(page.getByLabel('Topic or repository'));
+});
 
 test('keeps focus where the user moved it when a delayed source rejection arrives', async ({ desktop }) => {
   const { page, application, directory } = desktop;
