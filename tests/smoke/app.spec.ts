@@ -1,7 +1,7 @@
 import { expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { test, shortcut } from './desktop';
+import { hold, test, shortcut } from './desktop';
 import packageInfo from '../../package.json';
 
 async function add(page: Page, value: string, topic = false) {
@@ -65,24 +65,6 @@ test('validates a local working tree and exposes the new empty atlas', async ({ 
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
 });
 
-type Handler = (event: Electron.IpcMainInvokeEvent, request: unknown) => Promise<unknown>;
-
-// Holds each call on a real IPC channel until released, so input can arrive while the request runs.
-async function hold(application: ElectronApplication, channel: string) {
-  return application.evaluateHandle(({ ipcMain }, name) => {
-    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Handler> })._invokeHandlers;
-    const original = handlers.get(name);
-    if (!original) throw new Error(`The desktop ${name} handler must be installed.`);
-    const waiting: (() => void)[] = [];
-    ipcMain.removeHandler(name);
-    ipcMain.handle(name, async (event, request) => {
-      await new Promise<void>(resolve => { waiting.push(resolve); setTimeout(resolve, 10_000); });
-      return original(event, request);
-    });
-    return () => { for (const resume of waiting.splice(0)) resume(); };
-  }, channel);
-}
-
 async function failChannel(application: ElectronApplication, channel: string, message: string) {
   await application.evaluate(({ ipcMain }, { name, text }) => {
     ipcMain.removeHandler(name);
@@ -101,7 +83,7 @@ async function expectUnmarked(source: Locator) {
   await expect(source).toHaveAttribute('aria-describedby', 'source-hint');
 }
 
-test('leaves focus and source validity alone when the workspace is already added', async ({ desktop }) => {
+test('marks an already added source without taking focus from the switcher opener', async ({ desktop }) => {
   const { page, application } = desktop;
   await add(page, 'https://github.com/octo/site.git');
   await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
@@ -114,7 +96,9 @@ test('leaves focus and source validity alone when the workspace is already added
   await expect(page.getByRole('alert')).toContainText('workspace switcher');
   await expect(page.getByRole('button', { name: 'Open workspace switcher' })).toBeVisible();
   await expect(opener).toBeFocused();
-  await expectUnmarked(page.getByLabel('Topic or repository'));
+  const source = page.getByLabel('Topic or repository');
+  await expect(source).toHaveAttribute('aria-invalid', 'true');
+  await expect(source).toHaveAttribute('aria-describedby', 'source-hint setup-error');
 });
 
 test('keeps focus where the user moved it when a delayed source rejection arrives', async ({ desktop }) => {
@@ -134,7 +118,7 @@ test('keeps focus where the user moved it when a delayed source rejection arrive
 
   await submit.click();
   await expect(page.getByRole('button', { name: 'Opening…' })).toBeDisabled();
-  await expect(source).not.toHaveAttribute('aria-invalid');
+  await expect(source).toHaveAttribute('aria-invalid', 'true');
   // A press on plain header text moves focus to the page without a focusin, so only the press reveals the move.
   await page.locator('header').getByText('Workspace setup', { exact: true }).click();
   expect(await focusedId(page)).toBe('body');

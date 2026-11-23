@@ -12,33 +12,34 @@ import { SourceError, sourceInput, sourceRejection } from './sourceErrors';
 
 export type WorkspaceAdded = (workspace: Workspace, depth: Depth, conceptId?: number, notice?: string) => void;
 
-function addError(cause: unknown, action: string) {
+interface ActionError { message: string; source: boolean; duplicate?: boolean }
+
+function actionError(cause: unknown, action: 'pick' | 'add' | 'map'): ActionError {
   const message = errorMessage(cause);
   if (cause instanceof IpcCallError && cause.code === 'DUPLICATE_WORKSPACE') {
-    return message + ' Open it from the workspace switcher.';
+    return { message: message + ' Open it from the workspace switcher.', source: true, duplicate: true };
   }
-  if (action === 'pick') return 'Could not choose a folder. ' + message;
-  return (action === 'map' ? 'Could not attach the reviewed map request. ' : 'Could not add the workspace. ') + message;
+  const prefix = action === 'pick' ? 'Could not choose a folder. '
+    : action === 'map' ? 'Could not attach the reviewed map request. ' : 'Could not add the workspace. ';
+  return { message: prefix + message, source: cause instanceof SourceError };
 }
-
-interface ActionError { message: string; source: boolean }
-const NO_ERROR: ActionError = { message: '', source: false };
 
 function useWorkspaceActions() {
   const locked = useRef(false);
   const [pending, setPending] = useState<'pick' | 'add' | 'map' | null>(null);
-  const [failure, setFailure] = useState<ActionError>(NO_ERROR);
+  const [error, setError] = useState<ActionError>();
   const [failedToken, setFailedToken] = useState<string>();
 
   async function run(action: NonNullable<typeof pending>, apply: () => Promise<void>, preview?: RepoPreview) {
     if (locked.current) return;
     locked.current = true;
     setPending(action);
-    setFailure(NO_ERROR);
+    setError(current => action !== 'pick' && current?.source ? current : undefined);
     try {
       await apply();
+      setError(undefined);
     } catch (cause) {
-      setFailure({ message: addError(cause, action), source: cause instanceof SourceError });
+      setError(actionError(cause, action));
       if (preview) setFailedToken(preview.token);
     } finally {
       setPending(null);
@@ -47,9 +48,9 @@ function useWorkspaceActions() {
   }
 
   return {
-    pending, error: failure.message, sourceError: failure.source, failedToken, run,
-    setError: (message: string) => setFailure({ message, source: false }),
-    clearError: () => setFailure(NO_ERROR),
+    pending, error, failedToken, run,
+    setError: (message: string) => setError({ message, source: false }),
+    clearError: () => setError(undefined),
   };
 }
 
