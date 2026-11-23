@@ -261,6 +261,37 @@ describe('Git change read boundaries', () => {
     expect(pages.at(-1)?.warning).toContain(missing);
   }, 30_000);
 
+  it.each(['missing', 'malformed'])('keeps healthy branches when a branch tip is %s', async kind => {
+    const base = commit('Base', '--allow-empty');
+    const head = commit('Healthy tip', '--allow-empty');
+    const damaged = kind === 'missing' ? 'a'.repeat(head.length)
+      : execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--literally', '--stdin'],
+        { input: 'invalid commit\n', encoding: 'utf8' }).trim();
+    await writeFile(join(repo, '.git', 'refs', 'heads', 'broken'), damaged + '\n');
+    const request = { workspaceId: workspace.id, cursor: 0, kind: 'commit' } as const;
+    const history = await openRepositoryHistory(workspace, root, request, []);
+    const page = await history.advance(() => 1);
+    expect(page.nodes.map(node => node.ref)).toEqual([head, base]);
+    expect(page.next).toBeNull();
+    expect(page.warning).toContain(damaged);
+
+    const filtered = await openRepositoryHistory(workspace, root, { ...request, branch: 'broken' }, []);
+    const filteredPage = await filtered.advance(() => 1);
+    expect(filteredPage.nodes).toEqual([]);
+    expect(filteredPage.next).toBeNull();
+    expect(filteredPage.warning).toContain(damaged);
+  });
+
+  it('reports a missing detached HEAD and keeps branch history', async () => {
+    const head = commit('Healthy tip', '--allow-empty');
+    const missing = 'e'.repeat(head.length);
+    await writeFile(join(repo, '.git', 'HEAD'), missing + '\n');
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const page = await history.advance(() => 1);
+    expect(page.nodes.map(node => node.ref)).toEqual([head]);
+    expect(page.warning).toContain(missing);
+  });
+
   it('continues byte-limited pages after a repaired missing-parent merge', async () => {
     let parent = commit('Oldest', '--allow-empty');
     const expected = [parent];
