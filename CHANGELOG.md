@@ -12,6 +12,7 @@
 - Unreadable saved tutor jobs are dismissed safely (#27).
 - Replaced deprecated history graft files (#28).
 - History filters clear hidden commit selections, GitHub login guidance appears once, and invalid sources have corrected keyboard focus and screen-reader association (#29).
+- Add a workspace shows one source error, marks the input invalid during repository preview, and keeps focus on duplicate submissions (#31).
 
 ## [0.1.0] - 2026-11-21
 
