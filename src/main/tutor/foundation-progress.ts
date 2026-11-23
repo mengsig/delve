@@ -7,6 +7,7 @@ import type { WorkspaceGraph } from '../../shared/graph';
 import { plainConceptTitle } from '../../shared/plain-language';
 import type { FoundationProgress, FoundationStep, ReaderContract } from '../../shared/reader';
 import { transaction, type Db } from '../db/connection';
+import { canonicalConceptId } from '../db/concepts';
 import { listEvidence } from '../db/evidence';
 import { readWorkspaceGraph } from '../db/graph';
 import { persistTutorPrerequisites } from '../db/tutor-prerequisites';
@@ -60,14 +61,18 @@ function nextFoundation(db: Db, context: LessonContext, lessonId: number) {
   const row = db.prepare("SELECT entries, phase, cursor FROM lesson_foundations WHERE lesson_id = ? AND phase <> 'done'").get(lessonId);
   if (!row) return null;
   const saved = progressSchema.parse(row);
-  const mastery = saved.entries.map(entry => foundationMastery(db, context, entry.conceptId));
-  const nextProbe = (entry: Entry, index: number) => index >= saved.cursor && mastery[index] === 'unlearned' && !answeredProbe(db, entry.conceptId);
-  const nextPractice = (_entry: Entry, index: number) => (saved.phase === 'probe' || index >= saved.cursor) && mastery[index] !== 'known';
-  const probeIndex = saved.phase === 'probe' ? saved.entries.findIndex(nextProbe) : -1;
+  const entries = saved.entries.map(entry => ({ ...entry, conceptId: canonicalConceptId(db, entry.conceptId) }));
+  const mastery = entries.map(entry => foundationMastery(db, context, entry.conceptId));
+  const isPrerequisite = (entry: Entry) => entry.conceptId !== context.canonicalConceptId;
+  const nextProbe = (entry: Entry, index: number) =>
+    isPrerequisite(entry) && index >= saved.cursor && mastery[index] === 'unlearned' && !answeredProbe(db, entry.conceptId);
+  const nextPractice = (entry: Entry, index: number) =>
+    isPrerequisite(entry) && (saved.phase === 'probe' || index >= saved.cursor) && mastery[index] !== 'known';
+  const probeIndex = saved.phase === 'probe' ? entries.findIndex(nextProbe) : -1;
   const phase = probeIndex >= 0 ? 'probe' : 'practice';
-  const index = phase === 'probe' ? probeIndex : saved.entries.findIndex(nextPractice);
+  const index = phase === 'probe' ? probeIndex : entries.findIndex(nextPractice);
   if (index < 0) return null;
-  const entry = saved.entries[index];
+  const entry = entries[index];
   assert.ok(entry && (phase !== 'probe' || !answeredProbe(db, entry.conceptId)));
   assert.ok(index < saved.entries.length && saved.entries.length <= 4);
   const { title, why, summary } = entry.content;
@@ -77,7 +82,7 @@ function nextFoundation(db: Db, context: LessonContext, lessonId: number) {
   const step: FoundationStep = phase === 'probe' ? { ...common, phase } : {
     ...common, phase, explanation: summary, goDeeper: mastery[index] === 'shallower',
   };
-  return { step, entry, check, index, entries: saved.entries };
+  return { step, entry, check, index, entries };
 }
 
 export function readFoundation(db: Db, context: LessonContext, lessonId: number | null): FoundationStep | null {
@@ -102,7 +107,7 @@ export function foundationRecap(db: Db, context: FoundationScope, lessonId: numb
   assert.equal(workspace.workspaceId, context.workspaceId);
   const prerequisites = new Set(workspace.edges.filter(edge => edge.conceptId === context.canonicalConceptId)
     .map(edge => edge.prerequisiteId));
-  const practised = new Set(entries.filter(entry => entry.practised).map(entry => entry.conceptId));
+  const practised = new Set(entries.filter(entry => entry.practised).map(entry => canonicalConceptId(db, entry.conceptId)));
   const covering = new Set(workspace.evidence.filter(row =>
     row.status === 'demonstrated' && coversDepth(row.depth, context.depth)).map(row => row.conceptId));
   for (const concept of workspace.concepts) {

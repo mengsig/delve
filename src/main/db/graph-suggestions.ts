@@ -12,8 +12,9 @@ export function suggestedChanges(db: Db, workspaceId: string): NonNullable<Works
   const query = db.prepare(`SELECT g.kind, g.ref, g.reason, json_extract(g.result, '$.brief.title') AS sourceTitle,
     brief.id AS briefId, brief.title AS conceptTitle, target.id AS target, target.portable
     FROM repository_generations g LEFT JOIN concept_identity_links link ON link.legacy_concept_id = g.next_concept
-    JOIN concepts target ON target.id = coalesce(link.portable_concept_id, g.next_concept)
-    LEFT JOIN concepts brief ON brief.id = json_extract(g.result, '$.brief.conceptId')
+    JOIN concepts target ON target.id = coalesce(link.canonical_concept_id, g.next_concept)
+    LEFT JOIN concept_identity_links overview ON overview.legacy_concept_id = g.result ->> '$.brief.conceptId'
+    LEFT JOIN concepts brief ON brief.id = coalesce(overview.canonical_concept_id, g.result ->> '$.brief.conceptId')
     WHERE g.workspace_id = ? AND g.depth = ? AND g.kind <> 'baseline' ORDER BY g.last_used DESC LIMIT 1`);
   const suggestions: NonNullable<WorkspaceGraph['changeSuggestions']> = {};
   for (const depth of DEPTHS) {
@@ -76,7 +77,7 @@ export function tutorSuggestions(db: Db, workspaceId: string, atlas: AtlasConten
     UNION ALL SELECT next_concept, reason, created_at, last_used FROM repository_generations WHERE workspace_id = :workspace AND depth = :depth
     ) SELECT wc.concept_id AS target, candidate.reason FROM candidates candidate
     LEFT JOIN concept_identity_links link ON link.legacy_concept_id = candidate.target
-    JOIN workspace_concepts wc ON wc.concept_id = coalesce(link.portable_concept_id, candidate.target)
+    JOIN workspace_concepts wc ON wc.concept_id = coalesce(link.canonical_concept_id, candidate.target)
       AND wc.workspace_id = :workspace AND wc.on_atlas = 1
     ORDER BY candidate.at DESC, candidate.seq DESC LIMIT 1`);
   const suggestions: NonNullable<WorkspaceGraph['suggestions']> = {};

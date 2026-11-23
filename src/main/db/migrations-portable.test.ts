@@ -92,8 +92,8 @@ it('corroborates legacy matches to existing portable identities before transferr
       (4,'low','demonstrated','check','Release a permit','a','2021',2,1),
       (6,'low','demonstrated','check','Locate failed jobs','a','2021',2,1);`);
     migrate(db);
-    expect(db.prepare('SELECT legacy_concept_id, portable_concept_id FROM concept_identity_links').all())
-      .toEqual([{ legacy_concept_id: 4, portable_concept_id: 3 }]);
+    expect(db.prepare('SELECT legacy_concept_id, canonical_concept_id FROM concept_identity_links').all())
+      .toEqual([{ legacy_concept_id: 4, canonical_concept_id: 3 }]);
     expect(readWorkspaceGraph(db, 'a').evidence).toMatchObject([
       { conceptId: 2, note: 'HTTP headers', revision: 3 }, { conceptId: 3, note: 'Release a permit', revision: 2 },
       { conceptId: 6, note: 'Locate failed jobs', revision: 2 },
@@ -198,8 +198,8 @@ function proveGlobalLearning(db: DatabaseSync, portable: number): void {
       expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'concept_identity_links'").get()).toBeUndefined();
       db.exec('DROP TRIGGER reject_archive');
       migrate(db);
-      expect(db.prepare('SELECT legacy_concept_id, portable_concept_id FROM concept_identity_links ORDER BY legacy_concept_id').all())
-        .toEqual([{ legacy_concept_id: 1, portable_concept_id: 3 }, { legacy_concept_id: 2, portable_concept_id: 3 }]);
+      expect(db.prepare('SELECT legacy_concept_id, canonical_concept_id FROM concept_identity_links ORDER BY legacy_concept_id').all())
+        .toEqual([{ legacy_concept_id: 1, canonical_concept_id: 3 }, { legacy_concept_id: 2, canonical_concept_id: 3 }]);
       expect(db.prepare('SELECT note FROM evidence WHERE concept_id = 3').get()!.note).toBe('local');
       expect(getGlobalKnowledgeGraph(db).concepts.filter(c => c.portable)).toMatchObject([{ id: 3, key: 'queues' }]);
       expect(readWorkspaceGraph(db, 'b').evidence).toMatchObject([{ conceptId: 3, note: 'local' }]);
@@ -243,8 +243,8 @@ function proveGlobalLearning(db: DatabaseSync, portable: number): void {
       seedLegacyLesson(db);
       migrate(db);
       const portable = db.prepare("SELECT id FROM concepts WHERE key = 'queues'").get()!.id as number;
-      expect(db.prepare('SELECT legacy_concept_id, portable_concept_id FROM concept_identity_links ORDER BY legacy_concept_id').all())
-        .toEqual([{ legacy_concept_id: 1, portable_concept_id: portable }, { legacy_concept_id: 2, portable_concept_id: portable }]);
+      expect(db.prepare('SELECT legacy_concept_id, canonical_concept_id FROM concept_identity_links ORDER BY legacy_concept_id').all())
+        .toEqual([{ legacy_concept_id: 1, canonical_concept_id: portable }, { legacy_concept_id: 2, canonical_concept_id: portable }]);
       expect(db.prepare('SELECT depth, note, revision FROM evidence WHERE concept_id = ? ORDER BY depth').all(portable))
         .toEqual([{ depth: 'low', note: 'latest', revision: 3 }, { depth: 'medium', note: 'verified', revision: 2 }]);
       expect(db.prepare('SELECT count(*) AS n FROM migrated_evidence_archive').get()!.n).toBe(4);
@@ -287,7 +287,7 @@ it('preserves distinct punctuation and keeps an uncorroborated title scoped', ()
       (1,'low','demonstrated','check','C++ templates','a','t',1),
       (6,'medium','demonstrated','check','False positives','a','t',1);`);
     migrate(db);
-    expect(db.prepare('SELECT legacy_concept_id, portable_concept_id FROM concept_identity_links ORDER BY legacy_concept_id').all())
+    expect(db.prepare('SELECT legacy_concept_id, canonical_concept_id FROM concept_identity_links ORDER BY legacy_concept_id').all())
       .toEqual([]);
     const graph = readWorkspaceGraph(db, 'b');
     expect(graph.concepts.map(c => c.id)).toEqual([2, 5]);

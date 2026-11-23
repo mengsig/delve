@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import type { DatabaseSync } from 'node:sqlite';
+import { reconcileSavedChanges } from './migration-change-concepts';
 import { compatibleDescriptions, normalizedConceptName, portableAlias } from './portable-identity';
 
 export interface Migration {
@@ -7,6 +8,7 @@ export interface Migration {
   name: string;
   sql: string;
   registerFunctions?: (db: DatabaseSync) => void;
+  afterSql?: (db: DatabaseSync) => void;
 }
 
 function registerPortableIdentity(db: DatabaseSync): void {
@@ -394,6 +396,20 @@ export const MIGRATIONS: readonly Migration[] = [
       cursor INTEGER NOT NULL DEFAULT 0 CHECK (cursor BETWEEN 0 AND 4)
     );`,
   },
+  {
+    version: 11,
+    name: 'reconcile saved change concept identities',
+    sql: `ALTER TABLE concept_identity_links RENAME COLUMN portable_concept_id TO canonical_concept_id;
+    CREATE TABLE change_concept_keys (
+      workspace_id TEXT NOT NULL REFERENCES workspaces ON DELETE CASCADE,
+      change_id TEXT NOT NULL CHECK (length(change_id) = 64),
+      identity TEXT NOT NULL CHECK (length(identity) > 0),
+      concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
+      PRIMARY KEY (workspace_id, change_id, identity)
+    );
+    CREATE INDEX change_concept_keys_concept ON change_concept_keys (concept_id);`,
+    afterSql: reconcileSavedChanges,
+  },
 ];
 
 function assertOrdered(migrations: readonly Migration[]): void {
@@ -422,6 +438,7 @@ export function migrate(db: DatabaseSync, migrations: readonly Migration[] = MIG
     try {
       migration.registerFunctions?.(db);
       db.exec(migration.sql);
+      migration.afterSql?.(db);
       db.exec(`PRAGMA user_version = ${migration.version}`);
       db.exec('COMMIT');
     } catch (error) {

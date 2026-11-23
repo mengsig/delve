@@ -33,9 +33,11 @@ function lessonState(db: Db, address: LessonAddress, loadDemo: boolean) {
 
 function foundationLessonId(db: Db, context: ReturnType<typeof lessonContext>, latest: number | null, lessonId?: number) {
   if (lessonId === undefined || lessonId === latest) return latest;
-  const row = db.prepare(`SELECT 1 FROM lessons WHERE id = ? AND workspace_id = ?
-    AND concept_id = ? AND depth = ? AND snapshot_id IS ?`)
-    .get(lessonId, context.workspaceId, context.canonicalConceptId, context.depth, context.snapshotId);
+  const row = db.prepare(`SELECT 1 FROM lessons WHERE id = :id AND workspace_id = :workspace
+    AND (concept_id = :canonical OR concept_id IN (
+      SELECT legacy_concept_id FROM concept_identity_links WHERE canonical_concept_id = :canonical
+    )) AND depth = :depth AND snapshot_id IS :snapshot`)
+    .get({ id: lessonId, workspace: context.workspaceId, canonical: context.canonicalConceptId, depth: context.depth, snapshot: context.snapshotId });
   if (!row) throw new DomainError('LESSON_CHANGED', 'Reopen the change to see the current lesson.');
   return lessonId;
 }

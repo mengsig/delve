@@ -30,6 +30,15 @@ export interface Place {
   state: ProgressState;
 }
 
+export function areaSummary(graph: GlobalKnowledgeGraph, areas: LearningArea[], places: ReadonlyMap<number, Place>, workspace: string) {
+  return {
+    name: areas.find(area => area.workspaceId === workspace)?.workspaceName ?? 'All workspaces',
+    mastered: graph.concepts.filter(concept => places.get(concept.id)?.state === 'mastered').length,
+    total: graph.concepts.length,
+    available: areas.every(area => area.progress.available),
+  };
+}
+
 export function mapPlaces(graph: GlobalKnowledgeGraph, areas: LearningArea[], preferred?: string) {
   const places = new Map<number, Place>();
   const byWorkspace = new Map(areas.map(area => [area.workspaceId, area]));

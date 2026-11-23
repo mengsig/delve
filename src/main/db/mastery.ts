@@ -27,7 +27,7 @@ export function writeMasteryRow(db: Db, address: LessonAddress,
 export function resetMastery(db: Db, conceptId: number, depth: Depth | undefined, workspaceId: string | undefined): void {
   assert.ok(db.isTransaction, 'mastery and evidence resets must commit together');
   const result = db.prepare(`UPDATE lesson_mastery SET state = NULL, revision = lower(hex(randomblob(32)))
-    WHERE (concept_id = :id OR concept_id IN (SELECT legacy_concept_id FROM concept_identity_links WHERE portable_concept_id = :id))
+    WHERE (concept_id = :id OR concept_id IN (SELECT legacy_concept_id FROM concept_identity_links WHERE canonical_concept_id = :id))
       AND (:depth IS NULL OR depth = :depth) AND (:workspace IS NULL OR workspace_id = :workspace)`)
     .run({ id: conceptId, depth: depth ?? null, workspace: workspaceId ?? null });
   assert.ok(Number.isSafeInteger(result.changes) && Number(result.changes) >= 0);

@@ -55,6 +55,58 @@ it('keeps the high-depth change concept name and summary after generating a deta
   expect(graph.changeSuggestions?.high).toMatchObject({ title: plain.conceptTitle, sourceTitle: approved.preview.title });
 });
 
+describe('stable change concept identities', () => {
+  const title = 'Keeping unconfirmed data';
+  const affected = { key: 'pending-data', title, summary: 'Keep recently sent data until acknowledged.', portable: false };
+  const details = { key: 'retry-policy', title: 'Deciding when to retry', summary: 'Wait before retrying.', portable: false };
+  const proposal = { ...change, conceptTitle: title, concepts: [affected, details], touched: [affected.key, details.key],
+    edges: [{ concept: affected.key, prerequisite: details.key }], recommendation: { key: affected.key, reason: 'Start here.' } };
+
+  it('upserts a PR overview and its footprint when regenerated at the same depth and across depths', () => {
+    const approved = source({ kind: 'pr', ref: '42' }, previous);
+    const high = { ...approved, request: { ...approved.request, depth: 'high' as const } };
+    const first = persistGeneration(db, high, proposal);
+    if (first.kind !== 'change') throw new Error('Expected a change brief.');
+    const { conceptId, touched } = first.brief;
+    expect(touched).toMatchObject([{ id: conceptId, title }, { title: details.title }]);
+    recordEvidence(db, { workspaceId, conceptId, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+
+    const alternate = { ...high, cacheKey: 'regenerated', preview: { ...high.preview, model: 'another-model' } };
+    const regenerated = persistGeneration(db, alternate, { ...proposal, concepts: [
+      { ...affected, summary: 'Preserve data until it is confirmed.' }, { ...details, key: 'retry-rule' },
+    ], touched: [affected.key, 'retry-rule'], edges: [{ concept: affected.key, prerequisite: 'retry-rule' }] });
+    const low = { ...approved, cacheKey: 'deeper', request: { ...approved.request, depth: 'low' as const } };
+    const deeper = persistGeneration(db, low, { ...proposal, conceptTitle: null,
+      concepts: [{ ...affected, title: 'Retaining pending segments' }, { ...details, title: 'Retry deadline' }],
+      mechanics: 'Deeper lesson mechanics.' });
+    expect(regenerated).toMatchObject({ brief: { conceptId, touched } });
+    expect(deeper).toMatchObject({ brief: { conceptId, touched } });
+    expect(getGlobalKnowledgeGraph(db).concepts.map(concept => concept.title)).toEqual([title, details.title]);
+    expect(readLesson(db, { workspaceId, conceptId, depth: 'high' }).mastery.stage).toBe('understood');
+    const lowLesson = readLesson(db, { workspaceId, conceptId, depth: 'low' });
+    expect(lowLesson.mastery.stage).toBe('teaching');
+    expect(lowLesson.blocks).toContainEqual(expect.objectContaining({ text: 'Deeper lesson mechanics.' }));
+  });
+
+  it('coalesces a low-first footprint with its later plain overview and projects saved references', () => {
+    const approved = source({ kind: 'pr', ref: '42' }, previous);
+    const low = { ...approved, request: { ...approved.request, depth: 'low' as const } };
+    const first = persistGeneration(db, low, { ...proposal, conceptTitle: null });
+    if (first.kind !== 'change') throw new Error('Expected a change brief.');
+    const prior = first.brief.recommendation.conceptId;
+    expect(prior).not.toBe(first.brief.conceptId);
+    recordEvidence(db, { workspaceId, conceptId: prior, depth: 'low', status: 'demonstrated', source: 'check', masteryVerified: true });
+
+    const high = { ...approved, cacheKey: 'high-after-low', request: { ...approved.request, depth: 'high' as const } };
+    const { conceptId } = first.brief;
+    expect(persistGeneration(db, high, proposal)).toMatchObject({ brief: { conceptId } });
+    expect(cachedGeneration(db, low.cacheKey)).toMatchObject({ brief: { conceptId, recommendation: { conceptId } } });
+    expect(getGlobalKnowledgeGraph(db).concepts.map(concept => concept.title)).toEqual([title, details.title]);
+    expect(readLesson(db, { workspaceId, conceptId, depth: 'low' }).mastery.stage).toBe('understood');
+    expect(readLesson(db, { workspaceId, conceptId, depth: 'high' }).mastery.stage).toBe('teaching');
+  });
+});
+
 it('plans local usage in a new repository and only tops up the missing portable depth', () => {
   const first = workspaceId;
   const map = (key: string, title: string, usage: string) => baselineReply.parse({
@@ -341,7 +393,7 @@ it.each([true, false])('keeps conflicting regenerated migrated concepts separate
   const conflict = 'A collection that processes queued jobs in last in first out order.';
   const canonical = upsertConcept(db, { key: 'queues', title: 'Queue', summary, portable: true, workspaceId });
   const legacy = upsertConcept(db, { key: 'queue', title: 'Queue', summary, portable: false, workspaceId });
-  db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, portable_concept_id) VALUES (?, ?)').run(legacy.id, canonical.id);
+  db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, canonical_concept_id) VALUES (?, ?)').run(legacy.id, canonical.id);
   recordEvidence(db, { workspaceId, conceptId: canonical.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
   const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [{ key: 'queue', title: 'Queue', summary: conflict, portable }],
     edges: [], recommendation: { key: 'queue', reason: 'Study the queue.' } });
@@ -490,7 +542,7 @@ it('updates a pre-link cached recommendation to the replayed scoped identity', (
   const legacy = readWorkspaceGraph(db, workspaceId).concepts[0]!;
   const canonical = upsertConcept(db, { key: 'queues', title: 'Queue', summary: 'A collection processes jobs in first in first out order.',
     portable: true, workspaceId });
-  db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, portable_concept_id) VALUES (?, ?)').run(legacy.id, canonical.id);
+  db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, canonical_concept_id) VALUES (?, ?)').run(legacy.id, canonical.id);
   useCachedGeneration(db, selected);
   const graph = readWorkspaceGraph(db, workspaceId);
   const local = graph.concepts.find(item => item.summary === summary && item.id !== legacy.id)!;

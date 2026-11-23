@@ -4,7 +4,7 @@ import { DomainError } from '../../shared/errors';
 import type {
   GlobalKnowledgeGraph, KnowledgeConcept, MasteryState, KnowledgeMembership, TransferLink, TransferLinkInput,
 } from '../../shared/knowledge';
-import { getConcept } from './concepts';
+import { canonicalConceptId, getConcept } from './concepts';
 import { nowIso, transaction, type Db } from './connection';
 import { getWorkspace, listWorkspaces } from './workspaces';
 import { matchesDemo } from './demo-fixtures';
@@ -92,7 +92,7 @@ function summarizeMastery(db: Db): Map<number, Mastered> {
 /** Concepts with an unfinished or skipped guided lesson, from the persisted lesson cycle stage. */
 function summarizeLessonStages(db: Db): { inProgress: Set<number>; skipped: Set<number> } {
   const rows = db.prepare(
-    `SELECT coalesce(l.portable_concept_id, m.concept_id) AS conceptId, json_extract(m.state, '$.stage') AS stage
+    `SELECT coalesce(l.canonical_concept_id, m.concept_id) AS conceptId, json_extract(m.state, '$.stage') AS stage
      FROM lesson_mastery m LEFT JOIN concept_identity_links l ON l.legacy_concept_id = m.concept_id WHERE m.state IS NOT NULL`,
   ).all() as unknown as { conceptId: number; stage: string }[];
   const inProgress = new Set<number>();
@@ -141,8 +141,8 @@ export function getGlobalKnowledgeGraph(db: Db, demo = false): GlobalKnowledgeGr
 
 function projectedTransferLinks(db: Db, ids: Set<number>): TransferLink[] {
   assert.ok(ids instanceof Set);
-  const rows = db.prepare(`SELECT t.id, coalesce(a.portable_concept_id, t.from_concept_id) AS fromConceptId,
-    coalesce(b.portable_concept_id, t.to_concept_id) AS toConceptId, t.reason, t.provider, t.model,
+  const rows = db.prepare(`SELECT t.id, coalesce(a.canonical_concept_id, t.from_concept_id) AS fromConceptId,
+    coalesce(b.canonical_concept_id, t.to_concept_id) AS toConceptId, t.reason, t.provider, t.model,
     t.workspace_id AS workspaceId, t.created_at AS createdAt FROM transfer_links t
     LEFT JOIN concept_identity_links a ON a.legacy_concept_id = t.from_concept_id
     LEFT JOIN concept_identity_links b ON b.legacy_concept_id = t.to_concept_id ORDER BY t.id`).all() as unknown as LinkRow[];
@@ -168,9 +168,7 @@ function requireText(value: string, field: string): string {
 
 function canonicalLinkEndpoint(db: Db, id: number): number {
   if (!getConcept(db, id)) throw new DomainError('CONCEPT_NOT_FOUND', `Concept ${id} does not exist.`);
-  const row = db.prepare('SELECT portable_concept_id AS id FROM concept_identity_links WHERE legacy_concept_id = ?').get(id);
-  assert.ok(!row || typeof row.id === 'number');
-  return row ? row.id as number : id;
+  return canonicalConceptId(db, id);
 }
 
 function assertLinkable(db: Db, input: TransferLinkInput): [number, number] {
@@ -183,8 +181,8 @@ function assertLinkable(db: Db, input: TransferLinkInput): [number, number] {
   const duplicate = db.prepare(`SELECT 1 FROM transfer_links t
     LEFT JOIN concept_identity_links a ON a.legacy_concept_id = t.from_concept_id
     LEFT JOIN concept_identity_links b ON b.legacy_concept_id = t.to_concept_id
-    WHERE min(coalesce(a.portable_concept_id, t.from_concept_id), coalesce(b.portable_concept_id, t.to_concept_id)) = min(?, ?)
-      AND max(coalesce(a.portable_concept_id, t.from_concept_id), coalesce(b.portable_concept_id, t.to_concept_id)) = max(?, ?)`)
+    WHERE min(coalesce(a.canonical_concept_id, t.from_concept_id), coalesce(b.canonical_concept_id, t.to_concept_id)) = min(?, ?)
+      AND max(coalesce(a.canonical_concept_id, t.from_concept_id), coalesce(b.canonical_concept_id, t.to_concept_id)) = max(?, ?)`)
     .get(from, to, from, to);
   if (duplicate) throw new DomainError('DUPLICATE_LINK', 'These concepts are already linked.');
   return [from, to];
@@ -219,10 +217,10 @@ export function deleteTransferLink(db: Db, id: number): boolean {
     LEFT JOIN concept_identity_links oa ON oa.legacy_concept_id = other.from_concept_id
     LEFT JOIN concept_identity_links ob ON ob.legacy_concept_id = other.to_concept_id
     WHERE selected.id = ?
-      AND min(coalesce(sa.portable_concept_id, selected.from_concept_id), coalesce(sb.portable_concept_id, selected.to_concept_id))
-        = min(coalesce(oa.portable_concept_id, other.from_concept_id), coalesce(ob.portable_concept_id, other.to_concept_id))
-      AND max(coalesce(sa.portable_concept_id, selected.from_concept_id), coalesce(sb.portable_concept_id, selected.to_concept_id))
-        = max(coalesce(oa.portable_concept_id, other.from_concept_id), coalesce(ob.portable_concept_id, other.to_concept_id))
+      AND min(coalesce(sa.canonical_concept_id, selected.from_concept_id), coalesce(sb.canonical_concept_id, selected.to_concept_id))
+        = min(coalesce(oa.canonical_concept_id, other.from_concept_id), coalesce(ob.canonical_concept_id, other.to_concept_id))
+      AND max(coalesce(sa.canonical_concept_id, selected.from_concept_id), coalesce(sb.canonical_concept_id, selected.to_concept_id))
+        = max(coalesce(oa.canonical_concept_id, other.from_concept_id), coalesce(ob.canonical_concept_id, other.to_concept_id))
   )`).run(id);
   return result.changes > 0;
 }

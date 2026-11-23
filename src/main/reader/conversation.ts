@@ -44,7 +44,7 @@ export function readHistory(db: Db, { workspaceId, canonicalConceptId, depth }: 
     LEFT JOIN lessons l ON l.id = c.lesson_id
     WHERE c.workspace_id = :workspace AND coalesce(c.depth, l.depth) = :depth
     AND (c.concept_id = :concept OR c.concept_id IN
-      (SELECT legacy_concept_id FROM concept_identity_links WHERE portable_concept_id = :concept))
+      (SELECT legacy_concept_id FROM concept_identity_links WHERE canonical_concept_id = :concept))
     ORDER BY m.id DESC LIMIT :limit`).all({ workspace: workspaceId, concept: canonicalConceptId, depth, limit: historyLimit + 1 });
   const messages = rows.slice(0, historyLimit).reverse().map(decodeMessage);
   return { messages, earlierMessages: rows.length > historyLimit };

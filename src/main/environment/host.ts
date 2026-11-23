@@ -29,7 +29,7 @@ function messageDocument(db: Db, request: OpenRequest, canonicalId: number, snap
   const row = db.prepare(`SELECT m.body FROM messages m JOIN conversations c ON c.id = m.conversation_id
     WHERE m.id = :message AND c.workspace_id = :workspace AND c.depth = :depth AND m.role = 'tutor'
     AND (c.concept_id = :concept OR c.concept_id IN
-      (SELECT legacy_concept_id FROM concept_identity_links WHERE portable_concept_id = :concept))
+      (SELECT legacy_concept_id FROM concept_identity_links WHERE canonical_concept_id = :concept))
     AND length(CAST(m.body AS BLOB)) <= 524288`)
     .get({ message: request.messageId, workspace: request.workspaceId, concept: canonicalId, depth: request.depth });
   if (!row || typeof row.body !== 'string') return fail('This activity is no longer available.');

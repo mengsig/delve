@@ -247,6 +247,43 @@ test('checks unfamiliar foundations before a high-depth PR and remembers them fo
   await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
 });
 
+async function verifyChangeKnowledge(page: Page, info: TestInfo, screenshot: string) {
+  await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Knowledge map' })).toBeVisible();
+  await page.getByLabel('Learning depth').selectOption('high');
+  const finder = page.getByRole('button', { name: 'Find a concept' });
+  if (await finder.getAttribute('aria-expanded') === 'false') await finder.click();
+  const matches = page.getByLabel('Matching concepts');
+  await expect(matches.getByRole('button', { name: plainChangeTitle, exact: true })).toHaveCount(1);
+  await expect(matches.getByRole('status')).toHaveText('2 matches');
+  await expect(page.locator('.knowledge-area-bar')).toContainText('2 concepts');
+  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveAttribute('aria-valuetext', '0 of 2');
+  await evidence(page, info, screenshot);
+}
+
+test('keeps one Knowledge node when a PR footprint and brief teach the same idea', async ({ desktop: { page, directory } }, info) => {
+  createExplorerFixture(directory);
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await mapFixture(page, 'https://github.com/contour/dispatch', directory, true);
+  const pull = page.getByRole('option', { name: new RegExp(prTitle) });
+  await pull.click();
+  await page.getByLabel('Reading depth').selectOption('high');
+  writeExplanation(directory, { concepts: [concept, { ...newConcept, title: plainChangeTitle }], conceptTitle: plainChangeTitle,
+    example: simpleExample, what: 'When a delivery fails, the worker can try again.', mechanics: null });
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+  await verifyChangeKnowledge(page, info, 'pr-knowledge-high');
+
+  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  await pull.click();
+  await page.getByLabel('Reading depth').selectOption('low');
+  writeExplanation(directory, { concepts: [concept, { ...newConcept, title: 'Dispatch retry budget',
+    summary: 'The worker can make three delivery attempts.' }] });
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await expect(page.getByRole('heading', { name: 'How it works', exact: true })).toBeVisible();
+  await verifyChangeKnowledge(page, info, 'pr-knowledge-high-after-low');
+});
+
 test('draws a low-depth trace once with arrows and discloses technical text at high depth', async ({ desktop: { page, directory } }, info) => {
   createExplorerFixture(directory);
   await page.setViewportSize({ width: 1280, height: 850 });

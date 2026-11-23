@@ -9,7 +9,7 @@ import { useProviderDetection } from '../SetupProvider';
 import { ReadState } from '../ReadState';
 import { useBackgroundTutorCompletion } from '../reader/TutorJobs';
 import { errorMessage, useRead } from '../useRead';
-import { graphInArea, mapPlaces, mapWorkspaces, neighbourhood, suggestedLesson, visibleConcepts, type LearningArea } from './areas';
+import { areaSummary, graphInArea, mapPlaces, mapWorkspaces, neighbourhood, suggestedLesson, visibleConcepts, type LearningArea } from './areas';
 import { Finder } from './Finder';
 import { AreaProgress, Inspector } from './Inspector';
 import { KnowledgeMap } from './KnowledgeMap';
@@ -191,12 +191,8 @@ function AreaContents(props: ContentsProps) {
   </>;
 }
 
-function GuideSummary({ model, areas, workspace }: ContentsProps & { model: Model }) {
-  const area = model.place ? model.place.area : areas.find(a => a.workspaceId === workspace);
-  const guided = area ? [] : [...model.places.values()].filter(place => place.progress.onAtlas);
-  const mastered = area?.progress.mastered ?? guided.filter(place => place.state === 'mastered').length;
-  return <AreaProgress name={area?.workspaceName ?? 'All workspaces'} mastered={mastered} total={area?.progress.total ?? guided.length}
-    available={area ? area.progress.available : areas.every(a => a.progress.available)} />;
+function GuideSummary({ model, local, areas, workspace }: ContentsProps & { model: Model }) {
+  return <AreaProgress {...areaSummary(local, areas, model.places, workspace)} />;
 }
 
 function EndOfPath({ model, areas, activeId, retryProgress, onProgress }: ContentsProps & { model: Model }) {

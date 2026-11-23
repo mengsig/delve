@@ -121,7 +121,7 @@ describe('transfer links', () => {
     const a = upsertConcept(db, { key: 'canonical-a', title: 'A', portable: true, workspaceId: alpha });
     const b = upsertConcept(db, { key: 'canonical-b', title: 'B', portable: true, workspaceId: alpha });
     const legacy = upsertConcept(db, { key: 'legacy-a', title: 'A', portable: false, workspaceId: alpha });
-    db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, portable_concept_id) VALUES (?, ?)').run(legacy.id, a.id);
+    db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, canonical_concept_id) VALUES (?, ?)').run(legacy.id, a.id);
     const first = createTransferLink(db, link(legacy.id, b.id));
     expect(first.fromConceptId).toBe(a.id);
     expect(() => createTransferLink(db, link(b.id, legacy.id))).toThrow(/already linked/);

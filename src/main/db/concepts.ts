@@ -57,6 +57,14 @@ export function getConcept(db: Db, id: number): Concept | null {
   return row ? toConcept(row) : null;
 }
 
+export function canonicalConceptId(db: Db, id: number): number {
+  assert.ok(Number.isSafeInteger(id) && id > 0);
+  const row = db.prepare('SELECT canonical_concept_id AS id FROM concept_identity_links WHERE legacy_concept_id = ?').get(id);
+  if (!row) return id;
+  assert.ok(typeof row.id === 'number' && row.id !== id);
+  return row.id;
+}
+
 function requireConcept(db: Db, id: number): Concept {
   const concept = getConcept(db, id);
   if (!concept) throw new DomainError('CONCEPT_NOT_FOUND', `Concept ${id} does not exist.`);

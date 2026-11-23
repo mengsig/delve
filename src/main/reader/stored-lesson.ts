@@ -14,7 +14,7 @@ export function lessonContext(db: Db, address: LessonAddress): LessonContext {
   const row = db.prepare(`SELECT c.id, c.key, c.title, c.summary, c.portable, w.kind FROM workspace_concepts wc
     JOIN concepts original ON original.id = wc.concept_id JOIN workspaces w ON w.id = wc.workspace_id
     LEFT JOIN concept_identity_links link ON link.legacy_concept_id = original.id
-    JOIN concepts c ON c.id = coalesce(link.portable_concept_id, original.id)
+    JOIN concepts c ON c.id = coalesce(link.canonical_concept_id, original.id)
     WHERE wc.workspace_id = ? AND wc.concept_id = ? AND (original.portable = 1 OR original.workspace_id = w.id)`).get(workspaceId, conceptId);
   if (!row) throw new DomainError('CONCEPT_NOT_FOUND', 'This workspace does not contain the selected concept.');
   assert.ok(typeof row.id === 'number' && row.id > 0);

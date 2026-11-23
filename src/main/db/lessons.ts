@@ -157,10 +157,10 @@ function validateReplacement(db: Db, input: LessonInput, body: string): boolean 
 function nextLessonTime(db: Db, input: LessonInput): string {
   const now = nowIso();
   const row = db.prepare(`WITH canonical(id) AS (
-    SELECT coalesce((SELECT portable_concept_id FROM concept_identity_links WHERE legacy_concept_id = :concept), :concept)
+    SELECT coalesce((SELECT canonical_concept_id FROM concept_identity_links WHERE legacy_concept_id = :concept), :concept)
   ) SELECT max(created_at) AS latest FROM lessons WHERE depth = :depth AND concept_id IN (
     SELECT id FROM canonical UNION ALL SELECT legacy_concept_id FROM concept_identity_links
-    WHERE portable_concept_id = (SELECT id FROM canonical)
+    WHERE canonical_concept_id = (SELECT id FROM canonical)
   )`).get({ concept: input.conceptId, depth: input.depth });
   assert.ok(row && (row.latest === null || typeof row.latest === 'string'));
   if (row.latest === null || row.latest < now) return now;

@@ -190,8 +190,10 @@ test('completes the reviewed path and opens the exact change-only concept in Atl
   await page.getByRole('button', { name: /Back to Knowledge/i }).click();
   await expect(page.getByRole('heading', { name: 'Path mastered' })).toBeVisible();
   await expect(page.getByLabel('Workspace area')).toHaveValue(workspace.id);
-  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveJSProperty('max', ids.length);
+  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveJSProperty('max', ids.length + 1);
+  await expect(page.locator('.knowledge-area-bar')).toContainText(`${ids.length + 1} concepts`);
   await page.getByRole('button', { name: 'Find a concept' }).click();
+  await expect(page.getByLabel('Matching concepts').getByRole('status')).toHaveText(`${ids.length + 1} matches`);
   await page.getByRole('button', { name: extra.title, exact: true }).click();
   await page.getByRole('button', { name: 'Show in workspace Atlas' }).click();
   await expect(page.getByLabel('Selected concept')).toContainText(extra.title);

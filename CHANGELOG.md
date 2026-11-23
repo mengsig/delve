@@ -10,6 +10,7 @@
 - Skip foundation questions in one action and revisit foundations from the learning path. Deeper practice builds on the depth already demonstrated.
 
 ### Fixed
+- Regenerating a change lesson reuses its Knowledge map concepts. Existing duplicates are reconciled with depth-specific mastery preserved, and the map and finder use the same concept total as area mastery.
 - Change briefs keep usable diff links when some suggested lines fall outside the approved diff. Sequential diagrams show each step once with arrows between steps.
 
 ## [0.1.1] - 2026-11-23

@@ -24,15 +24,16 @@ export function projectedEdges(db: Db, ids: Set<number>, workspaceId?: string): 
   if (!ids.size) return [];
   const scope = workspaceId === undefined ? '' : `JOIN workspace_concepts source ON source.concept_id = e.concept_id
     JOIN workspace_concepts target ON target.workspace_id = source.workspace_id AND target.concept_id = e.prerequisite_id`;
-  const query = `SELECT coalesce(a.portable_concept_id, e.concept_id) AS conceptId,
-      coalesce(b.portable_concept_id, e.prerequisite_id) AS prerequisiteId,
+  const query = `SELECT coalesce(a.canonical_concept_id, e.concept_id) AS conceptId,
+      coalesce(b.canonical_concept_id, e.prerequisite_id) AS prerequisiteId,
       min(a.legacy_concept_id IS NOT NULL OR b.legacy_concept_id IS NOT NULL) AS migrated
     FROM concept_edges e
     LEFT JOIN concept_identity_links a ON a.legacy_concept_id = e.concept_id
     LEFT JOIN concept_identity_links b ON b.legacy_concept_id = e.prerequisite_id
     JOIN concepts prerequisite ON prerequisite.id = e.prerequisite_id
+    LEFT JOIN concepts canonical ON canonical.id = a.canonical_concept_id
     ${scope}
-    WHERE (a.legacy_concept_id IS NULL OR b.legacy_concept_id IS NOT NULL OR prerequisite.portable = 1)
+    WHERE (a.legacy_concept_id IS NULL OR canonical.portable = 0 OR b.legacy_concept_id IS NOT NULL OR prerequisite.portable = 1)
     ${workspaceId === undefined ? '' : 'AND source.workspace_id = ?'}
     GROUP BY conceptId, prerequisiteId ORDER BY migrated, conceptId, prerequisiteId`;
   const statement = db.prepare(query);

@@ -1,3 +1,6 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+
 const aliases = new Map([
   ['tcp', 'tcp'], ['transmission control protocol', 'tcp'], ['tcp transmission control protocol', 'tcp'],
   ['http', 'http'], ['hypertext transfer protocol', 'http'],
@@ -32,4 +35,23 @@ export function compatibleDescriptions(left: string, right: string): boolean {
   const first = normalizedConceptName(left);
   const second = normalizedConceptName(right);
   return first.length > 0 && first === second;
+}
+
+export function scopedFingerprint(input: { key: string; title: string; summary: string; portable: boolean }): string {
+  const key = input.key.trim().toLowerCase();
+  const alias = portableAlias(key, input.title);
+  const summary = normalizedConceptName(input.summary);
+  if (alias === null) {
+    const keyAlias = portableAlias(key, '');
+    const titleAlias = portableAlias('', input.title);
+    assert.ok(keyAlias && titleAlias);
+    assert.notEqual(keyAlias, titleAlias);
+    return digestIdentity([keyAlias, titleAlias, summary]);
+  }
+  if (!input.portable && alias !== undefined) return digestIdentity([key, alias, summary]);
+  return digestIdentity([alias ?? key, summary]);
+}
+
+function digestIdentity(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }

@@ -69,7 +69,7 @@ describe('tutor prerequisites', () => {
     const target = upsertConcept(db, { key: 'target', title: 'Target', portable: true, workspaceId: workspace });
     const legacy = upsertConcept(db, { key: 'old', title: 'Foundation', portable: false, workspaceId: workspace });
     const canonical = upsertConcept(db, { key: 'canonical', title: 'Foundation', portable: true });
-    db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, portable_concept_id) VALUES (?, ?)').run(legacy.id, canonical.id);
+    db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, canonical_concept_id) VALUES (?, ?)').run(legacy.id, canonical.id);
     const result = transaction(db, () => persistTutorPrerequisites(db, workspace, target.id, [candidate('old', 'Foundation')]));
     expect(result.map(row => row.concept.id)).toEqual([canonical.id]);
     expect(readWorkspaceGraph(db, workspace).edges).toEqual([{ conceptId: target.id, prerequisiteId: canonical.id }]);
