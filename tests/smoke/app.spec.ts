@@ -49,14 +49,33 @@ test('validates a local working tree and exposes the new empty atlas', async ({ 
   const { page, directory } = desktop;
   await add(page, directory);
   await expect(page.getByRole('alert')).toContainText('not a Git repository');
-  await expect(page.getByLabel('Topic or repository')).toBeFocused();
+  const source = page.getByLabel('Topic or repository');
+  await expect(source).toBeFocused();
+  await expect(source).toHaveAttribute('aria-invalid', 'true');
+  await expect(source).toHaveAttribute('aria-describedby', 'source-hint setup-error');
+  await expect(page.locator('#setup-error')).toContainText('not a Git repository');
   const folder = join(directory, 'local-repository');
   mkdirSync(join(folder, '.git'), { recursive: true });
-  await page.getByLabel('Topic or repository').fill(folder);
+  await source.fill(folder);
+  await expect(source).not.toHaveAttribute('aria-invalid');
+  await expect(source).toHaveAttribute('aria-describedby', 'source-hint');
   await page.getByRole('button', { name: 'Add to atlas →' }).click();
   await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
   await expect(page.getByText('local-repository', { exact: false }).first()).toBeVisible();
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
+});
+
+test('leaves focus and source validity alone when the workspace is already added', async ({ desktop }) => {
+  const { page } = desktop;
+  await add(page, 'https://github.com/octo/site.git');
+  await expect(page.getByRole('heading', { name: 'Repository atlas.' })).toBeVisible();
+  await add(page, 'https://github.com/octo/site.git');
+  await expect(page.getByRole('alert')).toContainText('workspace switcher');
+  await expect(page.getByRole('button', { name: 'Open workspace switcher' })).toBeVisible();
+  const source = page.getByLabel('Topic or repository');
+  await expect(source).not.toBeFocused();
+  await expect(source).not.toHaveAttribute('aria-invalid');
+  await expect(source).toHaveAttribute('aria-describedby', 'source-hint');
 });
 
 test('switcher supports filtering, keyboard navigation, cancellation and focus restoration', async ({ desktop }) => {

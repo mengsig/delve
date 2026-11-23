@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type RefObject } from 'react';
 import { DEFAULT_DEPTH, DEPTHS, type Depth, type ProviderId, type WorkspaceKind } from '../../shared/domain';
 import type { TopicPreview } from '../../shared/reader';
 import { call } from './api';
@@ -22,11 +22,14 @@ interface Props {
 
 const DEPTH_LABELS = { high: 'High · Overview', medium: 'Medium · Mechanics', low: 'Low · Detail' } as const;
 
-function SourceFields({ value, onValue, onPick, onDrop }: ReturnType<typeof useSourceFields>) {
+const SETUP_ERROR_ID = 'setup-error';
+
+function SourceFields({ value, onValue, onPick, onDrop, invalid }: ReturnType<typeof useSourceFields> & { invalid: boolean }) {
   return <div className="formrow">
     <label htmlFor="source-input">Topic or repository</label>
     <div className="source-control" onDrop={onDrop} onDragOver={event => event.preventDefault()}>
-      <input id="source-input" autoFocus aria-describedby="source-hint" required placeholder="Photography or https://github.com/owner/repo"
+      <input id="source-input" autoFocus required aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? `source-hint ${SETUP_ERROR_ID}` : 'source-hint'} placeholder="Photography or https://github.com/owner/repo"
         value={value} maxLength={4096} onChange={event => onValue(event.target.value)} />
       <button type="button" onClick={onPick}>Choose folder…</button>
     </div>
@@ -151,7 +154,7 @@ function StartActions({ topic, signedIn, blocked, pending, attach, attachFailed,
 function SetupFeedback({ error, onOpenSwitcher }: { error: string; onOpenSwitcher: Props['onOpenSwitcher'] }) {
   if (!error) return null;
   return <div className="attach-feedback">
-    <p role="alert" className="setup-error">{error}</p>
+    <p role="alert" id={SETUP_ERROR_ID} className="setup-error">{error}</p>
     {error.includes('workspace switcher') && onOpenSwitcher
       ? <button type="button" onClick={onOpenSwitcher}>Open workspace switcher</button>
       : <button type="button" onClick={() => document.getElementById('source-input')?.focus()}>Edit source</button>}
@@ -170,14 +173,23 @@ function TopicReview({ provider, request }: { provider: ProviderId; request: Ret
   </div>;
 }
 
+/** Returns focus to the source input after it is rejected, unless the user has moved elsewhere. */
+function useSourceErrorFocus(form: RefObject<HTMLFormElement | null>, rejected: boolean) {
+  useEffect(() => {
+    if (!rejected || !form.current) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !form.current.contains(active)) return;
+    form.current.querySelector<HTMLInputElement>('#source-input')?.focus();
+  }, [form, rejected]);
+}
+
 function WorkspaceEditor(props: Props) {
   const [depth, setDepth] = useState<Depth>(DEFAULT_DEPTH);
   const detection = useProviderDetection();
   const { provider, choose, cli } = useDetectedProvider(detection.statuses);
   const actions = useStartWorkspace(props.onAdded, depth, provider);
-  useEffect(() => {
-    if (actions.error && !actions.pending) document.getElementById('source-input')?.focus();
-  }, [actions.error, actions.pending]);
+  const form = useRef<HTMLFormElement>(null);
+  useSourceErrorFocus(form, actions.sourceError && !actions.pending);
   const source = useSourceFields(actions);
   const attach = useAttachRequest(source.repository, depth, provider, cli);
   const topic = source.kind === 'topic';
@@ -199,9 +211,9 @@ function WorkspaceEditor(props: Props) {
     else addOnly();
   }
 
-  return <form className="setup-grid" aria-label="Add workspace" onSubmit={submit}>
+  return <form ref={form} className="setup-grid" aria-label="Add workspace" onSubmit={submit}>
     <fieldset className="sheet setup-form" disabled={actions.pending !== null}>
-      <SourceFields {...source} />
+      <SourceFields {...source} invalid={actions.sourceError} />
       <p className="smallprint setup-cli-status" role="status">{detection.error ? 'Could not check sign-in. Open Advanced options to retry.' :
         cli ? providerHint(cli) : 'Checking installed CLIs…'}</p>
       <details className="setup-advanced">

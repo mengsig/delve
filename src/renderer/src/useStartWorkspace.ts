@@ -21,21 +21,32 @@ function addError(cause: unknown, action: string) {
   return (action === 'map' ? 'Could not attach the reviewed map request. ' : 'Could not add the workspace. ') + message;
 }
 
+const SOURCE_ERROR_CODES = new Set(['INVALID_REQUEST', 'INVALID_WORKSPACE', 'NOT_A_GIT_REPOSITORY']);
+
+/** True when an add failed because the typed source itself is unusable, so the user should edit it. */
+function isSourceError(cause: unknown, action: string) {
+  if (action !== 'add') return false;
+  return cause instanceof IpcCallError ? SOURCE_ERROR_CODES.has(cause.code) : cause instanceof Error;
+}
+
+interface ActionError { message: string; source: boolean }
+const NO_ERROR: ActionError = { message: '', source: false };
+
 function useWorkspaceActions() {
   const locked = useRef(false);
   const [pending, setPending] = useState<'pick' | 'add' | 'map' | null>(null);
-  const [error, setError] = useState('');
+  const [failure, setFailure] = useState<ActionError>(NO_ERROR);
   const [failedToken, setFailedToken] = useState<string>();
 
   async function run(action: NonNullable<typeof pending>, apply: () => Promise<void>, preview?: RepoPreview) {
     if (locked.current) return;
     locked.current = true;
     setPending(action);
-    setError('');
+    setFailure(NO_ERROR);
     try {
       await apply();
     } catch (cause) {
-      setError(addError(cause, action));
+      setFailure({ message: addError(cause, action), source: isSourceError(cause, action) });
       if (preview) setFailedToken(preview.token);
     } finally {
       setPending(null);
@@ -43,7 +54,11 @@ function useWorkspaceActions() {
     }
   }
 
-  return { pending, error, failedToken, setError, run, clearError: () => setError('') };
+  return {
+    pending, error: failure.message, sourceError: failure.source, failedToken, run,
+    setError: (message: string) => setFailure({ message, source: false }),
+    clearError: () => setFailure(NO_ERROR),
+  };
 }
 
 function sameRequest(reviewed: TopicPreview, current: TopicPreview) {
