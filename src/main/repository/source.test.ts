@@ -65,6 +65,23 @@ afterEach(async () => {
 });
 
 describe('Git snapshots', () => {
+  it('uses the Git null device for legacy grafts and keeps reachability diagnostics clean', async () => {
+    const first = commit('First', '--allow-empty');
+    const second = commit('Second', '--allow-empty');
+    const info = join(repo, '.git', 'info');
+    await mkdir(info, { recursive: true });
+    await writeFile(join(info, 'grafts'), second + '\n');
+    const flags = ['--bare', `--git-dir=${join(repo, '.git')}`];
+    const graftPath = await sourceProcess.gitSource([...flags, 'rev-parse', '--git-path', 'info/grafts']);
+    expect(graftPath.status).toBe(0);
+    expect(graftPath.output.toString('utf8').trim()).toBe('/dev/null');
+    const reachable = await sourceProcess.gitSource([...flags, 'for-each-ref', `--contains=${first}`,
+      '--format=%(objectname)', 'refs/heads']);
+    expect(reachable.status).toBe(0);
+    expect(reachable.diagnostic).toBe('');
+    expect(reachable.output.toString('utf8').trim()).toBe(second);
+  });
+
   it('pins reads to a commit and ignores working-tree content and Git environment overrides', async () => {
     await writeFile(join(repo, 'main.ts'), 'export const answer = 1;\n');
     const first = commit('First');

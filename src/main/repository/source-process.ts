@@ -23,8 +23,8 @@ function commandEnv(authenticated: boolean): NodeJS.ProcessEnv {
     GIT_CONFIG_SYSTEM: GIT_NULL_FILE,
     GIT_CONFIG_GLOBAL: GIT_NULL_FILE,
     GIT_NO_REPLACE_OBJECTS: '1',
-    // Older Git must ignore any grafts in the source repository.
-    GIT_GRAFT_FILE: '',
+    // Use Git's null device alias so Git never tries to open an empty graft path.
+    GIT_GRAFT_FILE: GIT_NULL_FILE,
     GIT_NO_LAZY_FETCH: '1',
     GIT_ALLOW_PROTOCOL: authenticated ? 'https' : '',
     GIT_OPTIONAL_LOCKS: '0',
@@ -94,6 +94,7 @@ export async function sourceCommand(bin: 'git' | 'gh', args: string[], options: 
 // hooksPath is a directory lookup and must use the OS device path, not Git's file alias.
 const GIT_SAFETY = ['--no-pager', '-c', `core.hooksPath=${devNull}`, '-c', 'core.fsmonitor=false',
   '-c', `core.attributesFile=${GIT_NULL_FILE}`, '-c', 'maintenance.auto=false', '-c', 'gc.auto=0',
+  '-c', 'advice.graftFileDeprecated=false',
   '-c', 'diff.suppressBlankEmpty=false', '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=never'];
 
 export function gitSource(args: string[], options: CommandOptions = {}): Promise<CommandResult> {
