@@ -22,9 +22,10 @@ type HistoryRead =
 
 function historyReadFailed(result: CommandResult): never {
   const message = result.truncated ? 'Git history output exceeded the read limit.' : 'Could not read Git history.';
-  const lines = result.diagnostic.split('\n')
-    .map(line => sourceText(Buffer.from(line.replace(/[\p{Cc}\p{Cf}]+/gu, ' ')))?.trim())
-    .filter((line): line is string => !!line);
+  const printable = result.diagnostic.replace(/[\p{Cc}\p{Cf}]/gu, character => character === '\n' ? '\n' : ' ');
+  const sanitized = sourceText(Buffer.from(printable));
+  if (!sanitized) throw new DomainError('SOURCE_READ_FAILED', message);
+  const lines = sanitized.split('\n').map(line => line.trim()).filter(Boolean);
   const detail = lines.join(' ');
   const fatal = detail.length > 1024 ? lines.filter(line => line.startsWith('fatal:')).join(' ') : '';
   const summary = (fatal || detail).slice(0, 1024);

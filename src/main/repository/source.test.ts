@@ -298,6 +298,23 @@ describe('Git change read boundaries', () => {
     }
   });
 
+  it('omits private multiline content from a Git history error', async () => {
+    commit('Healthy tip', '--allow-empty');
+    const { gitSource } = sourceProcess;
+    const diagnostic = 'fatal: bad config value\n-----BEGIN PRIVATE KEY-----\nsynthetic payload\n-----END PRIVATE KEY-----';
+    const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation((args, options) => args.includes('--author-date-order')
+      ? Promise.resolve({ status: 128, truncated: false, output: Buffer.alloc(0), diagnostic })
+      : gitSource(args, options));
+    try {
+      const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+      await expect(history.advance(() => 1)).rejects.toMatchObject({
+        code: 'SOURCE_READ_FAILED', message: 'Could not read Git history.',
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it.each([0, 128])('fails on a fatal diagnostic after repairing a missing parent (status %i)', async status => {
     const missing = commit('Removed parent', '--allow-empty');
     const boundary = commit('Readable boundary', '--allow-empty');
