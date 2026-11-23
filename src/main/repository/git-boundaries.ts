@@ -100,7 +100,8 @@ export async function withBoundaries<T>(reader: GitReader, boundaries: Map<strin
   const directory = await mkdtemp(join(tmpdir(), 'delve-history-'));
   try {
     const objectFormat = commit.length === 40 ? 'sha1' : 'sha256';
-    const init = await gitSource(['init', '--quiet', '--bare', '--template=', `--object-format=${objectFormat}`, directory]);
+    const init = await gitSource(['-c', 'init.defaultRefFormat=files', 'init', '--quiet', '--bare', '--template=',
+      `--object-format=${objectFormat}`, directory]);
     gitOutput(init, SETUP_FAILED);
     // The source object store is an alternate. All objects and refs we write belong to this directory.
     const run: GitReader['run'] = (args, maxBytes) =>

@@ -401,6 +401,7 @@ it('repairs a SHA-256 boundary through an annotated tag without changing the rep
   git('replace', boundary, main);
   git('pack-refs', '--all');
   const dotGit = join(repo, '.git');
+  await mkdir(join(dotGit, 'info'), { recursive: true });
   await writeFile(join(dotGit, 'info', 'grafts'), boundary + '\n');
   const files = (await readdir(dotGit, { recursive: true, withFileTypes: true }))
     .filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name)).sort();
