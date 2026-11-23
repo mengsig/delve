@@ -13,6 +13,71 @@ const MAX_BRANCHES = 256;
 const MAX_PARENT_REPAIRS = 4;
 const LOG = ['log', '--no-notes', '--no-show-signature', '--no-color', '--encoding=UTF-8', '-z'];
 const LOG_RECORDS = [...LOG, '--format=%H%x00%P%x00%an%x00%aI%x00%s'];
+const TIP_LOG = [...LOG, '--no-walk=unsorted', '--format=%H'];
+
+type ObjectFailure = { object: string; child?: string };
+type HistoryRead =
+  | { kind: 'complete'; output: Buffer }
+  | { kind: 'object'; output: Buffer; failure: ObjectFailure };
+
+function historyReadFailed(result: CommandResult): never {
+  const message = result.truncated ? 'Git history output exceeded the read limit.' : 'Could not read Git history.';
+  const lines = result.diagnostic.split('\n')
+    .map(line => sourceText(Buffer.from(line.replace(/[\p{Cc}\p{Cf}]+/gu, ' ')))?.trim())
+    .filter((line): line is string => !!line);
+  const detail = lines.join(' ');
+  const fatal = detail.length > 1024 ? lines.filter(line => line.startsWith('fatal:')).join(' ') : '';
+  const summary = (fatal || detail).slice(0, 1024);
+  throw new DomainError('SOURCE_READ_FAILED', summary ? message + ' ' + summary : message);
+}
+
+function parseObjectFailure(fatal: string, preceding: string): ObjectFailure | undefined {
+  const direct = /^(?:bad object|could not read|could not parse|cannot read commit object|failed to read object) ([a-f0-9]+)$/i.exec(fatal)?.[1]
+    ?? /^(?:loose|packed) object ([a-f0-9]+) \(stored in .+\) is corrupt$/i.exec(fatal)?.[1];
+  if (direct && OBJECT_ID.test(direct)) return { object: direct };
+
+  const child = /^Failed to traverse parents of commit ([a-f0-9]+)$/.exec(fatal)?.[1];
+  if (fatal !== 'revision walk setup failed' && !(child && OBJECT_ID.test(child))) return;
+  const object = /^error: (?:Could not read|bogus commit object) ([a-f0-9]+)$/.exec(preceding)?.[1];
+  if (object && OBJECT_ID.test(object)) return { object, child };
+}
+
+function classifyHistory(result: CommandResult): HistoryRead {
+  assert.ok(Number.isInteger(result.status));
+  assert.ok(Buffer.isBuffer(result.output));
+  if (result.truncated) historyReadFailed(result);
+  const lines = result.diagnostic.split(/\r?\n/);
+  const fatals = lines.filter(line => line.startsWith('fatal:'));
+  if (result.status === 0 && fatals.length === 0) return { kind: 'complete', output: result.output };
+  const [fatal] = fatals;
+  if (fatals.length !== 1 || !fatal) historyReadFailed(result);
+  const failure = parseObjectFailure(fatal.slice('fatal:'.length).trim(), lines[lines.indexOf(fatal) - 1] ?? '');
+  if (!failure) historyReadFailed(result);
+  return { kind: 'object', output: result.output, failure };
+}
+
+function completeHistoryOutput(result: CommandResult): Buffer {
+  const read = classifyHistory(result);
+  if (read.kind !== 'complete') historyReadFailed(result);
+  return read.output;
+}
+
+async function verifyUnreadable(reader: GitReader, object: string, original: CommandResult): Promise<void> {
+  assert.ok(OBJECT_ID.test(object));
+  assert.ok(!original.truncated);
+  // A no-walk read checks the commit itself. Existence alone misses corrupt and malformed objects.
+  const probe = await reader.run(['rev-list', '--no-walk=unsorted', '--max-count=1', object, '--'], 4096);
+  const read = classifyHistory(probe);
+  if (read.kind === 'object' && read.failure.object === object) return;
+  if (read.kind === 'object') historyReadFailed(probe);
+  historyReadFailed(original);
+}
+
+async function readHistoryOutput(reader: GitReader, result: CommandResult): Promise<HistoryRead> {
+  const read = classifyHistory(result);
+  if (read.kind === 'object') await verifyUnreadable(reader, read.failure.object, result);
+  return read;
+}
 
 function commitNodes(records: string[], labels: Map<string, string[]>): HistoryNode[] {
   const nodes: HistoryNode[] = [];
@@ -30,7 +95,7 @@ function commitNodes(records: string[], labels: Map<string, string[]>): HistoryN
 async function branchTips(reader: GitReader) {
   const result = await reader.run(['for-each-ref', `--count=${MAX_BRANCHES + 1}`,
     '--format=%(objectname)%09%(refname:lstrip=2)%09%(symref)', 'refs/heads', 'refs/remotes'], 512 * 1024);
-  const lines = completedOutput(result, 'Could not read Git branches.').toString('utf8').split('\n').filter(Boolean);
+  const lines = completeHistoryOutput(result).toString('utf8').split('\n').filter(Boolean);
   const branches = new Map<string, Set<string>>();
   const labels = new Map<string, string[]>();
   for (const line of lines.slice(0, MAX_BRANCHES)) {
@@ -49,8 +114,8 @@ async function branchTips(reader: GitReader) {
 
 async function headTip(reader: GitReader): Promise<string | null> {
   const result = await reader.run(['rev-parse', '--verify', '--quiet', '--end-of-options', 'HEAD'], 1024);
-  if (!result.truncated && result.status === 1) return null;
-  const head = completedOutput(result, 'Could not read HEAD.').toString('utf8').trim();
+  if (!result.truncated && result.status === 1 && !result.diagnostic && !result.output.length) return null;
+  const head = completeHistoryOutput(result).toString('utf8').trim();
   assert.ok(OBJECT_ID.test(head));
   assert.equal(head, head.toLowerCase());
   return head;
@@ -84,32 +149,15 @@ interface GitHistoryBatch {
   warning?: string;
 }
 
-async function unreadableCommit(reader: GitReader, tips: string[], skip: number): Promise<string> {
-  assert.ok(Number.isSafeInteger(skip) && skip >= 0);
-  assert.ok(tips.length > 0 && tips.every(tip => OBJECT_ID.test(tip)));
-  const result = await reader.run(['log', '--no-notes', '--no-show-signature', '--no-color',
-    '--author-date-order', `--skip=${skip}`, '--max-count=1', '--format=%H', ...tips, '--'], 1024);
-  const id = completedOutput(result, 'Could not identify the unreadable Git commit.').toString('utf8').trim();
-  assert.ok(OBJECT_ID.test(id), 'truncated history must identify a commit at the same offset');
-  return id;
-}
-
-function unreadableObject(diagnostic: string): string | undefined {
-  const id = /(?:could not read|could not parse|cannot read commit object|bad object) ([a-f0-9]+)\b/i.exec(diagnostic)?.[1]?.toLowerCase();
-  return id && OBJECT_ID.test(id) ? id : undefined;
-}
-
 async function brokenParent(reader: GitReader, tips: string[]): Promise<BrokenParent | null> {
   assert.ok(tips.length > 0 && tips.every(tip => OBJECT_ID.test(tip)));
   // A plain walk reports the child of a missing parent even when the ordered walk fails during setup.
-  const traversal = await reader.run(['log', '--no-notes', '--no-show-signature', '--format=', ...tips, '--'], 256 * 1024);
-  const missing = unreadableObject(traversal.diagnostic);
-  if (!missing) return null;
-  const commit = /Failed to traverse parents of commit ([a-f0-9]+)\b/i.exec(traversal.diagnostic)?.[1]?.toLowerCase();
-  if (!commit || !OBJECT_ID.test(commit)) return null;
+  const traversal = await reader.run([...LOG, '--format=', ...tips, '--'], 256 * 1024);
+  const read = await readHistoryOutput(reader, traversal);
+  if (read.kind !== 'object' || !read.failure.child) return null;
+  const { object: missing, child: commit } = read.failure;
   const result = await reader.run(['cat-file', 'commit', commit], 2 * 1024 * 1024);
-  if (result.status !== 0) return null;
-  const content = result.output.toString('utf8');
+  const content = completeHistoryOutput(result).toString('utf8');
   const end = content.indexOf('\n\n');
   if (end < 0) return null;
   const headers = content.slice(0, end);
@@ -146,36 +194,28 @@ function unreadableWarning(id: string) {
   return `Git commit ${id} is missing or damaged. Run git fsck to check the repository. You may need to restore the commit from a healthy copy.`;
 }
 
-function fatalTipObject(diagnostic: string): string | undefined {
-  const fatal = diagnostic.split('\n').findLast(line => line.startsWith('fatal: ')) ?? '';
-  const id = /^fatal: (?:loose|packed) object ([a-f0-9]+) \(stored in .+\) is corrupt$/i.exec(fatal)?.[1]
-    ?? /^fatal: (?:bad object|could not read|could not parse|cannot read commit object|failed to read object) ([a-f0-9]+)$/i.exec(fatal)?.[1];
-  const object = id?.toLowerCase();
-  return object && OBJECT_ID.test(object) ? object : undefined;
-}
-
 async function readableTips(reader: GitReader, tips: string[]) {
   assert.ok(tips.length > 0 && tips.length <= MAX_BRANCHES + 1);
   assert.ok(tips.every(tip => OBJECT_ID.test(tip)));
   const pending = new Set(tips);
-  const readable = new Set<string>();
   while (pending.size > 0) {
-    const log = await reader.run([...LOG, '--no-walk=unsorted', '--ignore-missing', '--format=%H', ...pending, '--'], 256 * 1024);
-    if (log.truncated || log.status !== 0) {
-      const damaged = log.truncated ? undefined : fatalTipObject(log.diagnostic);
-      if (damaged && pending.delete(damaged)) continue;
-      const detail = sourceText(Buffer.from(log.diagnostic))?.replace(/[\p{Cc}\p{Cf}]+/gu, ' ').trim().slice(0, 1024);
-      const message = log.truncated ? 'Git history output exceeded the read limit.' : 'Could not read Git history.';
-      throw new DomainError(log.truncated ? 'SOURCE_LIMIT' : 'SOURCE_READ_FAILED', detail ? `${message} ${detail}` : message);
+    const log = await reader.run([...TIP_LOG, '--ignore-missing', ...pending, '--'], 256 * 1024);
+    const read = await readHistoryOutput(reader, log);
+    if (read.kind === 'object') {
+      if (!pending.delete(read.failure.object)) historyReadFailed(log);
+      continue;
     }
-    const { output } = log;
+    const { output } = read;
     assert.ok(output.length === 0 || output.at(-1) === 0);
     const records = nulRecords(output);
     assert.ok(records.length <= pending.size && records.every(tip => OBJECT_ID.test(tip)));
-    for (const tip of records) readable.add(tip);
-    break;
+    const readable = new Set(records);
+    for (const tip of pending) {
+      if (!readable.has(tip)) await verifyUnreadable(reader, tip, log);
+    }
+    return { tips: tips.filter(tip => pending.has(tip) && readable.has(tip)), skipped: tips.filter(tip => !readable.has(tip)) };
   }
-  return { tips: tips.filter(tip => readable.has(tip)), skipped: tips.filter(tip => !readable.has(tip)) };
+  return { tips: [], skipped: tips };
 }
 
 function addBrokenBoundary(boundaries: Map<string, BrokenBoundary>, { commit, parents, missing }: BrokenParent): boolean {
@@ -191,23 +231,19 @@ function addBrokenBoundary(boundaries: Map<string, BrokenBoundary>, { commit, pa
   return true;
 }
 
-async function walkHistory(reader: GitReader, tips: string[], skip: number, boundaries: Map<string, BrokenBoundary>): Promise<CommandResult> {
+async function walkHistory(reader: GitReader, tips: string[], skip: number, boundaries: Map<string, BrokenBoundary>): Promise<HistoryRead> {
   assert.ok(tips.length > 0 && tips.every(tip => OBJECT_ID.test(tip)));
   assert.ok(Number.isSafeInteger(skip) && skip >= 0);
   // Ancestry takes precedence when authored dates are out of order.
   const args = [...LOG_RECORDS, '--author-date-order', `--skip=${skip}`, `--max-count=${COMMIT_BATCH + 1}`, ...tips, '--'];
-  const run = () => withBoundaries(reader, boundaries, git => git.run(args, 2 * 1024 * 1024));
+  const run = () => withBoundaries(reader, boundaries, async git => readHistoryOutput(git, await git.run(args, 2 * 1024 * 1024)));
   let log = await run();
-  let readable = log.output;
-  for (let attempt = 0; attempt < MAX_PARENT_REPAIRS && !log.truncated && log.status !== 0; attempt++) {
-    if (!unreadableObject(log.diagnostic)) break;
+  for (let attempt = 0; attempt < MAX_PARENT_REPAIRS && log.kind === 'object'; attempt++) {
     const parent = await withBoundaries(reader, boundaries, git => brokenParent(git, tips));
     if (!parent || !addBrokenBoundary(boundaries, parent)) break;
     log = await run();
-    if (!log.truncated && log.status !== 0 && log.output.length < readable.length) continue;
-    readable = log.output;
   }
-  return { ...log, output: readable };
+  return log;
 }
 
 function gapWarning(boundaries: Map<string, BrokenBoundary>, gaps: HistoryNode[]): string {
@@ -224,21 +260,12 @@ async function readGitHistoryBatch(reader: GitReader, tips: string[], labels: Ma
   const history = commitNodes(nulRecords(log.output), labels);
   const nodes = history.slice(0, COMMIT_BATCH);
   const gaps = boundaries.size ? nodes.filter(node => boundaries.has(node.ref)) : [];
-  if (gaps.length > 0) {
-    const restored = nodes.map(node => (boundaries.has(node.ref) ? { ...node, parents: boundaries.get(node.ref)!.parents } : node));
-    return { nodes: restored, next: log.truncated || history.length > COMMIT_BATCH ? skip + nodes.length : null, warning: gapWarning(boundaries, gaps) };
-  }
-  if (!log.truncated && log.status !== 0) {
-    const missing = unreadableObject(log.diagnostic);
-    return { nodes, next: history.length > COMMIT_BATCH ? skip + nodes.length : null,
-      warning: missing ? unreadableWarning(missing) : 'Git could not read the rest of the history. Run git fsck to check the repository.' };
-  }
-  if (log.truncated && nodes.length === 0) {
-    const id = await withBoundaries(reader, boundaries, git => unreadableCommit(git, tips, skip));
-    return { nodes, next: null, warning: `Git commit ${id} exceeds the metadata read limit. Reduce its commit metadata to view older history.` };
-  }
-  const more = log.truncated || history.length > COMMIT_BATCH;
-  return { nodes, next: more ? skip + nodes.length : null };
+  const restored = gaps.length ? nodes.map(node => {
+    const boundary = boundaries.get(node.ref);
+    return boundary ? { ...node, parents: boundary.parents } : node;
+  }) : nodes;
+  const warning = log.kind === 'object' ? unreadableWarning(log.failure.object) : gaps.length ? gapWarning(boundaries, gaps) : undefined;
+  return { nodes: restored, next: history.length > COMMIT_BATCH ? skip + nodes.length : null, warning };
 }
 
 export async function openGitHistory(path: string, branch?: string, commits = true): Promise<GitHistorySource> {
@@ -262,7 +289,7 @@ export async function openGitHistory(path: string, branch?: string, commits = tr
   }
   if (readable.tips.length === 0) return result;
   const shallow = await reader.run(['rev-parse', '--is-shallow-repository'], 1024);
-  const isShallow = completedOutput(shallow, 'Could not check Git history depth.').toString('utf8').trim();
+  const isShallow = completeHistoryOutput(shallow).toString('utf8').trim();
   assert.ok(isShallow === 'true' || isShallow === 'false');
   if (isShallow === 'true') warnings.push('Git history is limited to this shallow snapshot. Run git fetch --unshallow to see older commits.');
   const boundaries = new Map<string, BrokenBoundary>();

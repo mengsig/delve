@@ -58,9 +58,7 @@ async function verifyLearnedLessonActions(page: Page) {
     await page.keyboard.press('Enter');
     await expect(page.getByRole('heading', { name: 'Queues and workers', level: 1 })).toBeVisible();
   });
-  await page.keyboard.press(shortcut);
-  await page.getByRole('combobox', { name: /search/i }).fill('Knowledge');
-  await page.keyboard.press('Enter');
+  await page.keyboard.press('Alt+ArrowLeft');
   await expect(page.getByRole('heading', { name: 'Knowledge map' })).toBeVisible();
   await expect(page.getByLabel('State')).toHaveValue('mastered');
   await expect(page.getByRole('button', { name: 'Show map' })).toBeVisible();
@@ -68,6 +66,10 @@ async function verifyLearnedLessonActions(page: Page) {
     await page.getByRole('button', { name: 'Open lesson: Queues and workers' }).first().click();
     await expect(page.getByRole('heading', { name: 'Queues and workers', level: 1 })).toBeVisible();
   });
+  await page.keyboard.press(shortcut);
+  await page.getByRole('combobox', { name: /search/i }).fill('Knowledge');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: 'Learned list' })).toBeVisible();
 }
 
 test('opens the global graph, finds a shared learned concept and opens its lesson', async ({ desktop: { page, application, directory } }) => {

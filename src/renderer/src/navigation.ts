@@ -151,8 +151,7 @@ function usePageHistory(initial: WorkspaceList, workspace: ReturnType<typeof use
   }
   const returnToKnowledge = origin && (() => { void restoreKnowledge(origin); });
   function visit(next: Route, replace = false) {
-    if (next.screen === 'knowledge' && returnToKnowledge) returnToKnowledge();
-    else setHistory(previous => visitRoute(previous, next, replace));
+    setHistory(previous => visitRoute(previous, next, replace));
   }
   function back() {
     if (workspace.switching && (origin || route.screen === 'knowledge')) return;

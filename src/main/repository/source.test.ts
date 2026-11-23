@@ -264,28 +264,93 @@ describe('Git change read boundaries', () => {
   it('reports a Git log configuration failure instead of marking healthy tips as damaged', async () => {
     const base = commit('Base', '--allow-empty');
     git('branch', 'other', base);
-    const head = commit('Healthy tip', '--allow-empty');
+    commit('Healthy tip', '--allow-empty');
     git('config', 'log.abbrevCommit', 'invalid');
 
+    await expect(openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []))
+      .rejects.toMatchObject({ code: 'SOURCE_READ_FAILED', message: expect.stringMatching(/bad boolean config value.*log\.abbrevcommit/i) });
+  });
+
+  it('fails with the Git diagnostic when configuration breaks after the tip probe', async () => {
+    commit('Healthy tip', '--allow-empty');
     const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
-    const page = await history.advance(() => 1);
-    expect(page).toMatchObject({ nodes: [], next: null, warning: expect.stringMatching(/bad boolean config value.*log\.abbrevcommit/i) });
-    expect(page.warning).not.toMatch(/missing or damaged|Skipped|git fsck/);
-    expect(page.warning).not.toContain(head);
+    git('config', 'log.abbrevCommit', 'invalid');
+
+    await expect(history.advance(() => 1)).rejects.toMatchObject({
+      code: 'SOURCE_READ_FAILED', message: expect.stringMatching(/bad boolean config value.*log\.abbrevcommit/i),
+    });
+  });
+
+  it('does not recover from a bad-object diagnostic when the named commit is readable', async () => {
+    const head = commit('Healthy tip', '--allow-empty');
+    const { gitSource } = sourceProcess;
+    const diagnostic = 'fatal: bad object ' + head;
+    const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation((args, options) => args.includes('--author-date-order')
+      ? Promise.resolve({ status: 128, truncated: false, output: Buffer.alloc(0), diagnostic })
+      : gitSource(args, options));
+    try {
+      const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+      await expect(history.advance(() => 1)).rejects.toMatchObject({
+        code: 'SOURCE_READ_FAILED', message: 'Could not read Git history. ' + diagnostic,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each([0, 128])('fails on a fatal diagnostic after repairing a missing parent (status %i)', async status => {
+    const missing = commit('Removed parent', '--allow-empty');
+    const boundary = commit('Readable boundary', '--allow-empty');
+    await rm(join(repo, '.git', 'objects', missing.slice(0, 2), missing.slice(2)));
+    const { gitSource } = sourceProcess;
+    const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation(async (args, options) => {
+      const result = await gitSource(args, options);
+      if (!args.includes('--author-date-order') || !options?.graftFile) return result;
+      expect(result.status).toBe(0);
+      expect(result.output.toString()).toContain(boundary);
+      return { ...result, status, diagnostic: 'fatal: synthetic filesystem\u200bfailure' };
+    });
+    try {
+      const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+      await expect(history.advance(() => 1)).rejects.toMatchObject({
+        code: 'SOURCE_READ_FAILED', message: 'Could not read Git history. fatal: synthetic filesystem failure',
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('fails with a read limit even when the walk captured a complete commit', async () => {
+    const head = commit('Healthy tip', '--allow-empty');
+    const { gitSource } = sourceProcess;
+    const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation(async (args, options) => {
+      const result = await gitSource(args, options);
+      if (!args.includes('--author-date-order')) return result;
+      expect(result.output.toString()).toContain(head);
+      return { ...result, truncated: true, diagnostic: 'error: diagnostic from the limited walk' };
+    });
+    try {
+      const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+      await expect(history.advance(() => 1)).rejects.toMatchObject({
+        code: 'SOURCE_READ_FAILED',
+        message: 'Git history output exceeded the read limit. error: diagnostic from the limited walk',
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('reports a tip probe output limit even when Git emits a corrupt-object diagnostic', async () => {
     const head = commit('Healthy tip', '--allow-empty');
     const { gitSource } = sourceProcess;
-    const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation((args, options) => args.includes('--no-walk=unsorted')
+    const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation((args, options) => args.includes('--ignore-missing')
       ? Promise.resolve({ status: 0, truncated: true, output: Buffer.alloc(0),
         diagnostic: `fatal: loose object ${head} (stored in .git/objects/file) is corrupt` })
       : gitSource(args, options));
     try {
-      const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
-      const page = await history.advance(() => 1);
-      expect(page).toMatchObject({ nodes: [], next: null, warning: expect.stringContaining('exceeded the read limit') });
-      expect(page.warning).not.toMatch(/missing or damaged|Skipped|git fsck/);
+      await expect(openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []))
+        .rejects.toMatchObject({ code: 'SOURCE_READ_FAILED',
+          message: expect.stringMatching(/^Git history output exceeded the read limit\. fatal: loose object/) });
     } finally {
       spy.mockRestore();
     }
@@ -325,17 +390,25 @@ describe('Git change read boundaries', () => {
     await writeFile(join(directory, damaged.slice(2)), Buffer.from([255, 255, 255, 255]));
     await writeFile(join(repo, '.git', 'refs', 'heads', 'broken'), damaged + '\n');
 
+    const { gitSource } = sourceProcess;
     const spy = vi.spyOn(sourceProcess, 'gitSource');
     try {
       const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
       const page = await history.advance(() => 1);
       expect(page.nodes.map(node => node.ref).sort()).toEqual([head, other, base].sort());
       expect(page.warning).toBe(`Git commit ${damaged} is missing or damaged. Run git fsck to check the repository. You may need to restore the commit from a healthy copy.`);
-      const probes = spy.mock.calls.map(([args]) => args).filter(args => args.includes('--no-walk=unsorted'));
-      expect(probes.map(args => args.slice(args.indexOf('--format=%H') + 1, -1))).toEqual([[damaged, head, other], [head, other]]);
+      const probes = spy.mock.calls.map(([args]) => args).filter(args => args.includes('--ignore-missing'));
+      expect(probes.map(args => args.slice(args.indexOf('--ignore-missing') + 1, -1))).toEqual([[damaged, head, other], [head, other]]);
+      expect(spy.mock.calls.some(([args]) => args.includes('rev-list') && args.at(-2) === damaged)).toBe(true);
 
       const filtered = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit', branch: 'broken' }, []);
       expect(await filtered.advance(() => 1)).toMatchObject({ nodes: [], next: null, warning: page.warning });
+
+      spy.mockImplementation((args, options) => args.includes('--ignore-missing') && !args.includes(damaged)
+        ? Promise.resolve({ status: 128, truncated: false, output: Buffer.alloc(0), diagnostic: 'fatal: failed to read workspace settings' })
+        : gitSource(args, options));
+      await expect(openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []))
+        .rejects.toMatchObject({ code: 'SOURCE_READ_FAILED', message: 'Could not read Git history. fatal: failed to read workspace settings' });
     } finally {
       spy.mockRestore();
     }
@@ -351,16 +424,14 @@ describe('Git change read boundaries', () => {
     expect(page.warning).toContain(missing);
   });
 
-  it('continues byte-limited pages after a repaired missing-parent merge', async () => {
+  it('fails on a real output limit after repairing a missing-parent merge', async () => {
     let parent = commit('Oldest', '--allow-empty');
-    const expected = [parent];
     const tree = git('rev-parse', `${parent}^{tree}`);
     for (let i = 0; i < 4; i++) {
       const object = `tree ${tree}\nparent ${parent}\nauthor Fixture User <fixture@example.invalid> 1700000000 +0000\n`
         + `committer Fixture User <fixture@example.invalid> 1700000000 +0000\n\nLarge ${i} ${'x'.repeat(800 * 1024)}\n`;
       parent = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'],
         { input: object, encoding: 'utf8' }).trim();
-      expected.unshift(parent);
     }
     const missing = 'd'.repeat(40);
     const object = `tree ${tree}\nparent ${missing}\nparent ${parent}\nauthor Fixture User <fixture@example.invalid> 1700000000 +0000\n`
@@ -369,17 +440,9 @@ describe('Git change read boundaries', () => {
       { input: object, encoding: 'utf8' }).trim();
     git('update-ref', 'refs/heads/main', boundary);
     const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
-    const pages = [];
-    let next: number | null = 0;
-    while (next !== null && pages.length < 6) {
-      const page = await history.advance(() => pages.length + 1);
-      pages.push(page);
-      next = page.next;
-    }
-    expect(next).toBeNull();
-    expect(pages.flatMap(page => page.nodes.map(node => node.ref))).toEqual([boundary, ...expected]);
-    expect(pages[0]?.warning).toContain(missing);
-    expect(pages.length).toBeGreaterThan(1);
+    await expect(history.advance(() => 1)).rejects.toMatchObject({
+      code: 'SOURCE_READ_FAILED', message: expect.stringMatching(/^Git history output exceeded the read limit\./),
+    });
   }, 30_000);
 
   it('keeps available shallow commits and explains how to fetch older history', async () => {
@@ -398,37 +461,29 @@ describe('Git change read boundaries', () => {
   });
 
 describe('repository explorer metadata limits', () => {
-  it('stops at an oversized first commit and identifies it', async () => {
+  it('fails when the first commit exceeds the output limit', async () => {
     commit('Older commit', '--allow-empty');
     await writeFile(join(root, 'message'), 'x'.repeat(2 * 1024 * 1024 + 1024));
     git('commit', '--quiet', '--allow-empty', '-F', join(root, 'message'));
-    const oversized = git('rev-parse', 'HEAD');
     const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
-    const page = await history.advance(() => 1);
-    expect(page.nodes).toEqual([]);
-    expect(page.next).toBeNull();
-    expect(page.warning).toContain(oversized);
-    expect(page.warning).toContain('Reduce its commit metadata');
+    await expect(history.advance(() => 1)).rejects.toMatchObject({
+      code: 'SOURCE_READ_FAILED', message: expect.stringMatching(/^Git history output exceeded the read limit\./),
+    });
   });
 
-  it('preserves earlier pages and stops before an oversized later commit', async () => {
+  it('reports the limit as a failure on subsequent pages too', async () => {
     commit('Older commit', '--allow-empty');
     await writeFile(join(root, 'message'), 'x'.repeat(2 * 1024 * 1024 + 1024));
     git('commit', '--quiet', '--allow-empty', '-F', join(root, 'message'));
-    const oversized = git('rev-parse', 'HEAD');
     for (let i = 0; i < 35; i++) commit(`Readable ${i}`, '--allow-empty');
-    const expected = git('log', '--format=%H', '--max-count=35').split('\n');
+    const expected = git('log', '--format=%H', '--max-count=30').split('\n');
     const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
-    const pages = [];
-    let next: number | null = 0;
-    while (next !== null && pages.length < 5) {
-      const page = await history.advance(() => pages.length + 1);
-      pages.push(page);
-      next = page.next;
-    }
-    expect(next).toBeNull();
-    expect(pages.flatMap(page => page.nodes.map(node => node.ref))).toEqual(expected);
-    expect(pages.at(-1)?.warning).toContain(oversized);
+    const first = await history.advance(() => 1);
+    expect(first.nodes.map(node => node.ref)).toEqual(expected);
+    expect(first.next).toBe(1);
+    await expect(history.advance(() => 2)).rejects.toMatchObject({
+      code: 'SOURCE_READ_FAILED', message: expect.stringMatching(/^Git history output exceeded the read limit\./),
+    });
   }, 30_000);
 
 });
@@ -479,6 +534,9 @@ describe('repository explorer', () => {
       expect(refreshed.nodes.map(node => node.ref)).toEqual([newTip, old]);
       const continuation = { ...request, cursor: first.next! };
       await expect(learning.history({ ...continuation, search: 'other' })).rejects.toMatchObject({ code: 'STALE_HISTORY' });
+      git('config', 'log.abbrevCommit', 'invalid');
+      await expect(learning.history(continuation)).rejects.toMatchObject({ code: 'SOURCE_READ_FAILED' });
+      git('config', '--unset', 'log.abbrevCommit');
       const [second, retried] = await Promise.all([learning.history(continuation), learning.history(continuation)]);
       expect(second).toEqual(retried);
       expect(second.nodes.map(node => node.ref)).toEqual(pinned.slice(30));

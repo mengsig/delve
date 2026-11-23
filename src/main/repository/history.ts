@@ -14,9 +14,8 @@ class HistoryFeed {
   private index = 0;
   warning?: string;
 
-  constructor(private read: Reader, start: number) {
-    assert.ok(Number.isSafeInteger(start) && start >= 0);
-    this.offset = read ? start : null;
+  constructor(private read: Reader, private source: 'git' | 'github') {
+    this.offset = !read ? null : source === 'git' ? 0 : 1;
     assert.equal(this.done, !read);
   }
 
@@ -36,7 +35,7 @@ class HistoryFeed {
       this.warning = batch.warning ?? this.warning;
       return batch.nodes;
     } catch (cause) {
-      if (!(cause instanceof DomainError)) throw cause;
+      if (this.source === 'git' || !(cause instanceof DomainError)) throw cause;
       this.offset = null;
       this.warning = cause.message;
       return [];
@@ -85,8 +84,8 @@ class RepositoryHistory {
     private github: Awaited<ReturnType<typeof pullHistory>>,
     saved: HistoryNode[],
   ) {
-    this.commits = new HistoryFeed(git.read, 0);
-    this.pulls = new HistoryFeed(github.read, 1);
+    this.commits = new HistoryFeed(git.read, 'git');
+    this.pulls = new HistoryFeed(github.read, 'github');
     this.saved = new Map(request.branch ? [] : saved.filter(node => matches(node, request)).map(node => [changeKey(node), node]));
     this.branches = new Set(git.branches);
     if (request.branch) this.branches.add(request.branch);
@@ -94,7 +93,9 @@ class RepositoryHistory {
   }
 
   async advance(cursor: () => number): Promise<HistoryPage> {
-    const [, pullsRead] = await Promise.all([this.commits.fill(), this.pulls.fill()]);
+    const [commits, pulls] = await Promise.allSettled([this.commits.fill(), this.pulls.fill()]);
+    if (pulls.status === 'rejected') throw pulls.reason;
+    const pullsRead = pulls.value;
     if (pullsRead.length) this.pullStatus = 'available';
     for (const pull of pullsRead) {
       for (const branch of pull.branches) this.branches.add(branch);
@@ -102,6 +103,7 @@ class RepositoryHistory {
     if (this.pulls.done && this.pullStatus === 'unchecked' && this.github.read) {
       this.pullStatus = this.pulls.warning ? 'unavailable' : 'empty';
     }
+    if (commits.status === 'rejected') throw commits.reason;
 
     const nodes: HistoryNode[] = [];
     while (nodes.length < PAGE_SIZE) {

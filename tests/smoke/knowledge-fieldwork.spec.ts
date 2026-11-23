@@ -280,6 +280,40 @@ test('opens Progress for the mastered path when the active workspace contains on
   await expect(page.getByRole('heading', { name: 'Path mastered' })).toBeVisible();
 });
 
+test('opens a fresh Knowledge visit in the active workspace and restores the area on Back', async ({ desktop }) => {
+  const next = seedArea(desktop.directory);
+  const db = openDatabase(join(desktop.directory, 'delve.sqlite'));
+  const origin = addWorkspace(db, { kind: 'topic', title: 'Delivery protocols' });
+  upsertConcept(db, { key: 'delivery-confirmation', title: 'Delivery confirmation', workspaceId: origin.id, portable: false });
+  db.close();
+
+  const page = await desktop.restart();
+  const header = page.getByRole('navigation', { name: 'Application' });
+  const knowledge = header.getByRole('button', { name: 'Knowledge', exact: true });
+  const atlas = header.getByRole('button', { name: 'Atlas', exact: true });
+  const area = page.getByLabel('Workspace area');
+  await knowledge.click();
+  await expect(area).toHaveValue(origin.id);
+  await area.selectOption('*');
+  await atlas.click();
+  await page.keyboard.press('Alt+ArrowLeft');
+  await expect(area).toHaveValue('*');
+
+  await atlas.click();
+  await page.getByRole('button', { name: 'Switch workspace', exact: true }).click();
+  await page.getByRole('option', { name: /Task processing/ }).click();
+  await expect(page.locator('#active-workspace strong')).toHaveText(next.name);
+  await knowledge.click();
+  await expect(area).toBeVisible();
+  await page.screenshot({ path: '.archon/evidence/knowledge-reopen.png' });
+  await expect(area).toHaveValue(next.id);
+
+  await area.selectOption(origin.id);
+  await atlas.click();
+  await knowledge.click();
+  await expect(area).toHaveValue(next.id);
+});
+
 test('restores the learned list after opening a lesson from a deep row', async ({ desktop: { directory, page } }) => {
   const db = openDatabase(join(directory, 'delve.sqlite'));
   const workspace = addWorkspace(db, { kind: 'topic', title: 'Learned concepts' });

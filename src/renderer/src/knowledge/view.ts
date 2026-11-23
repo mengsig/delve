@@ -37,7 +37,7 @@ export function savedFilters(activeId?: string): Filters {
     const saved = value as Record<string, unknown>;
     const state = saved.state === 'not-started' ? 'unstarted' : saved.state;
     return {
-      workspace: typeof saved.workspace === 'string' ? saved.workspace || anyWorkspace : defaults.workspace,
+      workspace: defaults.workspace,
       state: typeof state === 'string' && ['mastered', 'verified', 'in-progress', 'ready', 'locked', 'skipped', 'unstarted'].includes(state) ? state : '',
       depth: isDepth(saved.depth) ? saved.depth : '',
       query: typeof saved.query === 'string' ? saved.query : '',
@@ -53,8 +53,8 @@ function isDepth(value: unknown): value is Depth {
   return value === 'high' || value === 'medium' || value === 'low';
 }
 
-export function rememberFilters(filters: Filters) {
-  localStorage.setItem(filterKey, JSON.stringify(filters));
+export function rememberFilters({ state, depth, query, group }: Filters) {
+  localStorage.setItem(filterKey, JSON.stringify({ state, depth, query, group }));
 }
 
 export function knowledgeHistoryView() {
