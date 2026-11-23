@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import type { HistoryNode } from '../../shared/explorer';
 import { DomainError } from '../../shared/errors';
 import { gitReadFailed, gitReadState } from './git-diagnostics';
-import { changeTitle, gitReader, nulRecords, type GitReader } from './git-reader';
+import { changeTitle, checkReachability, gitReader, isMissingCommit, nulRecords, reachabilityDiagnostics, reachabilityFailed,
+  REACHABILITY_REVISIONS, type GitReader } from './git-reader';
 import { OBJECT_ID, safeBranch, safeAuthor } from './source-policy';
 import type { CommandResult } from './source-process';
 
@@ -172,10 +173,11 @@ interface GitHistoryBatch {
   warning?: string;
 }
 
-async function brokenParent(reader: GitReader, tips: string[]): Promise<BrokenParent | null> {
-  assert.ok(tips.length > 0 && tips.every(tip => OBJECT_ID.test(tip)));
+async function brokenParent(reader: GitReader, revisions: string[]): Promise<BrokenParent | null> {
+  assert.ok(revisions.length > 0);
+  assert.ok(revisions.every(revision => OBJECT_ID.test(revision) || REACHABILITY_REVISIONS.includes(revision)));
   // A plain walk reports the child of a missing parent even when the ordered walk fails during setup.
-  const traversal = await reader.run([...LOG, '--format=', ...tips, '--'], 256 * 1024);
+  const traversal = await reader.run([...LOG, '--format=', ...revisions, '--'], 256 * 1024);
   const read = await readHistoryOutput(reader, traversal);
   if (read.kind !== 'object' || !read.failure.child) return null;
   const { object: missing, child: commit } = read.failure;
@@ -210,13 +212,36 @@ async function withBoundaries<T>(reader: GitReader, boundaries: Map<string, Brok
   }
 }
 
-export async function withMissingParents<T>(reader: GitReader, commit: string, parents: string[], missing: string[],
-  action: (reader: GitReader) => Promise<T>): Promise<T> {
+function missingReachabilityParent(result: CommandResult): string | undefined {
+  if (result.truncated) return;
+  const [first, ...rest] = reachabilityDiagnostics(result);
+  const parent = /^error: Could not read ([a-f0-9]+)$/.exec(first ?? '')?.[1];
+  if (!parent || !OBJECT_ID.test(parent)) return;
+  if (rest.every(line => line === `error: could not parse commit ${parent}` || line === 'fatal: failed to check reachability'
+    || /^fatal: Failed to traverse parents of commit [a-f0-9]+$/.test(line))) return parent;
+}
+
+export async function requireReachableChange(reader: GitReader, commit: string, parents: string[], missing: string[]): Promise<void> {
   assert.ok(OBJECT_ID.test(commit) && parents.every(parent => OBJECT_ID.test(parent)));
   assert.ok(missing.every(parent => parents.includes(parent)));
   const boundaries = new Map<string, BrokenBoundary>();
   if (missing.length) boundaries.set(commit, { parents, missing: new Set(missing) });
-  return withBoundaries(reader, boundaries, action);
+  const check = () => withBoundaries(reader, boundaries, git => checkReachability(git, commit));
+  let failure = await check();
+  if (!failure) return;
+  if (!missingReachabilityParent(failure)) reachabilityFailed(failure);
+
+  const head = await headTip(reader);
+  const revisions = [...REACHABILITY_REVISIONS, ...(head ? [head] : [])];
+  for (let attempt = 0; attempt < MAX_PARENT_REPAIRS && failure; attempt++) {
+    const missingParent = missingReachabilityParent(failure);
+    if (!missingParent || !await isMissingCommit(reader, missingParent)) break;
+    const boundary = await withBoundaries(reader, boundaries, git => brokenParent(git, revisions));
+    if (!boundary || (boundary.missing !== missingParent && !await isMissingCommit(reader, boundary.missing))) break;
+    if (!addBrokenBoundary(boundaries, boundary)) break;
+    failure = await check();
+  }
+  if (failure) reachabilityFailed(failure);
 }
 
 export interface GitHistorySource {

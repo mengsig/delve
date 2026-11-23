@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { DomainError } from '../../shared/errors';
-import { gitSource, completedOutput } from './source-process';
+import { gitOutput, gitReadFailed } from './git-diagnostics';
+import { gitSource, completedOutput, type CommandResult } from './source-process';
 import { isSourcePath, MAX_BLOB_BYTES, MAX_READ_BYTES, MAX_READ_FILES, OBJECT_ID, sourceText } from './source-policy';
 
 const MAX_TREE_BYTES = 2 * 1024 * 1024;
@@ -94,16 +95,47 @@ export async function resolveCommit(reader: GitReader, ref: string): Promise<str
   return commit;
 }
 
-export async function requireReachable(reader: GitReader, commit: string): Promise<void> {
+export const REACHABILITY_REVISIONS = ['--branches', '--remotes', '--tags'];
+const QUIET_GRAFT_ADVICE = ['-c', 'advice.graftFileDeprecated=false'];
+
+export function reachabilityDiagnostics(result: CommandResult): string[] {
+  return result.diagnostic.split(/\r?\n/).filter(line => line && !/^warning: ignoring unknown core\.fsync(?:Method value| component) /.test(line));
+}
+
+export async function isMissingCommit(reader: GitReader, commit: string): Promise<boolean> {
   assert.ok(OBJECT_ID.test(commit));
-  const result = await reader.run(['for-each-ref', '--count=1', `--contains=${commit}`, '--format=%(objectname)',
+  const check = await reader.run(['cat-file', '-t', commit], 1024);
+  const errors = check.diagnostic.split(/\r?\n/).filter(line => /^(?:fatal|error):/.test(line));
+  if (!check.truncated && check.status === 128 && check.output.length === 0
+    && errors.length === 1 && errors[0] === 'fatal: git cat-file: could not get object info') return true;
+  assert.equal(gitOutput(check, 'Could not read the parent of that commit.').toString('utf8').trim(), 'commit');
+  return false;
+}
+
+export async function checkReachability(reader: GitReader, commit: string): Promise<CommandResult | null> {
+  assert.ok(OBJECT_ID.test(commit));
+  const result = await reader.run([...QUIET_GRAFT_ADVICE, 'for-each-ref', '--count=1', `--contains=${commit}`, '--format=%(objectname)',
     'refs/heads', 'refs/remotes', 'refs/tags'], 1024);
-  const ref = completedOutput(result, 'Could not check whether that commit is reachable.').toString('utf8').trim();
-  if (OBJECT_ID.test(ref)) return;
+  // Git can return a false match with exit status 0 after a traversal error.
+  if (result.truncated || result.status !== 0 || reachabilityDiagnostics(result).length) return result;
+  const ref = result.output.toString('utf8').trim();
+  if (OBJECT_ID.test(ref)) return null;
   assert.equal(ref, '', 'for-each-ref must return an object ID or no matches');
-  const ancestor = await reader.run(['merge-base', '--is-ancestor', commit, 'HEAD'], 1024);
+  const ancestor = await reader.run([...QUIET_GRAFT_ADVICE, 'merge-base', '--is-ancestor', commit, 'HEAD'], 1024);
+  if (ancestor.truncated || (ancestor.status !== 0 && ancestor.status !== 1) || reachabilityDiagnostics(ancestor).length) return ancestor;
+  assert.equal(ancestor.output.length, 0, 'merge-base --is-ancestor does not produce stdout');
   if (ancestor.status === 1) throw new MissingSnapshotCommit('INVALID_COMMIT', 'That commit is outside the available repository history.');
-  completedOutput(ancestor, 'Could not check whether that commit is reachable from HEAD.');
+  return null;
+}
+
+export function reachabilityFailed(result: CommandResult): never {
+  if (result.truncated) throw new DomainError('SOURCE_LIMIT', 'Repository output exceeded the read limit.');
+  return gitReadFailed(result, 'Could not check whether that commit is reachable.');
+}
+
+async function requireReachable(reader: GitReader, commit: string): Promise<void> {
+  const failure = await checkReachability(reader, commit);
+  if (failure) reachabilityFailed(failure);
 }
 
 async function treeFiles(reader: GitReader, commit: string, paths: string[] = []): Promise<{ files: TreeFile[]; partial: boolean }> {

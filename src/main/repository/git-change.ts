@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import type { ChangeDetail } from '../../shared/explorer';
 import { gitOutput } from './git-diagnostics';
-import { gitHistoryNode, readCommitLog, withMissingParents } from './git-history';
+import { gitHistoryNode, readCommitLog, requireReachableChange } from './git-history';
 import { DomainError } from '../../shared/errors';
-import { changeTitle, gitReader, nulRecords, readBlob, requireReachable, resolveCommit,
+import { changeTitle, gitReader, isMissingCommit, nulRecords, readBlob, resolveCommit,
   withoutChangePatches, type ChangeSnapshot, type ChangePatch, type GitReader } from './git-reader';
 import { GIT_NULL_FILE } from './source-process';
 import { isSourcePath, MAX_DIFF_BYTES, MAX_DIFF_FILES, MAX_PATCH_BYTES, OBJECT_ID, sourceText } from './source-policy';
@@ -71,14 +71,7 @@ async function missingParents(reader: GitReader, parents: string[]): Promise<str
   assert.ok(parents.every(parent => OBJECT_ID.test(parent)));
   const missing: string[] = [];
   for (const parent of new Set(parents)) {
-    const check = await reader.run(['cat-file', '-t', parent], 1024);
-    const errors = check.diagnostic.split(/\r?\n/).filter(line => /^(?:fatal|error):/.test(line));
-    if (!check.truncated && check.status === 128 && check.output.length === 0
-      && errors.length === 1 && errors[0] === 'fatal: git cat-file: could not get object info') {
-      missing.push(parent);
-      continue;
-    }
-    assert.equal(gitOutput(check, 'Could not read the parent of that commit.').toString('utf8').trim(), 'commit');
+    if (await isMissingCommit(reader, parent)) missing.push(parent);
   }
   assert.ok(missing.every(parent => parents.includes(parent)));
   return missing;
@@ -101,7 +94,7 @@ async function openGitChange(path: string, ref: string) {
   const { title, parents, description } = await commitInfo(reader, commit);
   const effective = await effectiveParents(reader, commit, parents);
   const missing = await missingParents(reader, effective);
-  await withMissingParents(reader, commit, parents, missing, git => requireReachable(git, commit));
+  await requireReachableChange(reader, commit, parents, missing);
   const [parent] = parents;
   const snapshot: ChangeSnapshot = { commit, base: parent, title, description, diff: '', partial: false, files: [] };
   const revisions = parent ? [parent, commit] : [commit];

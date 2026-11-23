@@ -240,7 +240,7 @@ describe('Git change reachability with missing parents', () => {
     await expect(readChange(repo, workspace, 'commit', boundary)).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
   });
 
-  it('rejects an unreachable merge when only its second parent is missing', async () => {
+  it.each([false, true])('rejects an unreachable merge with a missing second parent (separate history gap: %s)', async separateGap => {
     const first = commit('First parent', '--allow-empty');
     const missing = 'a'.repeat(40);
     const tree = git('rev-parse', `${first}^{tree}`);
@@ -248,7 +248,32 @@ describe('Git change reachability with missing parents', () => {
       + 'committer Fixture User <fixture@example.invalid> 1700000000 +0000\n\nUnreachable merge\n';
     const merge = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'],
       { input: raw, encoding: 'utf8' }).trim();
+    if (separateGap) {
+      const parent = git('commit-tree', tree, '-m', 'Separate missing parent');
+      const tip = git('commit-tree', tree, '-p', parent, '-m', 'Unrelated tip');
+      git('update-ref', 'refs/heads/unrelated', tip);
+      await rm(join(repo, '.git', 'objects', parent.slice(0, 2), parent.slice(2)));
+    }
     await expect(readChange(repo, workspace, 'commit', merge)).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
+    git('update-ref', 'refs/heads/zz-contains-merge', merge);
+    await expect(readChange(repo, workspace, 'commit', merge)).resolves.toMatchObject({ commit: merge, base: first });
+  });
+
+  it('rejects a containment match accompanied by an unexpected diagnostic', async () => {
+    const head = commit('Tip', '--allow-empty');
+    const { gitSource } = sourceProcess;
+    const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation(async (args, options) => {
+      const result = await gitSource(args, options);
+      if (!args.includes(`--contains=${head}`)) return result;
+      expect(result.status).toBe(0);
+      expect(result.output.toString().trim()).toBe(head);
+      return { ...result, diagnostic: 'error: could not read repository data' };
+    });
+    try {
+      await expect(readChange(repo, workspace, 'commit', head)).rejects.toMatchObject({ code: 'SOURCE_READ_FAILED' });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('opens a missing-parent boundary reachable only from detached HEAD', async () => {
