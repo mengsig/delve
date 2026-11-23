@@ -86,10 +86,10 @@ async function* withReplacementHeader(chunks: AsyncIterable<Buffer>) {
       yield chunk;
       continue;
     }
-    const startsWithSeparator = previousEndedInNewline && chunk[0] === 10;
+    const startsWithSeparator: boolean = previousEndedInNewline && chunk[0] === 10;
     const separator = chunk.indexOf('\n\n');
     if (startsWithSeparator || separator !== -1) {
-      const offset = startsWithSeparator ? 0 : separator + 1;
+      const offset: number = startsWithSeparator ? 0 : separator + 1;
       assert.equal(chunk[offset], 10);
       yield chunk.subarray(0, offset);
       yield header;

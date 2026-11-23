@@ -51,7 +51,7 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
   };
 }
 
-describe('dispatch', () => {
+describe('tutor IPC', () => {
   it('validates unreadable tutor job identity before dismissing', async () => {
     const dismiss = vi.fn(() => 'changed' as const);
     const h = handlers({ 'tutor:dismiss-unreadable': dismiss });
@@ -104,7 +104,9 @@ describe('dispatch', () => {
     expect(await dispatch(h, 'tutor:dismiss-unreadable', identity)).toEqual({ ok: true, value: 'dismissed' });
     expect(dismiss).toHaveBeenCalledExactlyOnceWith(identity);
   });
+});
 
+describe('dispatch', () => {
   it('validates requests before reaching the handler', async () => {
     const add = vi.fn(() => workspace);
     const h = handlers({ 'workspaces:add': add });
