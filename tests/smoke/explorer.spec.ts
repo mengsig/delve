@@ -174,7 +174,8 @@ const reviewFoundations = [{
   practice: { ...receiptPractice, prompt: 'A phone call drops in a tunnel. What should you try after getting out?',
     options: ['Wait in the tunnel', 'Call again', 'Remove the number', 'Turn off the phone'], expected: 1 },
 }];
-const secondPr = 'Give a failed delivery another chance';
+const secondPr = 'Retry transient failure in dispatch.ts';
+const plainChangeTitle = 'Give a failed delivery another chance';
 const simpleExample = 'Think of calling a friend back after a dropped call. A second try might get through.';
 
 async function answerChangeFoundations(page: Page, info: TestInfo) {
@@ -208,7 +209,8 @@ test('checks unfamiliar foundations before a high-depth PR and remembers them fo
   await mapFixture(page, 'https://github.com/contour/dispatch', directory, true);
   await page.getByRole('option', { name: new RegExp(prTitle) }).click();
   await page.getByLabel('Reading depth').selectOption('high');
-  writeExplanation(directory, { foundations: reviewFoundations, example: simpleExample,
+  writeExplanation(directory, { foundations: reviewFoundations, example: simpleExample, conceptTitle: plainChangeTitle,
+    recommendation: { key: null, reason: 'See what happens when a delivery gets another chance.' },
     what: 'When a delivery fails, the worker can try again.', why: 'A short outage is less likely to lose a delivery.',
     mechanics: null, summary: 'A failed delivery gets another chance.' });
   await page.getByRole('button', { name: 'Teach me this change' }).click();
@@ -227,7 +229,15 @@ test('checks unfamiliar foundations before a high-depth PR and remembers them fo
   await expect(page.getByLabel('Lesson transcript').getByText(/which you already know\./)).toBeVisible();
   await expect(page.getByText(/Quick questions/)).toHaveCount(0);
   await expect(page.getByText(/Foundation lesson/)).toHaveCount(0);
-  await page.getByRole('button', { name: '← Back to change brief' }).click();
+  await page.getByRole('button', { name: 'Atlas', exact: true }).click();
+  const guide = page.getByLabel('Field guide');
+  const suggestion = guide.getByRole('button', { name: new RegExp(plainChangeTitle) });
+  await expect(suggestion).toBeVisible();
+  await expect(guide.getByText(secondPr, { exact: true })).toBeHidden();
+  await guide.getByText('Source title', { exact: true }).click();
+  await expect(guide.getByText(secondPr, { exact: true })).toBeVisible();
+  await suggestion.click();
+  await expect(page.getByRole('heading', { name: secondPr, exact: true })).toBeVisible();
   await page.getByLabel('Reading depth').selectOption('low');
   await page.getByRole('button', { name: 'Teach me this change' }).click();
   const deeper = page.getByRole('region', { name: 'Go deeper on Delivery confirmation' });

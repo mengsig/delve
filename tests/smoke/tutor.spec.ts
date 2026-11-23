@@ -144,7 +144,10 @@ test('shows the exact opening request before sending, then cancels, retries and 
   await exerciseAnswerRecovery(page, gate);
   await expect(page.getByRole('log')).toContainText('You recognized prefix specificity.');
   await expect(page.getByRole('log')).toContainText('A smaller destination range makes the match more specific.');
-  await expect(page.getByRole('log')).toContainText('Choose /24');
+  await page.getByRole('log').getByText('Explore the explanation', { exact: true }).click();
+  const trace = page.getByRole('log').getByRole('figure', { name: 'Trace' });
+  await expect(trace.getByRole('listitem')).toHaveText(['Match destination', 'Compare lengths', 'Choose /24']);
+  await expect(trace.locator('.lesson-diagram-direct')).toHaveCount(2);
   await expect(page.getByRole('heading', { name: 'A /20 and a /28 match. Which wins, and why?' })).toBeVisible();
   expect(JSON.parse(readFileSync(receipt, 'utf8')).stdin).toBe(exactAnswer);
   await expect(page.getByRole('meter', { name: 'Correct checks in a row' })).toHaveJSProperty('value', 1);

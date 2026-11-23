@@ -39,16 +39,20 @@ afterEach(() => db.close());
 
 it('keeps the high-depth change concept name and summary after generating a detailed brief', () => {
   const approved = source({ kind: 'pr', ref: '42' }, baseline);
+  approved.preview.title = 'Update staleRoute in src/routes.ts';
   const high = { ...approved, cacheKey: 'high', request: { ...approved.request, depth: 'high' as const } };
-  const plain = { ...change, conceptTitle: 'Checking routes before using them', summary: 'The service removes outdated routes.' };
+  const plain = { ...change, conceptTitle: 'Checking routes before using them', summary: 'The service removes outdated routes.',
+    recommendation: { key: null, reason: 'See how the service keeps its routes current.' } };
   const first = persistGeneration(db, high, plain);
   const technical = 'The new check in src/routes.ts removes expired routes.';
   const low = { ...approved, cacheKey: 'low', request: { ...approved.request, depth: 'low' as const } };
   const detailed = persistGeneration(db, low, { ...change, summary: technical });
   if (first.kind !== 'change' || detailed.kind !== 'change') throw new Error('Expected change briefs.');
   expect(detailed.brief).toMatchObject({ conceptId: first.brief.conceptId, summary: technical });
-  expect(readWorkspaceGraph(db, workspaceId, true).concepts.find(concept => concept.id === first.brief.conceptId))
+  const graph = readWorkspaceGraph(db, workspaceId, true);
+  expect(graph.concepts.find(concept => concept.id === first.brief.conceptId))
     .toMatchObject({ title: plain.conceptTitle, summary: plain.summary });
+  expect(graph.changeSuggestions?.high).toMatchObject({ title: plain.conceptTitle, sourceTitle: approved.preview.title });
 });
 
 it('plans local usage in a new repository and only tops up the missing portable depth', () => {

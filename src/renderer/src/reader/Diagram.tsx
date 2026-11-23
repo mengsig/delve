@@ -2,12 +2,12 @@ import { Fragment, useId } from 'react';
 import type { DiagramEdge } from '../../../shared/lesson-blocks';
 import { layoutDiagram } from './diagram-layout';
 
-export function Diagram({ nodes, edges }: { nodes: string[]; edges?: DiagramEdge[] }) {
+export function Diagram({ nodes, edges, label = 'Diagram' }: { nodes: string[]; edges?: DiagramEdge[]; label?: string }) {
   const caption = useId();
   const layout = layoutDiagram(nodes, edges);
   const columns = ['minmax(10rem, 16rem)', ...layout.lanes.map(lane => lane.labeled ? 'var(--diagram-label-lane)' : '1.75rem')];
   return <figure className="chapter lesson-diagram">
-    <figcaption id={caption} className="plate">Diagram</figcaption>
+    <figcaption id={caption} className="plate">{label}</figcaption>
     <div className="lesson-diagram-scroll" role="region" aria-labelledby={caption} tabIndex={0}>
       <div className="lesson-diagram-grid" style={{ gridTemplateColumns: columns.join(' ') }}
         role="list" aria-label={edges === undefined ? 'Steps in order' : 'Nodes'}>

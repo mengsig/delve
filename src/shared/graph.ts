@@ -35,7 +35,7 @@ export interface WorkspaceGraph {
   baselineCommit?: string;
   demo: boolean;
   atlasConceptIds?: number[];
-  changeSuggestions?: Partial<Record<Depth, ChangeRef & { title: string; reason: string }>>;
+  changeSuggestions?: Partial<Record<Depth, ChangeRef & { title: string; reason: string; sourceTitle?: string }>>;
   suggestions?: Partial<Record<Depth, { conceptId: number; reason: string }>>;
   progress?: WorkspaceProgress;
 }

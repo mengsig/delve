@@ -1,4 +1,5 @@
 import type { ChangeRef } from '../../../shared/repository';
+import type { WorkspaceGraph } from '../../../shared/graph';
 import type { ComponentProps } from 'react';
 import type { Depth, Workspace } from '../../../shared/domain';
 import { containsTechnicalText } from '../../../shared/plain-language';
@@ -49,7 +50,7 @@ interface Props {
   reason?: string;
   demo?: DemoPlate;
   onLesson: (id: number) => void;
-  suggestedChange?: ChangeRef & { title: string; reason: string };
+  suggestedChange?: NonNullable<WorkspaceGraph['changeSuggestions']>[Depth];
   onChanges: (change?: ChangeRef) => void;
 }
 
@@ -67,8 +68,14 @@ export function FieldGuide({ workspace, model, target, reason, demo, depth, sugg
       reason={showExplanation(explanation) ? explanation : reasonFor(target, workspace.id, false)} onClick={() => onLesson(target.id)} />
     {demo?.changed ? <Suggestion icon="pr" label="Change brief · PR #184" title="Why late writes are rejected"
       reason="One changed boundary. Skip the queue recap." onClick={() => onChanges()} />
-      : suggestedChange ? <Suggestion icon="pr" label="What changed and why" title={suggestedChange.title}
-        reason={suggestedChange.reason} onClick={() => onChanges(suggestedChange)} />
+      : suggestedChange ? <>
+        <Suggestion icon="pr" label="What changed and why" title={suggestedChange.title}
+          reason={showExplanation(suggestedChange.reason) ? suggestedChange.reason : 'See how this change applies to the repository.'}
+          onClick={() => onChanges(suggestedChange)} />
+        {suggestedChange.sourceTitle && <details className="smallprint">
+          <summary>Source title</summary><p>{suggestedChange.sourceTitle}</p>
+        </details>}
+      </>
       : workspace.kind !== 'topic' && !demo && <Suggestion icon="pr" label="Change brief" title="Explore repository changes"
         reason="See which concepts a commit or pull request touches." onClick={() => onChanges()} />}
     {follow && <Suggestion icon={workspace.kind === 'topic' ? 'frame' : 'book'} label="Follow a connection"
