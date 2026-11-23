@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -388,6 +388,43 @@ it('keeps commits from other branches that are not behind the missing parent', a
   expect(pages.at(-1)?.warning).toContain(missing);
 }, 30_000);
 
+it('repairs a SHA-256 boundary through an annotated tag without changing the repository', async () => {
+  repo = join(root, 'sha256 repo');
+  execFileSync('git', ['init', '--quiet', '--template=', '--initial-branch=main', '--object-format=sha256', repo]);
+  git('config', 'user.name', 'Fixture User');
+  git('config', 'user.email', 'fixture@example.invalid');
+  const main = commit('Main', '--allow-empty');
+  const tree = git('rev-parse', `${main}^{tree}`);
+  const missing = 'a'.repeat(main.length);
+  const boundary = writeCommitObject(tree, [missing], 'Tag boundary');
+  git('tag', '-a', '-m', 'Boundary tag', 'checkpoint', boundary);
+  git('replace', boundary, main);
+  git('pack-refs', '--all');
+  const dotGit = join(repo, '.git');
+  await writeFile(join(dotGit, 'info', 'grafts'), boundary + '\n');
+  const files = (await readdir(dotGit, { recursive: true, withFileTypes: true }))
+    .filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name)).sort();
+  const contents = await Promise.all(files.map(file => readFile(file)));
+  const spy = vi.spyOn(sourceProcess, 'gitSource');
+  try {
+    await expect(readChange(repo, workspace, 'commit', boundary)).resolves.toMatchObject({
+      commit: boundary, title: 'Tag boundary', base: missing, partial: true,
+    });
+    const privateDirs = spy.mock.calls.filter(([, options]) => options?.isolatedGit)
+      .map(([args]) => args.find(arg => arg.startsWith('--git-dir='))!.slice('--git-dir='.length));
+    expect(privateDirs.length).toBeGreaterThan(0);
+    for (const directory of new Set(privateDirs)) {
+      await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    const after = (await readdir(dotGit, { recursive: true, withFileTypes: true }))
+      .filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name)).sort();
+    expect(after).toEqual(files);
+    expect(await Promise.all(files.map(file => readFile(file)))).toEqual(contents);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
 it('reports a Git log configuration failure instead of marking healthy tips as damaged', async () => {
   const base = commit('Base', '--allow-empty');
   git('branch', 'other', base);
@@ -469,9 +506,11 @@ it.each([0, 128])('fails on a fatal diagnostic after repairing a missing parent 
   const boundary = commit('Readable boundary', '--allow-empty');
   await rm(join(repo, '.git', 'objects', missing.slice(0, 2), missing.slice(2)));
   const { gitSource } = sourceProcess;
+  let privateDir: string | undefined;
   const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation(async (args, options) => {
     const result = await gitSource(args, options);
-    if (!args.includes('--author-date-order') || !options?.graftFile) return result;
+    if (!args.includes('--author-date-order') || !options?.isolatedGit) return result;
+    privateDir = args.find(arg => arg.startsWith('--git-dir='))?.slice('--git-dir='.length);
     expect(result.status).toBe(0);
     expect(result.output.toString()).toContain(boundary);
     return { ...result, status, diagnostic: 'fatal: could not read \u200bfilesystem' };
@@ -481,6 +520,8 @@ it.each([0, 128])('fails on a fatal diagnostic after repairing a missing parent 
     await expect(history.advance(() => 1)).rejects.toMatchObject({
       code: 'SOURCE_READ_FAILED', message: 'Could not read Git history. fatal: could not read',
     });
+    expect(privateDir).toBeDefined();
+    await expect(stat(privateDir!)).rejects.toMatchObject({ code: 'ENOENT' });
   } finally {
     spy.mockRestore();
   }

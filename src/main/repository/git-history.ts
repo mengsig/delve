@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { HistoryNode } from '../../shared/explorer';
 import { DomainError } from '../../shared/errors';
+import { withBoundaries, type BrokenBoundary } from './git-boundaries';
 import { gitReadFailed, gitReadState } from './git-diagnostics';
-import { changeTitle, checkReachability, gitReader, isMissingCommit, nulRecords, reachabilityDiagnostics, reachabilityFailed,
+import { changeTitle, checkReachability, gitReader, headTip, isMissingCommit, nulRecords, reachabilityDiagnostics, reachabilityFailed,
   REACHABILITY_REVISIONS, type GitReader } from './git-reader';
 import { OBJECT_ID, safeBranch, safeAuthor } from './source-policy';
 import type { CommandResult } from './source-process';
@@ -109,15 +107,6 @@ async function branchTips(reader: GitReader) {
   return { branches, labels, limited: lines.length > MAX_BRANCHES };
 }
 
-async function headTip(reader: GitReader): Promise<string | null> {
-  const result = await reader.run(['rev-parse', '--verify', '--quiet', '--end-of-options', 'HEAD'], 1024);
-  if (!result.truncated && result.status === 1 && !result.diagnostic && !result.output.length) return null;
-  const head = completeHistoryOutput(result).toString('utf8').trim();
-  assert.ok(OBJECT_ID.test(head));
-  assert.equal(head, head.toLowerCase());
-  return head;
-}
-
 export async function readCommitLog(reader: GitReader, head: string, parents: string[], format: string, limit: number): Promise<CommandResult> {
   assert.ok(OBJECT_ID.test(head) && parents.every(parent => OBJECT_ID.test(parent)));
   assert.ok(Number.isSafeInteger(limit) && limit > 0);
@@ -162,18 +151,13 @@ interface BrokenParent {
   parents: string[];
 }
 
-interface BrokenBoundary {
-  missing: Set<string>;
-  parents: string[];
-}
-
 interface GitHistoryBatch {
   nodes: HistoryNode[];
   next: number | null;
   warning?: string;
 }
 
-async function brokenParent(reader: GitReader, revisions: string[]): Promise<BrokenParent | null> {
+async function brokenParent(reader: GitReader, revisions: string[], original: GitReader): Promise<BrokenParent | null> {
   assert.ok(revisions.length > 0);
   assert.ok(revisions.every(revision => OBJECT_ID.test(revision) || REACHABILITY_REVISIONS.includes(revision)));
   // A plain walk reports the child of a missing parent even when the ordered walk fails during setup.
@@ -181,7 +165,7 @@ async function brokenParent(reader: GitReader, revisions: string[]): Promise<Bro
   const read = await readHistoryOutput(reader, traversal);
   if (read.kind !== 'object' || !read.failure.child) return null;
   const { object: missing, child: commit } = read.failure;
-  const result = await reader.run(['cat-file', 'commit', commit], WALK_LIMIT);
+  const result = await original.run(['cat-file', 'commit', commit], WALK_LIMIT);
   const content = gitReadState(result, WALK_LIMIT) === 'limited' ? result.output : completeHistoryOutput(result);
   const end = content.indexOf('\n\n');
   if (end < 0) {
@@ -192,24 +176,6 @@ async function brokenParent(reader: GitReader, revisions: string[]): Promise<Bro
   const parents = [...headers.matchAll(/^parent ([a-f0-9]+)$/gm)].map(match => match[1] ?? '');
   if (!parents.every(parent => OBJECT_ID.test(parent)) || !parents.includes(missing)) return null;
   return { commit, missing, parents };
-}
-
-function graftLine([commit, { missing, parents }]: [string, BrokenBoundary]): string {
-  assert.ok(OBJECT_ID.test(commit) && parents.every(parent => OBJECT_ID.test(parent)));
-  assert.ok(missing.size > 0 && [...missing].every(parent => parents.includes(parent)));
-  return [commit, ...parents.filter(parent => !missing.has(parent))].join(' ');
-}
-
-async function withBoundaries<T>(reader: GitReader, boundaries: Map<string, BrokenBoundary>, action: (reader: GitReader) => Promise<T>): Promise<T> {
-  if (boundaries.size === 0) return action(reader);
-  const directory = await mkdtemp(join(tmpdir(), 'delve-history-'));
-  try {
-    const graftFile = join(directory, 'grafts');
-    await writeFile(graftFile, [...boundaries].map(graftLine).join('\n') + '\n');
-    return await action({ run: (args, maxBytes) => reader.run(['-c', 'advice.graftFileDeprecated=false', ...args], maxBytes, graftFile) });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
 }
 
 function missingReachabilityParent(result: CommandResult): string | undefined {
@@ -226,7 +192,7 @@ export async function requireReachableChange(reader: GitReader, commit: string, 
   assert.ok(missing.every(parent => parents.includes(parent)));
   const boundaries = new Map<string, BrokenBoundary>();
   if (missing.length) boundaries.set(commit, { parents, missing: new Set(missing) });
-  const check = () => withBoundaries(reader, boundaries, git => checkReachability(git, commit));
+  const check = () => withBoundaries(reader, boundaries, git => checkReachability(git, commit), 'reachability');
   let failure = await check();
   if (!failure) return;
   if (!missingReachabilityParent(failure)) reachabilityFailed(failure);
@@ -236,7 +202,7 @@ export async function requireReachableChange(reader: GitReader, commit: string, 
   for (let attempt = 0; attempt < MAX_PARENT_REPAIRS && failure; attempt++) {
     const missingParent = missingReachabilityParent(failure);
     if (!missingParent || !await isMissingCommit(reader, missingParent)) break;
-    const boundary = await withBoundaries(reader, boundaries, git => brokenParent(git, revisions));
+    const boundary = await withBoundaries(reader, boundaries, git => brokenParent(git, revisions, reader), 'reachability');
     if (!boundary || (boundary.missing !== missingParent && !await isMissingCommit(reader, boundary.missing))) break;
     if (!addBrokenBoundary(boundaries, boundary)) break;
     failure = await check();
@@ -306,7 +272,7 @@ async function walkHistory(reader: GitReader, tips: string[], skip: number, boun
   });
   let log = await run();
   for (let attempt = 0; attempt < MAX_PARENT_REPAIRS && log.kind === 'object'; attempt++) {
-    const parent = await withBoundaries(reader, boundaries, git => brokenParent(git, tips));
+    const parent = await withBoundaries(reader, boundaries, git => brokenParent(git, tips, reader));
     if (!parent || !addBrokenBoundary(boundaries, parent)) break;
     log = await run();
   }

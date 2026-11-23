@@ -57,6 +57,7 @@ describe('dispatch', () => {
     for (const malformed of [
       { jobKey: identity.jobKey }, { ...identity, jobKey: 27 }, { ...identity, jobKey: 'A' },
       { ...identity, jobKey: 'ZZ' }, { ...identity, version: 'a'.repeat(31) }, { ...identity, rowid: 27 },
+      { ...identity, jobKey: '00'.repeat(513) },
     ]) {
       expect(await dispatch(h, 'tutor:dismiss-unreadable', malformed)).toMatchObject({
         ok: false, error: { code: 'INVALID_REQUEST' },
@@ -64,6 +65,18 @@ describe('dispatch', () => {
     }
     expect(dismiss).not.toHaveBeenCalled();
     expect(await dispatch(h, 'tutor:dismiss-unreadable', identity)).toEqual({ ok: true, value: 'changed' });
+    expect(dismiss).toHaveBeenCalledExactlyOnceWith(identity);
+  });
+
+  it.each([
+    { kind: 'empty', jobKey: '' },
+    { kind: 'blob', jobKey: '00FF80' },
+    { kind: 'maximum length', jobKey: '00'.repeat(512) },
+  ])('accepts a $kind dismissal key', async ({ jobKey }) => {
+    const dismiss = vi.fn(() => 'dismissed' as const);
+    const h = handlers({ 'tutor:dismiss-unreadable': dismiss });
+    const identity = { jobKey, version: 'a'.repeat(32) };
+    expect(await dispatch(h, 'tutor:dismiss-unreadable', identity)).toEqual({ ok: true, value: 'dismissed' });
     expect(dismiss).toHaveBeenCalledExactlyOnceWith(identity);
   });
 

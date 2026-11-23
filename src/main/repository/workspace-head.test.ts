@@ -11,11 +11,12 @@ vi.mock('./git-reader', () => ({ gitReader: vi.fn(), resolveCommit: vi.fn() }));
 
 const workspace = { id: 'workspace', name: 'Repo', kind: 'git', source: '/work/repo', createdAt: '', lastOpenedAt: null } satisfies Workspace;
 const run = vi.fn<Awaited<ReturnType<typeof gitReader>>['run']>();
+const reader = { run, stream: vi.fn() };
 const commit = 'a'.repeat(40);
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(gitReader).mockResolvedValue({ run });
+  vi.mocked(gitReader).mockResolvedValue(reader);
   vi.mocked(resolveCommit).mockResolvedValue(commit);
 });
 
@@ -26,7 +27,7 @@ it('reads the symbolic branch of a local checkout and the commit for a detached 
   expect(resolveCommit).not.toHaveBeenCalled();
   run.mockResolvedValueOnce({ status: 1, truncated: false, output: Buffer.alloc(0), diagnostic: '' });
   expect(await readWorkspaceHead(workspace, '/cache', false)).toEqual({ kind: 'detached', commit, cached: false });
-  expect(resolveCommit).toHaveBeenCalledWith({ run }, 'HEAD');
+  expect(resolveCommit).toHaveBeenCalledWith(reader, 'HEAD');
 });
 
 it('uses only a verified cached GitHub head and handles non-repository contexts', async () => {

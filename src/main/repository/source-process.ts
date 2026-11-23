@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { devNull } from 'node:os';
 import { delimiter, dirname, isAbsolute } from 'node:path';
+import type { Readable } from 'node:stream';
 import { DomainError } from '../../shared/errors';
 import { findExecutable } from '../providers/which';
 
@@ -9,6 +10,8 @@ const PROCESS_ENV = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONF
   'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR'];
 const GITHUB_ENV = ['GH_CONFIG_DIR', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy'];
 export const GIT_NULL_FILE = '/dev/null';
+const SOURCE_TIMEOUT_MS = 8_000;
+const STREAM_DIAGNOSTIC_LIMIT = 4096;
 
 function commandEnv(authenticated: boolean): NodeJS.ProcessEnv {
   const { PATH, Path } = process.env;
@@ -20,7 +23,8 @@ function commandEnv(authenticated: boolean): NodeJS.ProcessEnv {
     GIT_CONFIG_SYSTEM: GIT_NULL_FILE,
     GIT_CONFIG_GLOBAL: GIT_NULL_FILE,
     GIT_NO_REPLACE_OBJECTS: '1',
-    GIT_GRAFT_FILE: GIT_NULL_FILE,
+    // Older Git must ignore any grafts in the source repository.
+    GIT_GRAFT_FILE: '',
     GIT_NO_LAZY_FETCH: '1',
     GIT_ALLOW_PROTOCOL: authenticated ? 'https' : '',
     GIT_OPTIONAL_LOCKS: '0',
@@ -40,7 +44,7 @@ interface CommandOptions {
   timeoutMs?: number;
   authenticated?: boolean;
   cwd?: string;
-  graftFile?: string;
+  isolatedGit?: { alternate: string };
 }
 
 export interface CommandResult {
@@ -51,13 +55,15 @@ export interface CommandResult {
 }
 
 export async function sourceCommand(bin: 'git' | 'gh', args: string[], options: CommandOptions = {}): Promise<CommandResult> {
-  const { maxBytes = 1024 * 1024, timeoutMs = 8_000, authenticated = false, cwd = dirname(process.execPath), graftFile } = options;
+  const { maxBytes = 1024 * 1024, timeoutMs = SOURCE_TIMEOUT_MS, authenticated = false, cwd = dirname(process.execPath), isolatedGit } = options;
   assert.ok(maxBytes > 0 && timeoutMs > 0);
   assert.ok(isAbsolute(cwd));
   const env = commandEnv(authenticated);
-  if (graftFile) {
-    assert.ok(bin === 'git' && !authenticated && isAbsolute(graftFile));
-    env.GIT_GRAFT_FILE = graftFile;
+  if (isolatedGit) {
+    assert.equal(bin, 'git');
+    assert.ok(!authenticated && isAbsolute(isolatedGit.alternate));
+    delete env.GIT_NO_REPLACE_OBJECTS;
+    env.GIT_ALTERNATE_OBJECT_DIRECTORIES = '"' + isolatedGit.alternate.replace(/[\\"]/g, '\\$&') + '"';
   }
   const executable = await findExecutable(bin, env);
   if (!executable) {
@@ -92,6 +98,48 @@ const GIT_SAFETY = ['--no-pager', '-c', `core.hooksPath=${devNull}`, '-c', 'core
 
 export function gitSource(args: string[], options: CommandOptions = {}): Promise<CommandResult> {
   return sourceCommand('git', [...GIT_SAFETY, ...args], options);
+}
+
+export async function streamGitSource(args: string[], write: (stream: Readable) => Promise<void>): Promise<CommandResult> {
+  assert.ok(args.length > 0);
+  assert.equal(typeof write, 'function');
+  const env = commandEnv(false);
+  const executable = await findExecutable('git', env);
+  if (!executable) throw new DomainError('GIT_REQUIRED', 'Install Git to read repository snapshots.');
+  const child = spawn(executable, [...GIT_SAFETY, ...args], {
+    cwd: dirname(process.execPath), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS), killSignal: 'SIGKILL',
+  });
+  const diagnostic = Buffer.alloc(STREAM_DIAGNOSTIC_LIMIT);
+  let diagnosticBytes = 0;
+  let truncated = false;
+  child.stderr.on('data', (chunk: Buffer) => {
+    const copied = chunk.copy(diagnostic, diagnosticBytes);
+    diagnosticBytes += copied;
+    truncated ||= copied < chunk.length;
+  });
+  const exit = new Promise<number | null>((resolve, reject) => {
+    let failure: Error | undefined;
+    child.once('error', error => { failure = error; });
+    child.once('close', status => {
+      if (failure) reject(failure);
+      else resolve(status);
+    });
+  });
+  const [processResult, destination] = await Promise.allSettled([
+    exit,
+    Promise.resolve().then(() => write(child.stdout)).catch((cause: unknown) => {
+      child.kill('SIGKILL');
+      throw cause;
+    }),
+  ]);
+  if (processResult.status === 'rejected') {
+    throw new DomainError('SOURCE_COMMAND_FAILED', 'Git stopped before completing the repository read.', { cause: processResult.reason });
+  }
+  if (destination.status === 'rejected') throw destination.reason;
+  const status = processResult.value;
+  if (status === null) throw new DomainError('SOURCE_COMMAND_FAILED', 'Git stopped before completing the repository read.');
+  return { output: Buffer.alloc(0), diagnostic: diagnostic.toString('utf8', 0, diagnosticBytes), truncated, status };
 }
 
 export function completedOutput(result: CommandResult, message: string): Buffer {
