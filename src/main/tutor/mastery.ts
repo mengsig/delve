@@ -91,15 +91,16 @@ export function publicMastery(mastery: Mastery): ReaderMastery {
 
 export const canRecommend = ({ stage }: Pick<Mastery, 'stage'>) => stage === 'understood' || stage === 'skipped';
 
-export function requireMasteryRevision(mastery: Mastery, revision: string, stages: readonly ReaderMastery['stage'][]): void {
+export function requireMasteryRevision(mastery: Pick<Mastery, 'stage' | 'revision'>, revision: string, stages: readonly ReaderMastery['stage'][]): void {
   if (mastery.revision !== revision || !stages.includes(mastery.stage)) {
     throw new DomainError('LESSON_CHANGED', 'The question changed. Review the current check.');
   }
 }
 
 type Grade = Pick<Cycle, 'attempts' | 'correctAnswers' | 'applied'> & { stage: 'checking' | 'review' | 'understood' };
+type GradableCheck = Pick<Mastery, 'stage' | 'check' | 'attempts' | 'maxAttempts' | 'correctAnswers' | 'requiredCorrectAnswers' | 'applied'>;
 
-export function nextGrade(mastery: Mastery, correct: boolean): Grade {
+export function nextGrade(mastery: GradableCheck, correct: boolean): Grade {
   assert.ok(mastery.stage === 'checking' && mastery.check, 'only an active check can be graded');
   assert.ok(mastery.attempts < mastery.maxAttempts, 'an exhausted cycle must be reviewed first');
   const attempts = mastery.attempts + 1;

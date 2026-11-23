@@ -7,7 +7,9 @@ import { DomainError } from '../../shared/errors';
 import { type Db } from '../db/connection';
 import { getWorkspace } from '../db/workspaces';
 import { readWorkspaceGraph } from '../db/graph';
-import { depthGuide } from '../tutor/prompt';
+import { depthGuide } from '../tutor/language';
+import { foundationInstructions } from '../tutor/foundation-content';
+import { TUTOR_GENERATION } from '../db/lessons';
 import { cacheModel, selectModel } from '../providers/model';
 import { readChangeWithPatches, readFiles } from './source';
 import { digest, type ApprovedSource } from './store';
@@ -80,13 +82,19 @@ function learningContext(db: Db, request: RepoRequest) {
 }
 
 const mapTask = 'Map the approved files into concepts and prerequisite edges. Recommend one first step whose prerequisites the learner knows. Give a specific reason.';
-const changeTask = 'Teach what changed, why it matters, and the before and after. At Medium and Low explain how the parts interact in mechanics. At Low explain the protocol edge or boundary condition in boundary. Use null for fields outside the chosen depth or unavailable in the material. At Medium and Low include a short ordered trace of affected components or operations when supported. At Low return a short contiguous excerpt copied verbatim from the diff including patch prefixes. Return empty arrays where unavailable or outside the chosen depth. Distinguish observed behavior from inferred motivation. Include affected concepts and their required foundations in concepts. List only directly affected keys in touched. Link those keys to concrete diff spans: use the exact file path, side old for removed lines or new for added lines, and inclusive source line numbers from the hunk. Each span must consist entirely of consecutive changed lines on that side. Return empty spans when no lines support a link. Recommend studying a feature, a prerequisite, or this change brief itself (key null), and explain why. When the diff is unavailable or partial, describe the limit without guessing details.';
+const changeTask = [
+  'Teach what changed, why it matters, and the before and after. At High include one concrete analogy or worked example in example. Keep coverage notes out of the teaching because Delve shows them separately. Describe only behavior supported by the available material.',
+  'At Medium and Low explain how the parts interact in mechanics and include a short ordered trace when supported. At Low name important changed files and functions and explain the boundary condition in boundary. Return a short contiguous excerpt copied verbatim from the diff, including patch prefixes. Use null or empty arrays where unavailable or outside the chosen depth.',
+  'List the affected concepts and prerequisite edges. Reuse the same keys for concepts that also belong in foundations. List only directly affected keys in touched. Link those keys to concrete diff spans using the exact file path, side old for removed lines or new for added lines, and inclusive source line numbers. Each span must contain only consecutive changed lines on that side. Return empty spans if unavailable.',
+  'Recommend studying a feature, a prerequisite, or this change brief itself (key null). Give a specific reason.',
+].join('\n');
 
 export async function prepareSource(db: Db, path: string | null, workspace: Workspace, request: RepoRequest, inventory?: RepositoryInventory): Promise<ApprovedSource> {
   const { commit, base, repository, description, coverageNote, title, partial, files, data, patches } = await material(path, workspace, request, inventory);
   const baseline = request.selection.kind === 'baseline';
   const schema = baseline ? 'delve.map/1' : 'delve.change/1';
   const instructions = [baseline ? mapTask : changeTask, depthGuide[request.depth],
+    ...(baseline ? [] : [foundationInstructions]),
     'Classify transferable ideas as portable. Describe each in general terms and give it a stable key independent of the repository. When a portableVocabulary key and summary describe the same idea, reuse both verbatim. Use a different key and your own summary for a different idea with a similar name.',
     portableKeyGuide,
     'Make a separate local concept for each repository-specific use of a portable idea. For example, emit tcp as portable and worker-lease-transport as local, with worker-lease-transport requiring tcp. Keep local code and policy in the local summary. A portable concept can only require portable concepts.',
@@ -99,7 +107,7 @@ export async function prepareSource(db: Db, path: string | null, workspace: Work
   const ref = request.selection.kind === 'pr' ? request.selection.ref : commit;
   const revision = digest([request.selection.kind, ref, repository, base, commit, title, description, partial, coverageNote, files, data]);
   const cacheKey = digest([workspace.id, revision, schema, 'delve.lesson/1', request.depth, request.provider, cacheModel(model), 'portable-concepts/1',
-    ...(baseline ? [] : ['concept-spans/1'])]);
+    ...(baseline ? [] : ['concept-spans/1', TUTOR_GENERATION])]);
   const preview = { token: randomUUID(), model, modelSource, prompt, bytes: Buffer.byteLength(prompt), files, commit, base, title, partial, coverageNote };
   assert.ok(preview.bytes >= prompt.length && preview.bytes > 0);
   return { preview, request, revision, cacheKey, patches, diff: !baseline && typeof data === 'string' ? data : undefined };

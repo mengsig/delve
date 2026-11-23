@@ -15,6 +15,8 @@ import { cacheModel, selectModel } from '../providers/model';
 import { baselineReply, type ChangeReply, type GraphProposal } from './schemas';
 import { portableConceptLookup } from './portable-concepts';
 import { compatibleDescriptions, compatiblePortableAliases, normalizedConceptName, portableAlias } from '../db/portable-identity';
+import { saveFoundations } from '../tutor/foundation-progress';
+import { findTutorPrerequisite } from '../db/tutor-prerequisites';
 
 export interface ApprovedSource {
   request: RepoRequest;
@@ -196,7 +198,10 @@ function bindChangeConcepts(db: Db, workspaceId: string, snapshotId: number, rep
   const lookup = proposalConceptLookup(db, workspaceId);
   for (const input of reply.concepts) {
     if (mapped.has(input.key)) invalid('The provider supplied a duplicate concept key.');
-    const candidate = lookup(input);
+    const foundation = reply.foundations?.find(f => f.key === input.key);
+    const match = foundation && findTutorPrerequisite(db, workspaceId, foundation);
+    const candidate = match ? { ...input, key: match.portable ? match.key : match.key.slice(('ws/' + workspaceId + '/').length),
+      portable: match.portable, concept: match } : lookup(input);
     const resolved = candidate.portable || candidate.concept ? candidate : changeScope(db, workspaceId, snapshotId, input);
     const existing = resolved.concept;
     const reviewed = existing && db.prepare('SELECT 1 FROM workspace_concepts WHERE workspace_id = ? AND concept_id = ? AND on_atlas = 1')
@@ -275,17 +280,21 @@ function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: Ch
   if (excerpt.length && !('\n' + (source.diff ?? '') + '\n').includes('\n' + excerpt.join('\n') + '\n')) invalid('The source excerpt does not occur in the approved diff.');
   const mechanics = request.depth === 'high' ? null : reply.mechanics;
   const boundary = request.depth === 'low' ? reply.boundary : null;
+  const example = request.depth === 'high' ? reply.example : null;
   const document = documentSchema.parse({ schema: 'delve.lesson/1', source: preview.commit, blocks: [
-    { type: 'prose', heading: 'What changed', text: reply.what }, { type: 'prose', heading: 'Why it changed', text: reply.why },
+    { type: 'prose', heading: 'What changed', text: reply.what }, { type: 'prose', heading: 'Why it matters', text: reply.why },
     ...(mechanics ? [{ type: 'prose', heading: 'How it works', text: mechanics }] : []),
     ...(boundary ? [{ type: 'prose', heading: 'Protocol edge', text: boundary }] : []),
     { type: 'comparison', heading: 'Before → after', before: reply.before, after: reply.after },
+    ...(example ? [{ type: 'analogy', heading: 'A simple example', text: example }] : []),
     ...(trace.length ? [{ type: 'diagram', nodes: trace }] : []),
     ...(excerpt.length ? [{ type: 'code', source: 'Approved diff', lines: excerpt }] : []),
-    ...(preview.partial ? [{ type: 'callout', heading: 'Partial coverage', text: preview.coverageNote ?? 'This brief covers only the available excerpts.' }] : []),
+    ...(preview.partial && request.depth !== 'high' ? [{ type: 'callout', heading: 'Partial coverage', text: preview.coverageNote ?? 'This brief covers only the available excerpts.' }] : []),
   ] });
-  saveLessonInTransaction(db, { workspaceId: request.workspaceId, snapshotId, conceptId: change.id, cacheKey,
+  const lesson = saveLessonInTransaction(db, { workspaceId: request.workspaceId, snapshotId, conceptId: change.id, cacheKey,
     depth: request.depth, model: cacheModel(preview.model), provider: request.provider, schemaVersion: document.schema, body: document });
+  if (reply.foundations) saveFoundations(db,
+    { workspaceId: request.workspaceId, canonicalConceptId: change.id, depth: request.depth }, lesson.id, reply.foundations);
   const touchedIds = new Map<string, number>();
   const touched = new Map<number, { id: number; title: string }>();
   for (const key of reply.touched) {
@@ -301,7 +310,7 @@ function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: Ch
   const spans = bindConceptSpans(reply.spans, source.patches ?? [], touchedIds);
   const suggested = recommendation(reply, concepts) ?? { conceptId: change.id, title: change.title,
     reason: reply.recommendation.reason };
-  return { conceptId: change.id, title: preview.title, summary: reply.summary, what: reply.what, why: reply.why,
+  return { conceptId: change.id, lessonId: lesson.id, title: preview.title, summary: reply.summary, what: reply.what, why: reply.why, ...(example ? { example } : {}),
     before: reply.before, after: reply.after, base: preview.base, commit: preview.commit, files: preview.files, spans, partial: preview.partial, mechanics, boundary, coverageNote: preview.coverageNote, touched: [...touched.values()], trace, excerpt,
     recommendation: suggested };
 }

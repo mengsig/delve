@@ -15,7 +15,9 @@ export interface ResponseToCheck {
   correct: boolean;
 }
 
-export function checkResponse(mastery: Mastery, intent: Extract<TutorIntent, { kind: 'answer' }>): ResponseToCheck {
+type ActiveCheck = Pick<Mastery, 'stage' | 'revision' | 'check'>;
+
+export function checkResponse(mastery: ActiveCheck, intent: Extract<TutorIntent, { kind: 'answer' }>): ResponseToCheck {
   requireMasteryRevision(mastery, intent.revision, ['checking']);
   const check = mastery.check;
   assert.ok(check, 'checking always has one active question');

@@ -52,6 +52,7 @@ const CHANNEL_FLAGS: Record<IpcChannel, true> = {
   'tutor:dismiss': true,
   'reader:message': true,
   'reader:skip': true,
+  'reader:foundation': true,
   'graph:read': true,
   'knowledge:read': true,
   'knowledge:remove-link': true,

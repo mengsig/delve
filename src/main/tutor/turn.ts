@@ -11,6 +11,9 @@ import { saveCheckEvidence } from './assessment';
 import { checkIn, loadMastery, nextGrade, saveMastery } from './mastery';
 import { prepareTurn, type PreparedTurn } from './prompt';
 import { validateTurn, type Generate, type TutorReply } from './provider';
+import { foundationLanguageIssue } from './foundation-content';
+import { saveFoundations } from './foundation-progress';
+import { formatAnswerFeedback, highDepthIssue, withPlainLanguageRetry } from './language';
 
 function saveOpening(db: Db, turn: PreparedTurn, lesson: Document) {
   const { context, cacheKey, cacheModel, request } = turn;
@@ -29,24 +32,19 @@ function reuseOpening(db: Db, turn: PreparedTurn): boolean {
   return true;
 }
 
-function gradeFeedback(correct: boolean, stage: 'understood' | 'review' | 'checking') {
-  const verdict = correct ? 'Correct.' : 'That answer was incorrect.';
-  if (stage === 'understood') return verdict + ' You demonstrated understanding at this depth.';
-  if (stage === 'review') return verdict + ' This round is complete. Start a fresh practice round when you are ready.';
-  return verdict + ' Try a fresh example to show how the rule applies.';
-}
-
 function commitAnswer(db: Db, turn: PreparedTurn, reply: TutorReply): void {
   const { context, mastery, response } = turn;
   assert.ok(response, 'a check answer has a trusted local grade');
   assert.equal(reply.assessment, response.correct);
+  assert.ok(reply.observation);
   const next = nextGrade(mastery, response.correct);
   const revision = saveMastery(db, context, mastery, { ...next, check: checkIn(reply.lesson) });
   saveCheckEvidence(db, context, response, next.stage === 'understood');
   appendEntries(db, context, turn.selected.id, [
     { role: 'learner', text: !response.reasoning
       ? response.answer : response.answer + '\n\nReasoning: ' + response.reasoning },
-    { role: 'tutor', text: gradeFeedback(response.correct, next.stage), correct: response.correct, lesson: reply.lesson, reasoningFeedback: reply.reasoningFeedback,
+    { role: 'tutor', text: formatAnswerFeedback(response.correct, reply.observation, reply.reasoningFeedback),
+      correct: response.correct, lesson: reply.lesson, reasoningFeedback: reply.reasoningFeedback,
       observation: reply.observation ?? undefined, recommendation: reply.recommendation ?? undefined,
       masteryRevision: reply.recommendation ? revision : undefined },
   ]);
@@ -67,6 +65,7 @@ function commitReply(db: Db, turn: PreparedTurn, reply: TutorReply): void {
   if (intent.kind === 'teach' || intent.kind === 'review' && !selected.document) {
     const id = saveOpening(db, turn, reply.lesson);
     const updated = lessonContext(db, turn.request);
+    if (reply.foundations) saveFoundations(db, updated, id, reply.foundations);
     const current = loadMastery(db, updated, storedLesson(db, updated), false);
     assert.equal(current.lessonId, id);
     assert.ok(checkIn(reply.lesson));
@@ -93,15 +92,25 @@ export function checkedTurn(db: Db, request: TutorRequest, token: string) {
   return turn;
 }
 
+async function generateReply(generate: Generate, turn: PreparedTurn, signal: AbortSignal) {
+  const run = async () => {
+    const output = await generate(turn, signal);
+    if (signal.aborted) throw new DomainError('TUTOR_CANCELLED', 'The tutor response was cancelled.');
+    return validateTurn(turn, output);
+  };
+  if (turn.context.demo || turn.request.depth !== 'high') return run();
+  return withPlainLanguageRetry(run, reply => highDepthIssue(reply.lesson, [
+    reply.observation, reply.reasoningFeedback, reply.recommendation?.action, reply.recommendation?.reason,
+  ].filter((text): text is string => Boolean(text))) ?? foundationLanguageIssue(reply.foundations ?? []));
+}
+
 export async function executeTurn(db: Db, generate: Generate, turn: PreparedTurn, signal: AbortSignal, onCommit?: () => void) {
   if (turn.request.intent.kind === 'teach' && transaction(db, () => {
     if (!reuseOpening(db, turn)) return false;
     onCommit?.();
     return true;
   })) return readLesson(db, turn.context);
-  const output = await generate(turn, signal);
-  if (signal.aborted) throw new DomainError('TUTOR_CANCELLED', 'The tutor response was cancelled.');
-  const reply = validateTurn(turn, output);
+  const reply = await generateReply(generate, turn, signal);
   transaction(db, () => {
     checkedTurn(db, turn.request, turn.preview.token);
     commitReply(db, turn, reply);

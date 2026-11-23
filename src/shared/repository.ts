@@ -44,6 +44,8 @@ export interface RepoPreview {
 }
 
 export interface ChangeBrief {
+  lessonId?: number;
+  example?: string;
   spans?: ConceptSpan[];
   conceptId: number;
   title: string;

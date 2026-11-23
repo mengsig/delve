@@ -40,6 +40,21 @@ export interface ReaderMastery {
   needsAdaptation: boolean;
 }
 
+export type FoundationStep = {
+  revision: string;
+  position: number;
+  total: number;
+  title: string;
+  why: string;
+  prompt: string;
+  options: string[];
+} & ({ phase: 'probe' } | { phase: 'practice'; explanation: string });
+
+export interface FoundationProgress {
+  step: FoundationStep | null;
+  feedback?: string;
+}
+
 export interface ReaderLesson {
   blocks: LessonBlock[];
   revision: string | null;
@@ -49,6 +64,7 @@ export interface ReaderLesson {
   messages: ReaderMessage[];
   earlierMessages: boolean;
   mastery: ReaderMastery;
+  foundation?: FoundationStep;
 }
 
 export interface ReaderContract {
@@ -58,6 +74,10 @@ export interface ReaderContract {
   'reader:skip': {
     request: LessonAddress & { revision: string };
     response: ReaderLesson;
+  };
+  'reader:foundation': {
+    request: LessonAddress & { lessonId?: number; decision?: { revision: string; answer: number | null } };
+    response: FoundationProgress;
   };
 }
 

@@ -12,16 +12,25 @@ import { addWorkspace, getWorkspace, listWorkspaces, resolveWorkspaceSource } fr
 import type { ProviderRunner } from '../providers/runner';
 import { listChanges, listFiles, readChangeDetail, repositoryPath, withCommitSnapshot } from './source';
 import { prepareSource } from './preview';
-import { baselineReply, changeReply } from './schemas';
+import { baselineReply, changeReply, type ChangeReply } from './schemas';
 import { digest, useCachedGeneration, latestBrief, persistGeneration, savedChanges, savedHistory, type ApprovedSource } from './store';
+import { foundationLanguageIssue } from '../tutor/foundation-content';
+import { highDepthTextIssue, withPlainLanguageRetry } from '../tutor/language';
 
 function outputSchema(schema: typeof baselineReply | typeof changeReply) {
   return z.toJSONSchema(schema, { target: 'draft-7', unrepresentable: 'any', override: ({ jsonSchema }) => {
-    for (const field of ['minLength', 'maxLength', 'minItems', 'maxItems', 'pattern']) delete jsonSchema[field];
+    for (const field of ['minLength', 'maxLength', 'minItems', 'maxItems', 'pattern', 'minimum', 'maximum']) delete jsonSchema[field];
+    if (jsonSchema.type === 'object' && jsonSchema.properties) jsonSchema.required = Object.keys(jsonSchema.properties);
   } });
 }
 
 const formats = { baseline: outputSchema(baselineReply), change: outputSchema(changeReply) };
+
+function changeLanguageIssue({ summary, what, why, before, after, example, recommendation, foundations }: ChangeReply) {
+  if (!example) return 'The change explanation needs a concrete example.';
+  const text = [summary, what, why, before, after, example, recommendation.reason];
+  return highDepthTextIssue(text) ?? foundationLanguageIssue(foundations ?? []);
+}
 
 export class RepositoryLearning {
   private readonly previews = new Map<string, ApprovedSource>();
@@ -177,9 +186,11 @@ export class RepositoryLearning {
     try {
       const base = { provider: source.request.provider, model: source.preview.model ?? undefined, prompt: source.preview.prompt,
         cacheKey: digest([source.cacheKey, source.preview.prompt]), signal: controller.signal };
+      const runChange = () => this.runner.run({ ...base, schema: changeReply, jsonSchema: formats.change });
       const reply = source.request.selection.kind === 'baseline'
         ? await this.runner.run({ ...base, schema: baselineReply, jsonSchema: formats.baseline })
-        : await this.runner.run({ ...base, schema: changeReply, jsonSchema: formats.change });
+        : source.request.depth === 'high' ? await withPlainLanguageRetry(runChange, result => changeLanguageIssue(result.value))
+          : await runChange();
       if (controller.signal.aborted) throw new DomainError('PROVIDER_CANCELLED', 'The repository request was cancelled.');
       return persistGeneration(this.db, source, reply.value);
     } finally { this.runs.delete(requestId); }

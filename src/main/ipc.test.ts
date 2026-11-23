@@ -24,6 +24,7 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
     'workspaces:head': () => ({ kind: 'topic' }),
     'providers:detect': () => [],
     'tutor:preview-topic': () => { throw new Error('Unexpected topic preview'); },
+    'reader:foundation': () => { throw new Error('Unexpected foundation request'); },
     'tutor:preview': () => { throw new Error('Unexpected tutor preview'); },
     'tutor:run': () => { throw new Error('Unexpected tutor turn'); },
     'tutor:cancel': () => false,

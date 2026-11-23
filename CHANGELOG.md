@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Topic and change lessons check unfamiliar foundations first and save what you demonstrate for later lessons.
+
+### Changed
+- High-depth explanations use everyday language and concrete examples. Answer feedback opens with a short verdict and the key idea.
+
 ## [0.1.1] - 2026-11-23
 
 ### Added

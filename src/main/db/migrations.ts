@@ -383,6 +383,17 @@ export const MIGRATIONS: readonly Migration[] = [
       UPDATE tutor_jobs SET version = lower(hex(randomblob(16))) WHERE rowid = NEW.rowid;
     END;`,
   },
+  {
+    version: 10,
+    name: 'save lesson foundations and probe evidence',
+    sql: `ALTER TABLE evidence ADD COLUMN probe_answered INTEGER NOT NULL DEFAULT 0 CHECK (probe_answered IN (0, 1));
+    CREATE TABLE lesson_foundations (
+      lesson_id INTEGER PRIMARY KEY REFERENCES lessons ON DELETE CASCADE,
+      entries TEXT NOT NULL CHECK (json_valid(entries)),
+      phase TEXT NOT NULL CHECK (phase IN ('probe', 'practice', 'done')),
+      cursor INTEGER NOT NULL DEFAULT 0 CHECK (cursor BETWEEN 0 AND 4)
+    );`,
+  },
 ];
 
 function assertOrdered(migrations: readonly Migration[]): void {

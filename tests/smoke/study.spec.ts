@@ -83,7 +83,7 @@ test('lesson depth, local conversations and linked change concepts work offline'
   await page.getByRole('button', { name: 'Answer check' }).click();
   await page.getByRole('button', { name: 'Task ID and worker start time' }).click();
   await page.getByRole('button', { name: 'Check answer' }).click();
-  await expect(page.getByRole('log')).toContainText('Correction');
+  await expect(page.getByRole('log')).toContainText('Not quite');
   await expect(page.getByRole('button', { name: /Next lesson:/ })).toHaveCount(0);
   await expect(page.getByRole('log')).toContainText('Let’s look at the decision again');
   for (const option of [1, 2, 3]) {

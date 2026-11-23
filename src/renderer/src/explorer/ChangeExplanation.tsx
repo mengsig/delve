@@ -1,7 +1,12 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { DEPTHS, type Depth } from '../../../shared/domain';
+import type { LessonAddress } from '../../../shared/reader';
 import type { ChangeBrief } from '../../../shared/repository';
 import { BriefChapters } from '../reader/ChangeBrief';
+import { FoundationActivity } from '../reader/FoundationActivity';
 import { SetupProvider } from '../SetupProvider';
+import { call } from '../api';
+import { useRead } from '../useRead';
 import type { LessonState } from './useChangeLesson';
 
 const depthDescriptions = { high: 'What & why', medium: 'Module mechanics', low: 'Protocol detail' };
@@ -22,14 +27,36 @@ function Recommendation({ brief, onLesson }: { brief: ChangeBrief; onLesson: (id
   </aside>;
 }
 
-export function ChangeExplanation({ description, lesson, onLesson }: {
-  description?: string; lesson: LessonState; onLesson: (id: number) => void;
+function SavedBrief({ brief, address, onLesson, onEvidence }: {
+  brief: ChangeBrief; address: LessonAddress; onLesson: (id: number) => void; onEvidence: () => void;
+}) {
+  const { workspaceId, conceptId, depth } = address;
+  const lessonId = brief.lessonId;
+  const read = useCallback(() => lessonId === undefined ? Promise.resolve({ step: null })
+    : call('reader:foundation', { workspaceId, conceptId, depth, lessonId }), [workspaceId, conceptId, depth, lessonId]);
+  const { result, refresh } = useRead(read);
+  const [completion, setCompletion] = useState<{ feedback?: string }>();
+  const summary = useRef<HTMLParagraphElement>(null);
+  useEffect(() => { if (completion) summary.current?.focus(); }, [completion]);
+  if (result.status === 'loading') return <p role="status">Opening the change lesson…</p>;
+  if (result.status === 'error') return <p role="alert">{result.message} <button onClick={refresh}>Retry opening the lesson</button></p>;
+  if (!completion && result.value.step) return <FoundationActivity address={{ ...address, lessonId }} initial={result.value.step}
+    onComplete={feedback => { setCompletion({ feedback }); onEvidence(); }} />;
+  return <>
+    {completion?.feedback && <p role="status" className="reader-observation">{completion.feedback}</p>}
+    <p ref={summary} tabIndex={-1} className="brief-summary">{brief.summary}</p><p className="smallprint">Saved brief · available offline</p>
+    <BriefChapters brief={brief} /><Recommendation brief={brief} onLesson={onLesson} />
+  </>;
+}
+
+export function ChangeExplanation({ description, lesson, workspaceId, depth, onLesson, onEvidence }: {
+  description?: string; lesson: LessonState; workspaceId: string; depth: Depth; onLesson: (id: number) => void; onEvidence: () => void;
 }) {
   const { brief, stale, running, provider, chooseProvider } = lesson;
   return <>
     {stale && <p className="repository-notice" role="status">This pull request has changed since its last explanation. Generate a brief for the current revision.</p>}
-    {brief ? <><p className="brief-summary">{brief.summary}</p><p className="smallprint">Saved brief · available offline</p>
-      <BriefChapters brief={brief} /><Recommendation brief={brief} onLesson={onLesson} /></>
+    {brief ? <SavedBrief key={[workspaceId, brief.conceptId, depth, brief.lessonId].join('/')} brief={brief}
+      address={{ workspaceId, conceptId: brief.conceptId, depth }} onLesson={onLesson} onEvidence={onEvidence} />
       : <div className="explanation-start">
         <h3>{description ? 'From the author' : 'What changed and why'}</h3>
         <p>{description || 'Generate a lesson to see what changed, why it matters, and the concepts it touches.'}</p>

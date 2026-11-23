@@ -157,6 +157,76 @@ async function verifyRememberedApproval(page: Page, directory: string) {
   await depth.selectOption('medium');
 }
 
+const receiptProbe = { type: 'check', kind: 'prediction',
+  prompt: 'A package goes missing. What tells the sender it never arrived?',
+  options: ['No confirmation comes back', 'The package gets heavier', 'A second package appears', 'The address changes'], expected: 0 };
+const receiptPractice = { ...receiptProbe, prompt: 'The recipient signs for a package. What can the sender do now?',
+  options: ['Send another package', 'Stop waiting for confirmation', 'Erase the address', 'Change the contents'], expected: 1 };
+const reviewFoundations = [{
+  key: 'delivery-confirmation', title: 'Delivery confirmation',
+  summary: 'A confirmation tells the sender that a message arrived. Think of signing for a package.',
+  why: 'This change depends on knowing whether the first delivery made it.', probe: receiptProbe, practice: receiptPractice,
+}, {
+  key: 'temporary-failures', title: 'Temporary failures', summary: 'A temporary problem can clear on its own.',
+  why: 'Trying again can help when a problem clears.',
+  probe: { ...receiptProbe, prompt: 'A road is blocked for a minute. When might you get through?',
+    options: ['After the road clears', 'Before leaving home', 'When the road is longer', 'Never'], expected: 0 },
+  practice: { ...receiptPractice, prompt: 'A phone call drops in a tunnel. What should you try after getting out?',
+    options: ['Wait in the tunnel', 'Call again', 'Remove the number', 'Turn off the phone'], expected: 1 },
+}];
+const secondPr = 'Give a failed delivery another chance';
+const simpleExample = 'Think of calling a friend back after a dropped call. A second try might get through.';
+
+async function answerChangeFoundations(page: Page, info: TestInfo) {
+  const probe = page.getByRole('region', { name: 'What do you know about Delivery confirmation?' });
+  await expect(probe).toContainText('Quick questions · 1 of 2');
+  await expect(probe.getByRole('heading')).toBeFocused();
+  await expect(probe.getByRole('textbox')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toHaveCount(0);
+  await evidence(page, info, 'foundation-probe');
+  await probe.getByRole('button', { name: 'A second package appears' }).click();
+  const second = page.getByRole('region', { name: 'What do you know about Temporary failures?' });
+  await expect(second).toContainText('Quick questions · 2 of 2');
+  await second.getByRole('button', { name: 'After the road clears' }).click();
+  const practice = page.getByRole('region', { name: 'A quick look at Delivery confirmation' });
+  await expect(practice).toContainText('Think of signing for a package.');
+  await expect(practice.getByRole('button', { name: 'Skip to lesson' })).toBeVisible();
+  await evidence(page, info, 'foundation-practice');
+  await practice.getByRole('button', { name: 'Stop waiting for confirmation' }).click();
+  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Lesson transcript').getByText(simpleExample, { exact: true })).toBeVisible();
+  await evidence(page, info, 'high-depth-lesson');
+}
+
+test('checks unfamiliar foundations before a high-depth PR and remembers them for the next PR', async ({ desktop: { page, directory } }, info) => {
+  createExplorerFixture(directory);
+  const fixture = join(directory, 'github.json');
+  const { pr, files } = JSON.parse(readFileSync(fixture, 'utf8'));
+  writeFileSync(fixture, JSON.stringify({ pr, files, additionalPrs: [{ ...pr, number: 43, title: secondPr }] }));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mapFixture(page, 'https://github.com/contour/dispatch', directory, true);
+  await page.getByRole('option', { name: new RegExp(prTitle) }).click();
+  await page.getByLabel('Reading depth').selectOption('high');
+  writeExplanation(directory, { foundations: reviewFoundations, example: simpleExample,
+    what: 'When a delivery fails, the worker can try again.', why: 'A short outage is less likely to lose a delivery.',
+    mechanics: null, summary: 'A failed delivery gets another chance.' });
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await answerChangeFoundations(page, info);
+  await page.getByRole('button', { name: '← Back to change brief' }).click();
+  const explanation = page.getByRole('tabpanel', { name: 'Explanation' });
+  const details = explanation.getByText('Evidence', { exact: true });
+  await expect(details).toBeVisible();
+  await expect(explanation.getByText(/Partial coverage/)).toBeHidden();
+  await details.click();
+  await expect(explanation.getByText(/Partial coverage/)).toBeVisible();
+  await evidence(page, info, 'high-depth-brief');
+  await page.getByRole('option', { name: new RegExp(secondPr) }).click();
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+  await expect(page.getByText(/Quick questions/)).toHaveCount(0);
+  await expect(page.getByText(/Foundation lesson/)).toHaveCount(0);
+});
+
 test('keeps commit history usable when GitHub has no PRs or needs sign-in', async ({ desktop }) => {
   const { directory, page } = desktop;
   const { path } = createExplorerFixture(directory);

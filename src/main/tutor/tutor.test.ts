@@ -390,7 +390,8 @@ it('refuses dismissal of an unreadable active job and lets its turn commit', asy
 
 it('assigns dismissal identities to existing version 8 tutor jobs', () => {
   db.exec('DROP TRIGGER tutor_jobs_version_insert; DROP TRIGGER tutor_jobs_version_update; '
-    + 'ALTER TABLE tutor_jobs DROP COLUMN version; PRAGMA user_version = 8;');
+    + 'ALTER TABLE tutor_jobs DROP COLUMN version; DROP TABLE lesson_foundations; '
+    + 'ALTER TABLE evidence DROP COLUMN probe_answered; PRAGMA user_version = 8;');
   saveUnreadableJob();
   expect(migrate(db)).toBe(MIGRATIONS.length);
   const identity = unreadableIdentity();
@@ -426,7 +427,7 @@ it('the offline provider reteaches a miss, offers fresh applied checks and recom
   expect(asked.messages[1]?.blocks?.some(b => b.type === 'diagram')).toBe(true);
   expect(asked.mastery).toEqual(lesson.mastery);
   const wrong = await run({ kind: 'answer', revision: lesson.mastery.revision!, answer: 0 });
-  expect(wrong.messages.at(-1)).toMatchObject({ text: expect.stringContaining('incorrect'),
+  expect(wrong.messages.at(-1)).toMatchObject({ text: expect.stringMatching(/^Not quite — /),
     observation: expect.stringContaining('first to report') });
   expect(wrong.messages.at(-1)?.recommendation).toBeUndefined();
   expect(readWorkspaceGraph(db, workspaceId).suggestions).toBeUndefined();

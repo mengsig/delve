@@ -1,4 +1,4 @@
-import { useCallback, useContext, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { LessonAddress, ReaderLesson } from '../../../shared/reader';
 import { EnvironmentActivity } from '../lab/EnvironmentActivity';
 import { LatestInstrumentLink, LessonInstruments } from '../lab/Environment';
@@ -6,6 +6,7 @@ import { call } from '../api';
 import { Icon } from '../Icon';
 import { errorMessage, useRead } from '../useRead';
 import { Conversation, LessonBlocks } from './Conversation';
+import { FoundationActivity } from './FoundationActivity';
 import { LessonHeading, LessonNotes } from './LessonNotes';
 import { useLessonDraft } from './LessonDraft';
 import { LessonRecovery, useOpenLesson } from './LessonStart';
@@ -26,7 +27,9 @@ interface LessonProps extends ReaderProps {
   onBackToChange?: () => void;
 }
 
-function Thread({ body, tutor, scope }: { body: ReaderLesson; tutor: LessonTutor; scope: string }) {
+function Thread({ body, tutor, scope, foundation }: { body: ReaderLesson; tutor: LessonTutor; scope: string; foundation?: { feedback?: string } }) {
+  const openingLesson = useRef<HTMLElement>(null);
+  useEffect(() => { if (foundation) openingLesson.current?.focus(); }, [foundation]);
   const job = tutor.job;
   const submitted = job?.phase === 'running' || job?.phase === 'cancelling' || job?.phase === 'failed' && job.code === 'TUTOR_INTERRUPTED' ? job : undefined;
   const intent = submitted?.request.intent;
@@ -39,8 +42,9 @@ function Thread({ body, tutor, scope }: { body: ReaderLesson; tutor: LessonTutor
       <div><b>Delve tutor</b><small>Lesson conversation</small></div><LatestInstrumentLink body={body} compact /><small className="local-status">● &nbsp;Saved locally</small>
     </header>
     <Transcript scope={scope} lastMessage={body.messages.at(-1)?.id} pendingTurn={submitted?.id}>
+      {foundation?.feedback && <p role="status" className="reader-observation">{foundation.feedback}</p>}
       <LessonRecovery body={body} tutor={tutor} />
-      {body.blocks.length > 0 && <section id="opening-lesson"><span className="message-author">Delve tutor</span>
+      {body.blocks.length > 0 && <section id="opening-lesson" tabIndex={-1} ref={openingLesson}><span className="message-author">Delve tutor</span>
         <LessonBlocks blocks={body.blocks} /></section>}
       {body.mastery.needsAdaptation && <section><strong>Saved question</strong><p>{body.mastery.activeCheck?.prompt}</p>
         {body.mastery.activeCheck?.options && <ol>{body.mastery.activeCheck.options.map((choice, i) => <li key={i}>{choice}</li>)}</ol>}</section>}
@@ -72,6 +76,7 @@ function Session({ props, initial, title, address, reload }: {
   props: LessonProps; initial: ReaderLesson; title: string; address: LessonAddress; reload: () => void;
 }) {
   const [body, setBody] = useState(initial);
+  const [foundation, completeFoundation] = useState<{ feedback?: string }>();
   const scope = lessonKey(address);
   const { jobs, dismiss } = useTutorJobs();
   const job = jobs.get(scope);
@@ -82,7 +87,7 @@ function Session({ props, initial, title, address, reload }: {
     if (intent.kind === 'ask' && draft.question.trim() === intent.text) change({ question: '' });
     commit(lesson);
   });
-  const opening = useOpenLesson(body, tutor, props.initialReview);
+  const opening = useOpenLesson(body, tutor, props.initialReview && !body.foundation);
   const skip = useSkip(address, body, commit);
   async function refresh() {
     if (tutor.job?.phase === 'failed') await dismiss(tutor.job);
@@ -93,12 +98,19 @@ function Session({ props, initial, title, address, reload }: {
     if (draft.mode !== 'ask') change({ mode: 'ask' });
     activity.onUse(key, name);
   } };
+  if (body.foundation) return <div className="field-lesson">
+    <LessonHeading props={props} title={title} />
+    <FoundationActivity address={address} initial={body.foundation} onComplete={async feedback => {
+      commit(await call('reader:lesson', address));
+      completeFoundation({ feedback });
+    }} />
+  </div>;
   return <div className="field-lesson"><EnvironmentActivity.Provider value={lessonActivity}>
     <LessonInstruments address={address} body={body} onLesson={commit}>
       <LessonHeading props={props} title={title}><LessonNotes props={props} body={body} tutor={tutor} busy={skip.busy || tutor.pending}
         skip={skip.skip} review={() => body.mastery.revision && tutor.prepare({ kind: 'review', revision: body.mastery.revision })} /></LessonHeading>
       <div className="lesson-columns"><article className="reader-thread" aria-label="Lesson and conversation">
-        <Thread body={body} tutor={tutor} scope={scope} />
+        <Thread body={body} tutor={tutor} scope={scope} foundation={foundation} />
         {skip.error && <p role="alert">{skip.error}</p>}
         <ResponseDock {...{ props, body, title, tutor, draft, change, opening }} reload={refresh} busy={skip.busy} />
       </article>

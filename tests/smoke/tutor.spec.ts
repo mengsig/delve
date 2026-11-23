@@ -46,6 +46,32 @@ test('opens the first block from home in two actions, including first-use consen
   await expect(page.getByRole('dialog', { name: 'Review what will be sent' })).toHaveCount(0);
 });
 
+test('can skip the topic questions, then read or skip the foundation before the main lesson', async ({ desktop: { page, directory } }) => {
+  const receipt = join(directory, 'request.json');
+  const reply = { ...envelope, lesson: { schema: 'delve.lesson/1', source: null, blocks: [explanation, check] },
+    foundations: [{
+      key: 'address-ranges', title: 'Address ranges', why: 'A route can cover a group of addresses.',
+      summary: 'An address range groups addresses together, like houses on one block.',
+      probe: { ...check, prompt: 'Which addresses are likely to belong in the same range?',
+        options: ['Addresses close together', 'The newest addresses', 'All addresses', 'Addresses chosen at random'], expected: 0 },
+      practice: { ...check, prompt: 'Which range is more specific if both match an address?',
+        options: ['A range with more addresses', 'A range with fewer addresses', 'The newest range', 'The oldest range'], expected: 1 },
+    }] };
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify(reply));
+  await add(page).click();
+  await typeTopic(page, 'IP routing');
+  await start(page).click();
+  const probe = page.getByRole('region', { name: 'What do you know about Address ranges?' });
+  await expect(probe).toBeVisible();
+  const request = readFileSync(receipt, 'utf8');
+  await probe.getByRole('button', { name: 'Skip questions' }).click();
+  const practice = page.getByRole('region', { name: 'A quick look at Address ranges' });
+  await expect(practice).toContainText('like houses on one block');
+  await practice.getByRole('button', { name: 'Skip to lesson' }).click();
+  await expect(page.getByRole('heading', { name: explanation.heading })).toBeVisible();
+  expect(readFileSync(receipt, 'utf8')).toBe(request);
+});
+
 test.describe('first run', () => {
   test.use({ firstRun: true });
 

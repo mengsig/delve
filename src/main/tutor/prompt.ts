@@ -11,23 +11,22 @@ import { readHistory, teachingBlocks } from '../reader/conversation';
 import { resolveWorkspaceSource } from '../db/workspaces';
 import { lessonContext, storedLesson } from '../reader/stored-lesson';
 import { checkResponse, type ResponseToCheck } from './assessment';
+import { foundationInstructions } from './foundation-content';
+import { readFoundation } from './foundation-progress';
+import { depthGuide } from './language';
 import {
   canRecommend, hasVerifiedMastery, loadMastery, masteryLimits, needsCheckAdaptation, nextGrade, requireMasteryRevision, type Mastery,
 } from './mastery';
 
-export const depthGuide = {
-  high: 'Teach what this is and why it matters in plain language.',
-  medium: 'Explain how the parts interact, at the module or technique level.',
-  low: 'Work through protocol, implementation details or exact technique and boundary conditions.',
-};
-
 const instructions = [
   'You are Delve, a conversational tutor. Return a delve.lesson/1 document inside the requested response.',
-  'Use only the chosen depth. For teach, explain the concept with an analogy, worked example or labelled visual, then end with exactly one check.',
+  'Use only the chosen depth. For teach, explain the concept with one concrete analogy or worked example, then end with exactly one check.',
+  foundationInstructions,
+  'Supply foundations only for teach. For every other intent return an empty foundations list.',
   'For ask, answer directly with teaching blocks and leave the active check unchanged. Do not append a check.',
   'When visualRequired is true, use a diagram block with concise labels and explicit edges to show the relationships.',
-  'For answer, copy the trusted check.correct flag into assessment. In observation, explain specifically why the selected answer works or fails against the supplied reference.',
-  'If the learner supplied reasoning, use reasoningFeedback to address the specific argument it makes and explain what works or needs correction, even when their choice earns credit. When another check is due, use that reasoning to choose a useful new situation. An empty reason needs only feedback on the choice.',
+  'For answer, copy the trusted check.correct flag into assessment. Start observation with one short plain sentence giving the key idea that makes the choice work or fail. Add at most one short sentence if needed. Delve adds the verdict, so omit phrases such as “Right” or “Not quite.”',
+  'If the learner supplied reasoning, address it in one short sentence in reasoningFeedback. When the choice is right and its reasoning needs a correction, begin with “Your reasoning needs a correction” and give the correction in that same sentence. When another check is due, use the reasoning to choose a new situation. At high depth, use plain words and no internal names throughout the feedback.',
   'Follow mastery.afterAnswer. If it says checking, end with one fresh applied check. If it says understood or review, return teaching only and no check.',
   'For review, reteach using a different example and end with one fresh applied check. Set assessment to null except on answer turns.',
   'For adapt, return only one fresh applied check in lesson.blocks. Use the legacy check as a guide to its objective and difficulty. Set observation, recommendation and assessment to null.',
@@ -114,6 +113,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const context = lessonContext(db, request);
   if (context.demo !== (request.provider === 'demo')) throw new DomainError('PROVIDER_SCOPE', 'Choose a provider for this workspace.');
   const selected = storedLesson(db, context);
+  if (readFoundation(db, context, selected.id)) throw new DomainError('FOUNDATION_PENDING', 'Finish or skip the foundations first.');
   const mastery = loadMastery(db, context, selected, hasVerifiedMastery(db, context));
   const intent = request.intent;
   const needsDiagram = intent.kind === 'ask' && /\b(diagrams?|visual(?:s|ly|i[sz](?:e|ation))?|flowcharts?)\b|\bdraw\s+(?:me\s+)?(?:(?:a|an|the)\s+)?(?:diagram|picture|graph|flow|system trace|this|it)\b/i.test(intent.text);

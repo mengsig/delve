@@ -10,6 +10,7 @@ import { addMessage, readHistory } from './conversation';
 import { publicBlocks } from './document';
 import { lessonContext, selectLesson } from './stored-lesson';
 import { canRecommend, hasVerifiedMastery, loadMastery, publicMastery, requireMasteryRevision, saveMastery } from '../tutor/mastery';
+import { answerFoundation, readFoundation } from '../tutor/foundation-progress';
 
 export const address = z.strictObject({ workspaceId: z.uuid(), conceptId: z.int().positive(), depth: z.enum(DEPTHS) });
 export const readerSchemas = {
@@ -17,6 +18,10 @@ export const readerSchemas = {
   'reader:start-topic': z.strictObject({ workspaceId: z.uuid() }),
   'reader:message': address.extend({ text: z.string().trim().min(1).max(4000) }),
   'reader:skip': address.extend({ revision: z.string().regex(/^[a-f0-9]{64}$/) }),
+  'reader:foundation': address.extend({
+    lessonId: z.int().positive().optional(),
+    decision: z.strictObject({ revision: z.string().regex(/^[a-f0-9]{64}$/), answer: z.int().min(0).max(3).nullable() }).optional(),
+  }),
 };
 
 function lessonState(db: Db, address: LessonAddress, loadDemo: boolean) {
@@ -26,18 +31,30 @@ function lessonState(db: Db, address: LessonAddress, loadDemo: boolean) {
   return { context, selected, mastery: loadMastery(db, context, selected, inherited) };
 }
 
+function foundationLessonId(db: Db, context: ReturnType<typeof lessonContext>, latest: number | null, lessonId?: number) {
+  if (lessonId === undefined || lessonId === latest) return latest;
+  const row = db.prepare(`SELECT 1 FROM lessons WHERE id = ? AND workspace_id = ?
+    AND concept_id = ? AND depth = ? AND snapshot_id IS ?`)
+    .get(lessonId, context.workspaceId, context.canonicalConceptId, context.depth, context.snapshotId);
+  if (!row) throw new DomainError('LESSON_CHANGED', 'Reopen the change to see the current lesson.');
+  return lessonId;
+}
+
 export function readLesson(db: Db, address: LessonAddress): ReaderLesson {
   const { context, selected, mastery } = lessonState(db, address, true);
+  const foundation = readFoundation(db, context, selected.id);
   const { messages, earlierMessages } = readHistory(db, context);
-  return { reused: mastery.stage === 'understood', blocks: selected.document ? publicBlocks(selected.document) : [],
+  return { reused: mastery.stage === 'understood', blocks: !foundation && selected.document ? publicBlocks(selected.document) : [],
     revision: selected.revision, invalidLatest: selected.invalidLatest, source: selected.source, mastery: publicMastery(mastery),
+    ...(foundation ? { foundation } : {}),
     messages: canRecommend(mastery) ? messages : messages.map(({ recommendation: _recommendation, ...message }) => message),
     earlierMessages };
 }
 
 function skipLesson(db: Db, request: ReaderContract['reader:skip']['request']): ReaderLesson {
   transaction(db, () => {
-    const { context, mastery } = lessonState(db, request, false);
+    const { context, selected, mastery } = lessonState(db, request, false);
+    if (readFoundation(db, context, selected.id)) throw new DomainError('FOUNDATION_PENDING', 'Finish or skip the foundations first.');
     requireMasteryRevision(mastery, request.revision, ['teaching', 'checking', 'review']);
     saveMastery(db, context, mastery, { stage: 'skipped', check: null });
   });
@@ -62,6 +79,12 @@ export function readerHandlers(db: Db): Handlers {
       return upsertConcept(db, { key: 'topic', workspaceId, title: workspace.name, portable: false }).id;
     },
     'reader:lesson': request => readLesson(db, request),
+    'reader:foundation': request => {
+      const { context, selected } = lessonState(db, request, false);
+      const lessonId = foundationLessonId(db, context, selected.id, request.lessonId);
+      return request.decision ? answerFoundation(db, context, lessonId, request.decision)
+        : { step: readFoundation(db, context, lessonId) };
+    },
     'reader:skip': request => skipLesson(db, request),
     'reader:message': request => {
       const context = lessonContext(db, request);
