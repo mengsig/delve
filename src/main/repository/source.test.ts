@@ -236,6 +236,35 @@ describe('Git changes with missing parents', () => {
     await rm(join(repo, '.git', 'objects', parent.slice(0, 2), parent.slice(2)));
     await expect(readChange(repo, workspace, 'commit', boundary)).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
   });
+
+  it('opens a missing-parent boundary reachable only from detached HEAD', async () => {
+    const parent = commit('Missing parent', '--allow-empty');
+    const boundary = commit('Boundary', '--allow-empty');
+    commit('Tip', '--allow-empty');
+    git('checkout', '--detach');
+    git('update-ref', '-d', 'refs/heads/main');
+    await rm(join(repo, '.git', 'objects', parent.slice(0, 2), parent.slice(2)));
+    await expect(readChange(repo, workspace, 'commit', boundary)).resolves.toMatchObject({ commit: boundary, partial: true });
+  });
+
+  it('opens a shallow merge with a readable first parent and a damaged second parent', async () => {
+    await writeFile(join(repo, 'main.ts'), 'before\n');
+    const first = commit('First parent');
+    const second = commit('Second parent', '--allow-empty');
+    await writeFile(join(repo, 'main.ts'), 'after\n');
+    git('add', 'main.ts');
+    const tree = git('write-tree');
+    const merge = git('commit-tree', tree, '-p', first, '-p', second, '-m', 'Shallow merge');
+    git('update-ref', 'refs/heads/main', merge);
+    await writeFile(join(repo, '.git', 'shallow'), merge + '\n');
+    const object = join(repo, '.git', 'objects', second.slice(0, 2), second.slice(2));
+    await rm(object);
+    await writeFile(object, 'damaged');
+    const detail = await readChangeDetail(repo, workspace, 'commit', merge);
+    expect(detail.base).toBe(first);
+    expect(detail.files[0]?.patch).toContain('+after');
+    expect(detail.partial).toBe(false);
+  });
 });
 
 it('reports a fatal parent read instead of showing missing-parent coverage', async () => {
