@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type RefObject } from 'react';
+import { useEffect, useMemo, useState, type DragEvent, type FormEvent } from 'react';
 import { DEFAULT_DEPTH, DEPTHS, type Depth, type ProviderId, type WorkspaceKind } from '../../shared/domain';
 import type { TopicPreview } from '../../shared/reader';
 import { call } from './api';
@@ -6,6 +6,7 @@ import { PROVIDER_LABELS } from './preferences';
 import { SetupProvider, providerHint, useDetectedProvider, useProviderDetection } from './SetupProvider';
 import { Terrain } from './Terrain';
 import { errorMessage } from './useRead';
+import { shouldFocusSource } from './sourceErrors';
 import { droppedSource, repositoryInput } from './workspaceSource';
 import { useAttachFiles, useAttachInventory, useAttachPreview } from './repository/AttachReads';
 import { AttachReview } from './repository/AttachReview';
@@ -173,14 +174,13 @@ function TopicReview({ provider, request }: { provider: ProviderId; request: Ret
   </div>;
 }
 
-/** Returns focus to the source input after it is rejected, unless the user has moved elsewhere. */
-function useSourceErrorFocus(form: RefObject<HTMLFormElement | null>, rejected: boolean) {
+/** Returns focus to the rejected source input, unless the user has moved focus elsewhere meanwhile. */
+function useSourceErrorFocus(rejected: boolean) {
   useEffect(() => {
-    if (!rejected || !form.current) return;
-    const active = document.activeElement;
-    if (active && active !== document.body && !form.current.contains(active)) return;
-    form.current.querySelector<HTMLInputElement>('#source-input')?.focus();
-  }, [form, rejected]);
+    if (!rejected) return;
+    const source = document.getElementById('source-input');
+    if (shouldFocusSource(document.activeElement, document.body, source)) source?.focus();
+  }, [rejected]);
 }
 
 function WorkspaceEditor(props: Props) {
@@ -188,8 +188,7 @@ function WorkspaceEditor(props: Props) {
   const detection = useProviderDetection();
   const { provider, choose, cli } = useDetectedProvider(detection.statuses);
   const actions = useStartWorkspace(props.onAdded, depth, provider);
-  const form = useRef<HTMLFormElement>(null);
-  useSourceErrorFocus(form, actions.sourceError && !actions.pending);
+  useSourceErrorFocus(actions.sourceError && !actions.pending);
   const source = useSourceFields(actions);
   const attach = useAttachRequest(source.repository, depth, provider, cli);
   const topic = source.kind === 'topic';
@@ -211,7 +210,7 @@ function WorkspaceEditor(props: Props) {
     else addOnly();
   }
 
-  return <form ref={form} className="setup-grid" aria-label="Add workspace" onSubmit={submit}>
+  return <form className="setup-grid" aria-label="Add workspace" onSubmit={submit}>
     <fieldset className="sheet setup-form" disabled={actions.pending !== null}>
       <SourceFields {...source} invalid={actions.sourceError} />
       <p className="smallprint setup-cli-status" role="status">{detection.error ? 'Could not check sign-in. Open Advanced options to retry.' :

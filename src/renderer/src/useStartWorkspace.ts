@@ -8,7 +8,7 @@ import { useTutorJobs } from './reader/TutorJobs';
 import { useMapJobs } from './repository/MapJobs';
 import { setRepositoryApproval } from './repository/repositoryApproval';
 import { errorMessage } from './useRead';
-import { workspaceInput } from './workspaceSource';
+import { SourceError, sourceInput, sourceRejection } from './sourceErrors';
 
 export type WorkspaceAdded = (workspace: Workspace, depth: Depth, conceptId?: number, notice?: string) => void;
 
@@ -19,14 +19,6 @@ function addError(cause: unknown, action: string) {
   }
   if (action === 'pick') return 'Could not choose a folder. ' + message;
   return (action === 'map' ? 'Could not attach the reviewed map request. ' : 'Could not add the workspace. ') + message;
-}
-
-const SOURCE_ERROR_CODES = new Set(['INVALID_REQUEST', 'INVALID_WORKSPACE', 'NOT_A_GIT_REPOSITORY']);
-
-/** True when an add failed because the typed source itself is unusable, so the user should edit it. */
-function isSourceError(cause: unknown, action: string) {
-  if (action !== 'add') return false;
-  return cause instanceof IpcCallError ? SOURCE_ERROR_CODES.has(cause.code) : cause instanceof Error;
 }
 
 interface ActionError { message: string; source: boolean }
@@ -46,7 +38,7 @@ function useWorkspaceActions() {
     try {
       await apply();
     } catch (cause) {
-      setFailure({ message: addError(cause, action), source: isSourceError(cause, action) });
+      setFailure({ message: addError(cause, action), source: cause instanceof SourceError });
       if (preview) setFailedToken(preview.token);
     } finally {
       setPending(null);
@@ -75,10 +67,11 @@ export function useStartWorkspace(onAdded: WorkspaceAdded, depth: Depth, provide
 
   function addOnly(kind: WorkspaceKind, value: string, reviewed?: TopicPreview, rememberTutor = false) {
     void actions.run('add', async () => {
-      const input = workspaceInput(kind, value);
-      if (input.kind !== 'topic') return onAdded(await call('workspaces:add', input), depth);
+      const input = sourceInput(kind, value);
+      const add = () => call('workspaces:add', input).catch(cause => { throw sourceRejection(cause); });
+      if (input.kind !== 'topic') return onAdded(await add(), depth);
       const saved = incompleteTopic.current;
-      const workspace = saved?.name === input.title ? saved : await call('workspaces:add', input);
+      const workspace = saved?.name === input.title ? saved : await add();
       incompleteTopic.current = workspace;
       const conceptId = await call('reader:start-topic', { workspaceId: workspace.id });
       incompleteTopic.current = null;
