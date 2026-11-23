@@ -249,6 +249,12 @@ export const MIGRATIONS: readonly Migration[] = [
       CHECK (legacy_concept_id <> portable_concept_id)
     );
     CREATE INDEX concept_identity_portable ON concept_identity_links (portable_concept_id);
+    CREATE TABLE scoped_proposal_concepts (
+      workspace_id TEXT NOT NULL REFERENCES workspaces ON DELETE CASCADE,
+      fingerprint TEXT NOT NULL,
+      concept_id INTEGER NOT NULL UNIQUE REFERENCES concepts ON DELETE CASCADE,
+      PRIMARY KEY (workspace_id, fingerprint)
+    );
     CREATE TABLE migrated_evidence_archive (
       id INTEGER PRIMARY KEY,
       original_evidence_id INTEGER NOT NULL,

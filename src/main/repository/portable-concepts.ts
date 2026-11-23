@@ -7,6 +7,7 @@ export function portableConceptLookup(db: Db) {
   const rows = db.prepare("SELECT key, title FROM concepts WHERE portable = 1 AND key NOT LIKE 'Demo:%' ORDER BY id").all();
   const byAlias = new Map<string, string[]>();
   const titles = new Set<string>();
+  const pending = new Map<string, string>();
   for (const { key, title } of rows) {
     assert.ok(typeof key === 'string' && key.length > 0);
     assert.ok(typeof title === 'string' && title.length > 0);
@@ -19,6 +20,14 @@ export function portableConceptLookup(db: Db) {
     const alias = portableAlias(normalizedKey, title);
     const keys = new Set([normalizedKey, ...(alias ? byAlias.get(alias) ?? [] : [])]);
     const candidates = [...keys].map(candidate => getConceptByKey(db, candidate)).filter((c): c is Concept => c !== null);
+    const pendingKeys = [...keys].filter(candidate => pending.has(candidate) && !candidates.some(concept => concept.key === candidate));
+    if (pendingKeys.length) {
+      const candidate = pendingKeys[0]!;
+      if (pendingKeys.length === 1 && candidates.length === 0 && compatibleDescriptions(summary, pending.get(candidate)!)) {
+        return { key: candidate, concept: null, portable: true };
+      }
+      return { key: normalizedKey, concept: null, portable: false };
+    }
     if (candidates.length) {
       if (candidates.length === 1 && candidates[0]!.portable && compatibleDescriptions(summary, candidates[0]!.summary)) {
         return { key: candidates[0]!.key, concept: candidates[0]!, portable: true };
@@ -28,6 +37,7 @@ export function portableConceptLookup(db: Db) {
     if (titles.has(normalizedConceptName(title))) return { key: normalizedKey, concept: null, portable: false };
     const stableKey = alias ?? normalizedKey;
     titles.add(normalizedConceptName(title));
+    pending.set(stableKey, summary);
     if (alias) byAlias.set(alias, [stableKey]);
     return { key: stableKey, concept: null, portable: true };
   };

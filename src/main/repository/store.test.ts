@@ -297,3 +297,74 @@ it('scopes portable dependents of an ambiguous prerequisite and preserves the ed
     { conceptId: ids.Consumer, prerequisiteId: ids.Queue }, { conceptId: ids.Pipeline, prerequisiteId: ids.Consumer },
   ]));
 });
+
+it.each([true, false])('resolves aliases within one proposal consistently on cache replay (compatible=%s)', compatible => {
+  const fifo = 'A collection processes jobs in first in first out order.';
+  const second = compatible ? fifo : 'A collection processes jobs in last in first out order.';
+  const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [
+    { key: 'queue', title: 'Queue', summary: fifo, portable: true },
+    { key: 'queues', title: compatible ? 'Queue' : 'Queues', summary: second, portable: true },
+  ], edges: [], recommendation: { key: 'queues', reason: 'Study the queue.' } });
+  const selected = source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline);
+  persistGeneration(db, selected, proposal);
+  const before = readWorkspaceGraph(db, workspaceId);
+  expect(before.concepts).toHaveLength(compatible ? 1 : 2);
+  expect(before.concepts.filter(item => item.portable)).toMatchObject([{ summary: fifo }]);
+  if (!compatible) expect(before.concepts).toContainEqual(expect.objectContaining({ summary: second, portable: false }));
+  useCachedGeneration(db, selected);
+  const after = readWorkspaceGraph(db, workspaceId);
+  expect(after.concepts).toEqual(before.concepts);
+  expect(after.suggestions).toEqual(before.suggestions);
+});
+
+it('does not overwrite an unrelated local at an internally allocated key', () => {
+  const original = 'A reliable ordered byte stream';
+  const input = { key: 'tcp', title: 'TCP', summary: 'A tropical climate policy for farmers', portable: true };
+  const internal = 'ambiguous/' + digest([input.key, input.title, input.summary]);
+  upsertConcept(db, { key: 'tcp', title: 'TCP', summary: original, portable: true, workspaceId });
+  const occupied = upsertConcept(db, { key: internal, title: 'Unrelated', summary: 'Independent knowledge', portable: false, workspaceId });
+  recordEvidence(db, { workspaceId, conceptId: occupied.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const selected = source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline);
+  const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [input], edges: [], recommendation: { key: 'tcp', reason: 'Study.' } });
+  persistGeneration(db, selected, proposal);
+  const graph = readWorkspaceGraph(db, workspaceId);
+  const local = graph.concepts.find(item => item.summary === input.summary)!;
+  expect(local.id).not.toBe(occupied.id);
+  expect(graph.evidence.some(item => item.conceptId === local.id)).toBe(false);
+  expect(db.prepare('SELECT title,summary FROM concepts WHERE id = ?').get(occupied.id))
+    .toEqual({ title: 'Unrelated', summary: 'Independent knowledge' });
+  useCachedGeneration(db, selected);
+  expect(readWorkspaceGraph(db, workspaceId).concepts.find(item => item.summary === input.summary)?.id).toBe(local.id);
+});
+
+it('reuses an unlinked local matching the proposal when its global identity conflicts', () => {
+  upsertConcept(db, { key: 'tcp', title: 'TCP', summary: 'A network byte stream', portable: true, workspaceId });
+  const local = upsertConcept(db, { key: 'tcp', title: 'TCP', summary: 'A climate policy for farmers', portable: false, workspaceId });
+  recordEvidence(db, { workspaceId, conceptId: local.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [
+    { key: 'tcp', title: 'TCP', summary: local.summary, portable: true },
+  ], edges: [], recommendation: { key: 'tcp', reason: 'Study.' } });
+  persistGeneration(db, source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline), proposal);
+  const graph = readWorkspaceGraph(db, workspaceId);
+  expect(graph.concepts.filter(item => item.summary === local.summary)).toMatchObject([{ id: local.id }]);
+  expect(graph.evidence).toContainEqual(expect.objectContaining({ conceptId: local.id }));
+});
+
+it('updates a pre-link cached recommendation to the replayed scoped identity', () => {
+  const summary = 'A collection processes jobs in last in first out order.';
+  const selected = source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline);
+  const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [
+    { key: 'queue', title: 'Queue', summary, portable: false },
+  ], edges: [], recommendation: { key: 'queue', reason: 'Study.' } });
+  persistGeneration(db, selected, proposal);
+  const legacy = readWorkspaceGraph(db, workspaceId).concepts[0]!;
+  const canonical = upsertConcept(db, { key: 'queues', title: 'Queue', summary: 'A collection processes jobs in first in first out order.',
+    portable: true, workspaceId });
+  db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, portable_concept_id) VALUES (?, ?)').run(legacy.id, canonical.id);
+  useCachedGeneration(db, selected);
+  const graph = readWorkspaceGraph(db, workspaceId);
+  const local = graph.concepts.find(item => item.summary === summary && item.id !== legacy.id)!;
+  expect(local).toMatchObject({ portable: false });
+  expect(db.prepare('SELECT next_concept FROM repository_generations WHERE cache_key = ?').get(selected.cacheKey)?.next_concept).toBe(local.id);
+  expect(graph.suggestions?.medium?.conceptId).toBe(local.id);
+});
