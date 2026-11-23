@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import type { Depth } from '../../shared/domain';
 import type { SavedCheckProgress, WorkspaceGraph, WorkspaceProgress } from '../../shared/graph';
 import type { Db } from './connection';
+import { lessonBinding } from './concept-binding';
 import { boundedLessonBody, decodeSavedDocument, lessonOrderSql, lessonRevision as hashLesson, lessonScopeSql } from './lesson-selection';
 import { masteryScope } from './mastery-scope';
 import { conceptSnapshotIdSql, workspaceSnapshotIdSql } from './repository-snapshot';
@@ -16,14 +17,17 @@ const latestByScopeSql = [':workspace', 'NULL'].flatMap(workspace => ['m.snapsho
 
 const progressSql = `WITH workspace_snapshot AS MATERIALIZED (${workspaceSnapshotIdSql(':workspace')}),
   scoped_mastery AS MATERIALIZED (
-    SELECT m.concept_id, m.depth, m.scope, m.revision, m.lesson_id,
+    SELECT m.concept_id, coalesce(link.portable_concept_id, m.concept_id) AS canonical_id, m.depth, m.scope, m.revision, m.lesson_id,
       coalesce(m.check_attempts, json_extract(m.state, '$.attempts')) AS attempts,
       coalesce(m.check_streak, json_extract(m.state, '$.correctAnswers')) AS streak,
-      coalesce((${conceptSnapshotIdSql(':workspace', 'm.concept_id')}), (SELECT * FROM workspace_snapshot)) AS snapshot_id
-    FROM lesson_mastery m WHERE m.workspace_id = :workspace AND m.depth = :depth AND m.state IS NOT NULL
+      coalesce((${conceptSnapshotIdSql(':workspace', 'coalesce(link.portable_concept_id, m.concept_id)')}), (SELECT * FROM workspace_snapshot)) AS snapshot_id
+    FROM lesson_mastery m LEFT JOIN concept_identity_links link ON link.legacy_concept_id = m.concept_id
+    WHERE m.workspace_id = :workspace AND m.depth = :depth AND m.state IS NOT NULL
   )
-  SELECT m.concept_id AS conceptId, m.scope, m.revision, m.lesson_id AS lessonId, m.attempts, m.streak,
-    m.snapshot_id AS snapshotId, s.commit_sha AS snapshot, (
+  SELECT m.concept_id AS conceptId, m.canonical_id AS canonicalId, m.scope, m.revision, m.lesson_id AS lessonId, m.attempts, m.streak,
+    m.snapshot_id AS snapshotId, s.commit_sha AS snapshot,
+    EXISTS (SELECT 1 FROM concept_identity_links link JOIN concepts c ON c.id = link.legacy_concept_id
+      WHERE link.portable_concept_id = m.canonical_id AND c.workspace_id = :workspace) AS hasAlias, (
       SELECT json_array(id, document_revision) FROM (${latestByScopeSql})
       ORDER BY created_at DESC, id DESC LIMIT 1
     ) AS selected FROM scoped_mastery m LEFT JOIN snapshots s ON s.id = m.snapshot_id`;
@@ -65,10 +69,11 @@ export function readLearningProgress(db: Db, graph: WorkspaceGraph, depth: Depth
   const checks: SavedCheckProgress[] = [];
   let legacy: ReturnType<Db['prepare']> | undefined;
   for (const row of rows) {
-    const { conceptId, scope, revision, lessonId, streak, attempts, snapshotId, snapshot } = row;
-    assert.ok(typeof conceptId === 'number' && typeof revision === 'string');
-    if (!ids.has(conceptId)) continue;
+    const { conceptId, canonicalId, scope, revision, lessonId, streak, attempts, snapshotId, snapshot, hasAlias } = row;
+    assert.ok(typeof conceptId === 'number' && typeof canonicalId === 'number' && typeof revision === 'string');
+    if (!ids.has(canonicalId)) continue;
     assert.ok(snapshotId === null || typeof snapshotId === 'number');
+    if (hasAlias && lessonBinding(db, { workspaceId, conceptId: canonicalId, depth, snapshotId, demo }).conceptId !== conceptId) continue;
     assert.ok(snapshot === null || typeof snapshot === 'string');
     assert.equal(snapshotId === null, snapshot === null);
     const context = { workspaceId, conceptId, depth, snapshotId };
@@ -80,7 +85,7 @@ export function readLearningProgress(db: Db, graph: WorkspaceGraph, depth: Depth
     if (lessonId !== selectedId || scope !== masteryScope(context, lessonRevision)) continue;
     assert.ok(typeof attempts === 'number' && Number.isInteger(attempts) && attempts >= 0 && attempts <= 6);
     assert.ok(typeof streak === 'number' && Number.isInteger(streak) && streak >= 0 && streak <= attempts);
-    checks.push({ conceptId, snapshot, lessonRevision, masteryRevision: revision, streak, attempted: attempts > 0 });
+    checks.push({ conceptId: canonicalId, snapshot, lessonRevision, masteryRevision: revision, streak, attempted: attempts > 0 });
   }
   assert.ok(checks.length <= ids.size, 'only one committed check state per concept and depth');
   return { depth, checks };

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, type ReactNode } from 'react';
 import type { Workspace } from '../../shared/domain';
 import type { ReaderLesson } from '../../shared/reader';
 import type { ChangeRef } from '../../shared/repository';
@@ -42,7 +42,7 @@ function StudyLesson({ route, common, remember, commit, refresh, backTo }: {
   const { depth, workspace, graph } = common;
   const title = graph.concepts.find(concept => concept.id === conceptId)?.title;
   const workspaceId = workspace.id;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (title && !environment) remember({ kind: 'lesson', workspaceId, conceptId, depth, title, change });
   }, [title, environment, remember, workspaceId, conceptId, depth, change]);
   function read() {
@@ -57,7 +57,7 @@ function StudyLesson({ route, common, remember, commit, refresh, backTo }: {
   }
   return <EnvironmentActivity.Provider value={{ resumeKey: environment, onUse: used, onRead: read }}>
     <Lesson {...common} conceptId={conceptId} initialQuestion={route.question} initialReview={route.review} onEvidence={onEvidence}
-      onBack={() => backTo({ screen: 'atlas', conceptId })}
+      onBack={common.backLabel ? common.onBack : () => backTo({ screen: 'atlas', conceptId })}
       onBackToChange={change ? () => backTo({ screen: 'changes', change }) : undefined} />
   </EnvironmentActivity.Provider>;
 }
@@ -68,7 +68,7 @@ function StudyChanges({ route, common, remember, visit }: {
   const { workspace, graph, depth } = common;
   const { change, title, job } = route;
   const demo = graph.demo && graph.snapshot === demoBrief.head;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (change) {
       const label = change.kind === 'pr' ? 'PR #' + change.ref : 'Commit ' + change.ref.slice(0, 8);
       remember({ kind: 'change', workspaceId: workspace.id, depth, change, title: title ?? label });
@@ -88,13 +88,16 @@ function StudyPage({ props, fullGraph }: { props: Props; fullGraph: NonNullable<
   const graph = route.screen === 'lesson' || route.screen === 'progress' ? fullGraph : atlasOnly;
   const activeConceptId = route.screen === 'lesson' ? route.conceptId : undefined;
   const openLesson = (conceptId: number, question?: string) => visit({ screen: 'lesson', conceptId, question });
-  const common = { workspace, graph, depth, view, onDepth: changeDepth, onBack: () => nav.backTo({ screen: 'atlas' }),
-    onLesson: openLesson, onProgress: () => visit({ screen: 'progress', conceptId: activeConceptId }) } satisfies ReaderProps;
+  const toAtlas = () => nav.backTo({ screen: 'atlas' });
+  const returnToKnowledge = route.screen === 'lesson' || route.screen === 'progress' ? nav.returnToKnowledge : undefined;
+  const common: ReaderProps = { workspace, graph, depth, view, onDepth: changeDepth,
+    onBack: returnToKnowledge ?? toAtlas, backLabel: returnToKnowledge ? '← Back to Knowledge' : undefined,
+    onLesson: openLesson, onProgress: () => visit({ screen: 'progress', conceptId: activeConceptId }) };
   if (route.screen === 'lesson') return <StudyLesson key={route.conceptId} route={route} common={common} remember={remember}
     commit={study.commit} refresh={study.refresh} backTo={nav.backTo} />;
   if (route.screen === 'changes') return <StudyChanges route={route} common={common} remember={remember} visit={visit} />;
   if (route.screen === 'progress') return <Progress {...common} progress={study.progress} currentId={route.conceptId}
-    workspaces={nav.list.workspaces} onSelect={onSelect} onEvidence={study.refresh} />;
+    workspaces={nav.list.workspaces} onSelect={onSelect} onExplore={toAtlas} onEvidence={study.refresh} />;
   const atlas = route.screen === 'atlas' ? route : undefined;
   async function startTopic() {
     const conceptId = await call('reader:start-topic', { workspaceId: workspace.id });
@@ -118,6 +121,10 @@ export function Study(props: Props) {
     return <RepositoryBaseline workspace={workspace} depth={depth} onDepth={nav.changeDepth}
       onBack={() => nav.backTo({ screen: 'atlas' })} reviewJob={reviewJob} />;
   }
-  if (!study.graph) return <ReadState label="Knowledge graph" retry={study.refresh} message={study.error} />;
-  return <div className={view}><StudyPage props={props} fullGraph={study.graph} /></div>;
+  const showBack = nav.returnToKnowledge && (route.screen === 'atlas' || !study.graph);
+  return <>
+    {showBack && <button className="back" onClick={nav.returnToKnowledge} disabled={nav.switching}>← Back to Knowledge</button>}
+    {study.graph ? <div className={view}><StudyPage props={props} fullGraph={study.graph} /></div>
+      : <ReadState label="Knowledge graph" retry={study.refresh} message={study.error} />}
+  </>;
 }

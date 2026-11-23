@@ -14,7 +14,7 @@ import { addWorkspace } from '../db/workspaces';
 import { makeShimDir, makeTempDir, setupRunner } from '../providers/test-helpers';
 import { readLesson, readerHandlers } from '../reader/ipc';
 import { saveMastery } from './mastery';
-import { tutorSchemas } from './ipc';
+import { tutorHandlers, tutorSchemas } from './ipc';
 import { prepareTurn, previewNewTopic } from './prompt';
 import { createGenerator, type Generate, type TutorReply } from './provider';
 import { demoTurn } from './sample';
@@ -258,6 +258,74 @@ it('discards late output after cancellation or a change to the previewed context
   expect(readLesson(db, request).blocks).toEqual([]);
 });
 
+it('restores an approved tutor request and records completion with the saved lesson', async () => {
+  const generate = vi.fn<Generate>(() => new Promise(() => undefined));
+  session = new TutorSession(db, generate);
+  const id = randomUUID();
+  const { token } = prepareTurn(db, request).preview;
+  const inFlight = session.run({ ...request, token, requestId: id });
+  expect(session.jobs()).toMatchObject([{ id, phase: 'running' }]);
+  expect(session.dismiss(id)).toBe(false);
+  session.close();
+  await expect(inFlight).rejects.toThrow(/cancelled/);
+  expect(generate.mock.calls[0]?.[1].aborted).toBe(true);
+
+  const finish = vi.fn<Generate>(async () => opening);
+  session = new TutorSession(db, finish);
+  expect(session.jobs()).toMatchObject([{ id, phase: 'failed', code: 'TUTOR_INTERRUPTED', request }]);
+  expect(() => session.retry(id, 'claude')).toThrow(/tutor changed/);
+  expect(finish).not.toHaveBeenCalled();
+  vi.stubEnv('DELVE_CODEX_MODEL', 'new-model');
+  expect(() => session.retry(id, 'codex')).toThrow(/changed/);
+  expect(finish).not.toHaveBeenCalled();
+  vi.stubEnv('DELVE_CODEX_MODEL', undefined);
+  expect((await session.retry(id, 'codex')).blocks).toContainEqual(explanation);
+  expect(finish).toHaveBeenCalledOnce();
+
+  session.close();
+  session = new TutorSession(db, finish);
+  expect(session.jobs()).toMatchObject([{ id, phase: 'ready' }]);
+  expect((await session.wait(id)).blocks).toContainEqual(explanation);
+  expect(() => session.retry(id, 'codex')).toThrow(/no longer interrupted/);
+  expect(finish).toHaveBeenCalledOnce();
+  expect(session.dismiss(id)).toBe(true);
+  expect(session.jobs()).toEqual([]);
+});
+
+it.each([
+  '{}',
+  JSON.stringify({ title: 'Routing', provider: 'codex', intent: { kind: 'teach' }, submittedAnswer: '/24' }),
+])('skips a malformed tutor job while restoring a valid one (%s)', async detail => {
+  const { workspaceId, conceptId } = request;
+  db.prepare(`INSERT INTO tutor_jobs (id, workspace_id, concept_id, depth, token, detail, phase)
+    VALUES (?, ?, ?, 'low', ?, ?, 'running')`).run(randomUUID(), workspaceId, conceptId, 'a'.repeat(64), detail);
+
+  const id = randomUUID();
+  const { token } = prepareTurn(db, request).preview;
+  await session.run({ ...request, token, requestId: id });
+
+  expect(tutorHandlers(db, session)['tutor:jobs'](null)).toMatchObject([
+    { phase: 'unreadable', rowKey: expect.any(String), message: 'A saved tutor request could not be read and was skipped.' },
+    { id, phase: 'ready', request },
+  ]);
+  expect(await session.wait(id)).toMatchObject({ blocks: expect.arrayContaining([explanation]) });
+});
+
+it('reports an out-of-range stored concept id without blocking valid jobs', async () => {
+  const workspaceId = addWorkspace(db, { kind: 'topic', title: 'Other unsafe workspace' }).id;
+  db.exec(`INSERT INTO concepts (id,key,title,summary,portable,workspace_id,created_at,updated_at)
+    VALUES (9007199254740992,'unsafe','Unsafe','',1,NULL,'t','t')`);
+  db.prepare('INSERT INTO workspace_concepts (workspace_id, concept_id) VALUES (?, 9007199254740992)').run(workspaceId);
+  db.prepare(`INSERT INTO tutor_jobs (id,workspace_id,concept_id,depth,token,detail,phase)
+    VALUES (?, ?, 9007199254740992, 'low', ?, ?, 'ready')`)
+    .run(randomUUID(), workspaceId, 'a'.repeat(64), JSON.stringify({ title: 'Unsafe', provider: 'codex', intent: { kind: 'teach' } }));
+  const id = randomUUID();
+  const { token } = prepareTurn(db, request).preview;
+  await session.run({ ...request, token, requestId: id });
+  expect(session.jobs()).toMatchObject([{ phase: 'unreadable' }, { id, phase: 'ready' }]);
+  expect(await session.wait(id)).toMatchObject({ blocks: expect.arrayContaining([explanation]) });
+});
+
 it('the offline provider reteaches a miss, offers fresh applied checks and recommends a path after understanding', async () => {
   seedDemoWorkspaces(db);
   session = new TutorSession(db);
@@ -317,6 +385,8 @@ it('regenerates an invalid latest opening and preserves the fallback if the retr
   session = new TutorSession(db, async () => { throw new Error('Provider unavailable'); });
   await expect(run(request.intent)).rejects.toThrow('Provider unavailable');
   expect(readLesson(db, request)).toMatchObject({ invalidLatest: true, revision: previous.revision });
+  recordEvidence(db, { ...request, status: 'demonstrated', source: 'check', masteryVerified: true });
+  expect(readLesson(db, request)).toMatchObject({ reused: true, invalidLatest: true });
   session = new TutorSession(db, async () => ({ ...opening, lesson: { ...opening.lesson, blocks: [{ ...explanation, heading: 'Revised explanation' }, applied] } }));
   expect(await run(request.intent)).toMatchObject({ invalidLatest: false, blocks: [{ heading: 'Revised explanation' }, { type: 'check' }] });
 });

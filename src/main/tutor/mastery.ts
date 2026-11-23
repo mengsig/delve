@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { DomainError } from '../../shared/errors';
+import { coversDepth } from '../../shared/evidence-depth';
 import { masteryLimits } from '../../shared/mastery-limits';
 import type { ReaderMastery } from '../../shared/reader';
 import type { Db } from '../db/connection';
@@ -41,8 +42,9 @@ function repeatsQuestion(current: string[], previous: string): boolean {
   return shared >= 6 && shared / (words.size + earlierWords.size - shared) >= 0.9;
 }
 
-export const hasVerifiedMastery = (db: Db, context: LessonContext) => listEvidence(db, context.conceptId)
-  .some(e => e.depth === context.depth && e.masteryVerified && e.workspaceId !== null);
+export const hasVerifiedMastery = (db: Db, context: LessonContext) => listEvidence(db, context.canonicalConceptId)
+  .some(e => e.masteryVerified && (context.portable
+    ? coversDepth(e.depth, context.depth) : e.depth === context.depth && e.workspaceId === context.workspaceId));
 
 export function checkIn(document: Document | null): MasteryCheck | null {
   return document?.blocks.find(block => block.type === 'check') ?? null;
@@ -67,11 +69,13 @@ export function loadMastery(db: Db, context: LessonContext, selected: SelectedLe
   const stage = inherited ? 'understood' : check ? 'checking' : 'teaching';
   const initial: Cycle = { stage, check: inherited ? null : check, attempts: 0, correctAnswers: 0,
     applied: false, cycle: 0, prompts: check ? [check.prompt] : [] };
-  const state = saved?.state ? decodeCycle(saved.state) : initial;
+  const previous = saved?.state ? decodeCycle(saved.state) : null;
+  const transferred = inherited && context.portable && previous?.cycle === 0 && previous.stage !== 'understood';
+  const state = transferred ? initial : previous ?? initial;
   assert.ok(state.attempts <= maxAttempts && (state.stage !== 'review' || state.attempts === maxAttempts));
   assert.ok(state.stage !== 'checking' || state.attempts < maxAttempts);
   assert.ok(state.stage !== 'understood' || inherited || state.applied && state.correctAnswers >= requiredCorrectAnswers);
-  const revision = saved?.revision ?? (selected.revision || inherited ? hash([scope, stage]) : null);
+  const revision = (transferred ? undefined : saved?.revision) ?? (selected.revision || inherited ? hash([scope, stage]) : null);
   return { ...state, scope, revision, lessonId: selected.id, requiredCorrectAnswers, maxAttempts };
 }
 

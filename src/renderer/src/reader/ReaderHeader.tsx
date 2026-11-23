@@ -7,17 +7,17 @@ export interface ReaderProps {
   depth: Depth;
   onDepth: (depth: Depth) => void;
   onBack: () => void;
+  backLabel?: string;
   onLesson: (id: number) => void;
   onProgress: () => void;
   view: 'contour' | 'folio';
 }
 
-interface HeaderProps extends Pick<ReaderProps, 'depth' | 'onDepth' | 'onBack' | 'workspace'> {
+interface HeaderProps extends Pick<ReaderProps, 'depth' | 'onDepth' | 'onBack' | 'backLabel' | 'workspace'> {
   label: string;
   title: string;
   summary: string;
   showDepth?: boolean;
-  backLabel?: string;
 }
 
 export function ReaderHeader({ depth, onDepth, onBack, workspace, label, title, summary, showDepth = true, backLabel = '← Back to atlas' }: HeaderProps) {

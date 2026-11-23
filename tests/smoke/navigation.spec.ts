@@ -18,7 +18,7 @@ test('opens primary destinations and switches workspace in one action', async ({
   await expect(header).toContainText('Knowledge · All workspaces');
   await expect(header).toContainText('Demo snapshot');
   await expect(header.getByRole('meter', { name: /Workspace mastery/ })).toHaveJSProperty('value', 2);
-  await button(page, 'Add a workspace').click();
+  await header.getByRole('button', { name: 'Add a workspace', exact: true }).click();
   await expect(header).toContainText('Workspace setup');
   await expect(header.locator('.workspace-identity')).toContainText('Archon (demo)');
   await button(page, 'Atlas').click();
@@ -38,9 +38,23 @@ test('opens primary destinations and switches workspace in one action', async ({
 
 test('continues a lesson, environment or change in one click after a restart', async ({ desktop }) => {
   let page = desktop.page;
+  // Capture storage on the first lesson commit, before a delayed effect could fill it.
+  const firstHeading = await page.evaluateHandle(() => {
+    const result = { activity: null as string | null };
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('.lesson-heading h1')?.textContent !== 'Worker leases') return;
+      observer.disconnect();
+      result.activity = localStorage.getItem('delve.recent-activity');
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return result;
+  });
   await button(page, 'Open lesson →').click();
   const lesson = (p: Page) => p.getByRole('heading', { name: 'Worker leases', exact: true });
   await expect(lesson(page)).toBeVisible();
+  const saved = await firstHeading.evaluate(result => JSON.parse(result.activity ?? '[]')[0]);
+  await firstHeading.dispose();
+  expect(saved).toMatchObject({ kind: 'lesson', title: 'Worker leases' });
   page = await desktop.restart();
   await withinBudget(page, 'Continue the last lesson', 1, async () => {
     const resume = button(page, /Continue lesson Worker leases/);

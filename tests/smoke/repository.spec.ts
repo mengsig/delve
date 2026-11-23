@@ -8,16 +8,17 @@ import { withinBudget } from './action-budget';
 
 test.use({ tutorCli: true, firstRun: true });
 
-function createRepository(directory: string) {
+function createRepository(directory: string, extraFiles: Record<string, string> = {}) {
   const repo = join(directory, 'dispatch');
   mkdirSync(repo);
   execFileSync('git', ['init', '--quiet', '--template=', '--initial-branch=main', repo]);
-  const data = (value: string) => 'data ' + Buffer.byteLength(value) + '\n' + value + '\n';
+  const data = (value: string) => 'data ' + Buffer.byteLength(value) + '\n' + value;
   const content = ['export const attempts = 1;\n', 'export const attempts = 3;\n'];
   const commits = content.map((file, i) => {
     const title = i ? 'Retry a failed dispatch' : 'Dispatch once';
+    const files = i === 0 ? { 'dispatch.ts': file } : { 'dispatch.ts': file, ...extraFiles };
     return ['commit refs/heads/main', 'committer Fixture <fixture@example.invalid> ' + (1000000000 + i) + ' +0000',
-      data(title).trimEnd(), 'M 100644 inline dispatch.ts', data(file)].join('\n');
+      data(title), ...Object.entries(files).flatMap(([path, contents]) => [`M 100644 inline ${path}`, data(contents)])].join('\n');
   });
   execFileSync('git', ['-C', repo, 'fast-import', '--quiet'], { input: commits.join('\n') + '\ndone\n' });
   return { repo, head: execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() };
@@ -111,6 +112,35 @@ async function askTutor(page: Page, directory: string) {
   await expect(page.getByRole('log')).toContainText(answer);
 }
 
+test('edits the filtered file slice without changing hidden files or sending the request', async ({ desktop }, info) => {
+  const { page, directory } = desktop;
+  const { repo } = createRepository(directory, { 'README.md': '# Dispatch\n', 'src/worker.ts': 'export const workers = 2;\n' });
+  await page.setViewportSize({ width: 1200, height: 850 });
+  await page.locator('#source-input').fill(repo);
+  await page.getByText('Edit files (3 selected)', { exact: true }).click();
+  const filter = page.getByLabel('Filter repository files');
+  await filter.fill('SRC/');
+  await expect(page.getByRole('checkbox', { name: 'src/worker.ts' })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'README.md' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Clear visible' }).click();
+  await expect(page.getByRole('checkbox', { name: 'src/worker.ts' })).not.toBeChecked();
+  const requested = page.getByRole('list', { name: 'Files included in the request' });
+  await expect(requested.getByRole('listitem')).toHaveText(['README.md', 'dispatch.ts']);
+  await page.getByRole('button', { name: 'Select visible' }).press('Enter');
+  await expect(page.getByRole('checkbox', { name: 'src/worker.ts' })).toBeChecked();
+  await expect(requested.getByRole('listitem')).toHaveText(['README.md', 'dispatch.ts', 'src/worker.ts']);
+  await page.getByText('Exact request', { exact: true }).click();
+  await expect(page.getByLabel('Exact provider request')).toContainText('export const workers = 2;');
+  expect(existsSync(join(directory, 'request.json'))).toBe(false);
+  await page.getByText('Exact request', { exact: true }).click();
+  await filter.focus();
+  await capture(page, info, 'file-selection-after');
+  if (process.env['DELVE_NIGHT_EVIDENCE']) {
+    mkdirSync('.archon/evidence', { recursive: true });
+    await page.screenshot({ path: '.archon/evidence/file-selection-after.png' });
+  }
+});
+
 test('maps approved files, teaches one commit at two depths and previews an incoming link before opening its saved conversation', async ({ desktop }, info) => {
   const { page, directory } = desktop;
   const { repo, head } = createRepository(directory);
@@ -163,6 +193,41 @@ test('accepts a folder dropped into the initial repository field and offers a re
     await page.getByRole('button', { name: 'Add and build map' }).click();
     await expect(page.getByLabel('Field guide')).toContainText(concept.title);
   });
+});
+
+test('opens a readable history boundary with partial coverage and names the missing parent', async ({ desktop }, info) => {
+  const { repo, head } = createRepository(desktop.directory);
+  await desktop.page.evaluate(async path => {
+    const result = await (globalThis as unknown as { delve: DelveApi }).delve.invoke('workspaces:add', { kind: 'git', path });
+    if (!result.ok) throw new Error(result.error.message);
+  }, repo);
+  const missing = 'a'.repeat(40);
+  const tree = execFileSync('git', ['-C', repo, 'rev-parse', head + '^{tree}'], { encoding: 'utf8' }).trim();
+  function writeCommit(parent: string, title: string, seconds: number) {
+    const author = `Fixture <fixture@example.invalid> ${seconds} +0000`;
+    const input = `tree ${tree}\nparent ${parent}\nauthor ${author}\ncommitter ${author}\n\n${title}\n`;
+    return execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'], { input, encoding: 'utf8' }).trim();
+  }
+  const boundary = writeCommit(missing, 'Add dispatch retries', 1700000000);
+  const latest = writeCommit(boundary, 'Explain retry limits', 1700000001);
+  execFileSync('git', ['-C', repo, 'update-ref', 'refs/heads/main', latest]);
+
+  const page = await desktop.restart();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  const history = page.getByRole('region', { name: 'History', exact: true });
+  await expect(history.getByRole('listbox').getByRole('option')).toHaveText([/Explain retry limits/, /Add dispatch retries/]);
+  await expect(history).toContainText(`Git commit ${missing} is missing or damaged.`);
+  await expect(history).toContainText('git fsck');
+  await expect(history).not.toContainText('No commits or pull requests are available');
+  await capture(page, info, 's17-missing-parent');
+
+  await history.getByRole('option', { name: /Add dispatch retries/ }).click();
+  const selected = page.getByRole('region', { name: 'Selected change' });
+  await selected.getByRole('tab', { name: 'Files changed' }).click();
+  const coverage = selected.getByText(`Git parent ${missing} is missing from the local snapshot. File and line totals are unavailable.`);
+  await expect(coverage).toBeVisible();
+  await capture(page, info, 's17-boundary-detail');
 });
 
 test.describe('model rejection', () => {

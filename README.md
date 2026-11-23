@@ -60,8 +60,11 @@ pull requests. Delve uses read-only operations with that login.
 Select the files to include and review their names, sizes, revision and exact provider request.
 **Add and build map** attaches the repository and starts generation with one confirmation.
 The progress panel stays visible as you explore another workspace. The Atlas fills in when the map is ready. If you have left the Atlas, **Open map** takes you back.
-Demonstrated portable concepts carry their evidence across repositories. Choose **Map more files** to
-expand a map. Each slice contains at most 128 text files, 128 KiB per file and 1 MiB total.
+Portable concepts such as TCP have one entry in Knowledge. Verified understanding carries across
+repositories at the demonstrated depth and shallower. The learning path then recommends how the
+current repository uses the concept, or offers a top-up when you choose a deeper lesson. **Used in**
+lists the repositories that link to the shared concept. Choose **Map more files** to expand a map.
+Each slice contains at most 128 text files, 128 KiB per file and 1 MiB total.
 
 In **Changes**, select a commit or pull request from the branch timeline. Search by title or
 reference, narrow the list by branch, author or change type, or switch to **Folio** for its list
@@ -90,20 +93,32 @@ The demo tutor runs entirely offline. The Archon demo includes an illustrative b
 
 ## Global knowledge
 
-Open **Knowledge** in the header or search for it with Ctrl/⌘-K to see concepts across your
-topics and repositories. Shared concepts appear once as bridges; workspace colours, prerequisite
-lines and transfer links show how ideas connect. Filter by workspace, mastery or depth, search, focus
-a neighbourhood, or switch to the virtualized list of everything you have understood. Select a
-concept to open its lesson, review it, or show it in its workspace Atlas.
+Portable concepts can carry verified understanding across repositories at the same depth.
+Generated lessons stay bound to their workspace and snapshot; workspace-independent lessons can be reused.
+A portable match requires a shared provider key or recognized alias and the same description after
+Unicode, case, and whitespace normalization. Recognized aliases must agree within each concept and
+across the match. Ambiguous concepts stay in their repository with their own evidence and lessons.
+Compatible aliases that depend on local concepts share one repository entry. A concept introduced
+only in a change brief stays with that commit when it is repository-specific.
+Upgrading an older profile preserves the original evidence for concepts whose descriptions differ.
 
-**Find connections** previews the exact request before a tutor proposes transfer links. Suggestions
-include a reason and model provenance, and you can remove them. Your graph and view settings are
-stored locally; an approved request sends the displayed concept information to your selected provider.
-The built-in demo workspaces are excluded from your personal knowledge record.
+Open **Knowledge** in the header or through Ctrl/⌘-K. The map starts in your workspace’s area when
+it contains concepts. Choose **All workspaces** above the map to see bridges and transfers. The guide
+selects an eligible lesson at your reading depth and explains which prerequisites you already know.
+Start it directly from the guide. If your tutor needs to generate an opening, you can inspect the
+exact request and grant it once with the same button.
 
-![Knowledge graph in light theme](docs/images/knowledge-light.png)
+Drag to pan, scroll to zoom, or choose **Fit map**. With the map focused, arrow keys preview
+concepts, Enter selects, Shift + arrows pan, +/− zoom, and Home fits. **Find a concept** searches the
+current area and filters by state or verified depth. **Learned list** shows dated evidence across
+depths and can group it by workspace. Open **Connections & details** to focus the neighbourhood,
+inspect prerequisites and transfers, review a concept, or visit its Atlas. **Back to Knowledge**
+returns to your original workspace, map selection, filters and camera.
 
-![Knowledge graph in dark theme](docs/images/knowledge-dark.png)
+**Find connections** previews the exact request before a tutor proposes transfer links. Each
+suggestion includes a reason and model provenance, and you can remove it. Your graph and view
+settings are stored locally. The built-in demo has a separate map you can explore from an empty
+personal record.
 
 ## Interactive lessons
 

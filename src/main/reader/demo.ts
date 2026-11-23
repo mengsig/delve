@@ -9,10 +9,13 @@ import material from './demo-material.json';
 export interface LessonContext {
   workspaceId: string;
   conceptId: number;
+  canonicalConceptId: number;
+  invalidLatest: boolean;
   key: string;
   title: string;
   summary: string;
   depth: Depth;
+  portable: boolean;
   topic: boolean;
   demo: boolean;
   snapshotId: number | null;

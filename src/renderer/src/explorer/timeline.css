@@ -74,6 +74,7 @@
 
 .timeline-notice {
   background: var(--soft);
+  overflow-wrap: anywhere;
 }
 
 .timeline-message[role="alert"] {

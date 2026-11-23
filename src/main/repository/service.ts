@@ -107,7 +107,10 @@ export class RepositoryLearning {
       if (request.cursor !== 0) {
         const cursor = this.historyCursors.get(request.cursor);
         if (!cursor || cursor.key !== key) throw new DomainError('STALE_HISTORY', 'Refresh repository history to continue.');
-        cursor.result ??= cursor.load();
+        cursor.result ??= cursor.load().catch((cause: unknown) => {
+          cursor.result = undefined;
+          throw cause;
+        });
         return cursor.result;
       }
       const history = await openRepositoryHistory(workspace, this.cacheRoot, request, savedHistory(this.db, workspace.id));

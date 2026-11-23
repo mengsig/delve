@@ -72,6 +72,9 @@ describe('global knowledge graph', () => {
     expect(getGlobalKnowledgeGraph(db).concepts).toEqual([]);
     const learned = upsertConcept(db, { key: 'real', title: 'Real concept', portable: true, workspaceId: alpha });
     expect(getGlobalKnowledgeGraph(db).concepts.map(concept => concept.id)).toEqual([learned.id]);
+    const sample = getGlobalKnowledgeGraph(db, true);
+    expect(sample.concepts.map(c => c.title)).toContain('Worker leases');
+    expect(sample.concepts.flatMap(c => c.memberships.map(w => w.workspaceId))).not.toContain(alpha);
   });
 
 });
@@ -111,6 +114,20 @@ describe('transfer links', () => {
     expect(getGlobalKnowledgeGraph(db).links).toEqual([created]);
     expect(deleteTransferLink(db, created.id)).toBe(true);
     expect(deleteTransferLink(db, created.id)).toBe(false);
+    expect(getGlobalKnowledgeGraph(db).links).toEqual([]);
+  });
+
+  it('deduplicates and removes links by canonical identity', () => {
+    const a = upsertConcept(db, { key: 'canonical-a', title: 'A', portable: true, workspaceId: alpha });
+    const b = upsertConcept(db, { key: 'canonical-b', title: 'B', portable: true, workspaceId: alpha });
+    const legacy = upsertConcept(db, { key: 'legacy-a', title: 'A', portable: false, workspaceId: alpha });
+    db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, portable_concept_id) VALUES (?, ?)').run(legacy.id, a.id);
+    const first = createTransferLink(db, link(legacy.id, b.id));
+    expect(first.fromConceptId).toBe(a.id);
+    expect(() => createTransferLink(db, link(b.id, legacy.id))).toThrow(/already linked/);
+    db.prepare(`INSERT INTO transfer_links (from_concept_id,to_concept_id,reason,provider,model,created_at)
+      VALUES (?,?,'legacy','fixture','fixture','t')`).run(legacy.id, b.id);
+    expect(deleteTransferLink(db, first.id)).toBe(true);
     expect(getGlobalKnowledgeGraph(db).links).toEqual([]);
   });
 

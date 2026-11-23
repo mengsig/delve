@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 405" preserveAspectRatio="none">
+  <defs>
+    <polygon id="hill-0" points="267.1,0.0 276.5,17.3 280.3,35.3 277.7,53.1 268.7,69.5 254.5,83.9 236.9,96.1 218.1,106.4 199.8,115.5 183.1,124.5 168.1,133.8 154.2,143.7 140.4,153.8 125.9,163.5 109.9,171.7 92.5,177.7 74.0,181.3 55.2,182.9 36.4,183.0 18.1,182.6 0.0,182.3 -18.1,182.6 -36.4,183.0 -55.2,182.9 -74.0,181.3 -92.5,177.7 -109.9,171.7 -125.9,163.5 -140.4,153.8 -154.2,143.7 -168.1,133.8 -183.1,124.5 -199.8,115.5 -218.1,106.4 -236.9,96.1 -254.5,83.9 -268.7,69.5 -277.7,53.1 -280.3,35.3 -276.5,17.3 -267.1,0.0 -253.8,-15.9 -238.9,-30.1 -224.0,-42.8 -210.3,-54.4 -198.2,-65.4 -187.5,-76.1 -177.6,-86.6 -167.8,-97.0 -157.6,-107.2 -147.2,-117.2 -136.8,-127.5 -126.6,-138.7 -116.6,-151.5 -106.4,-166.2 -95.0,-182.6 -81.6,-199.9 -65.3,-216.4 -45.8,-230.3 -23.7,-239.5 -0.0,-242.8 23.7,-239.5 45.8,-230.3 65.3,-216.4 81.6,-199.9 95.0,-182.6 106.4,-166.2 116.6,-151.5 126.6,-138.7 136.8,-127.5 147.2,-117.2 157.6,-107.2 167.8,-97.0 177.6,-86.6 187.5,-76.1 198.2,-65.4 210.3,-54.4 224.0,-42.8 238.9,-30.1 253.8,-15.9" vector-effect="non-scaling-stroke" />
+    <polygon id="hill-1" points="315.8,0.0 317.4,15.7 312.6,31.2 301.2,45.5 284.1,58.1 262.9,68.6 240.1,77.0 217.9,84.1 198.2,90.7 181.7,97.7 168.2,105.9 156.4,115.3 144.9,125.6 132.3,135.9 117.5,145.2 100.5,152.7 81.5,158.0 61.5,161.2 41.0,162.9 20.5,163.9 0.0,164.7 -20.7,165.8 -42.0,166.9 -63.8,167.4 -86.0,166.6 -107.8,163.8 -128.4,158.7 -147.4,151.5 -164.6,142.6 -180.3,132.9 -195.4,123.1 -210.7,113.3 -226.7,103.7 -243.2,93.8 -259.0,83.1 -272.6,71.1 -281.9,57.7 -285.5,43.2 -282.8,28.2 -274.2,13.6 -261.3,0.0 -246.5,-12.2 -232.3,-23.2 -220.5,-33.3 -212.1,-43.4 -207.1,-54.0 -204.3,-65.5 -202.3,-78.0 -199.4,-91.2 -194.7,-104.7 -187.4,-118.0 -177.6,-130.9 -165.6,-143.5 -151.7,-155.9 -136.0,-168.0 -118.2,-179.6 -98.1,-190.1 -75.6,-198.3 -51.1,-203.0 -25.4,-203.3 -0.0,-198.7 23.7,-189.3 44.3,-176.2 61.4,-161.1 75.3,-145.8 86.9,-132.1 98.0,-121.1 110.1,-113.1 124.3,-107.7 141.1,-104.0 160.1,-100.8 180.4,-97.0 200.7,-91.8 220.2,-85.0 238.4,-76.5 255.3,-66.6 270.9,-55.4 285.4,-43.1 298.4,-29.8 309.0,-15.3" vector-effect="non-scaling-stroke" />
+    <polygon id="hill-2" points="247.4,0.0 241.2,12.3 231.6,23.7 218.8,33.9 203.5,42.7 187.1,50.0 171.2,56.3 157.2,62.2 146.1,68.5 137.9,76.0 131.8,85.1 126.5,95.6 120.4,107.0 112.3,118.3 101.3,128.3 87.5,136.4 71.4,141.9 54.0,145.1 35.9,146.4 17.9,146.5 0.0,146.3 -17.8,146.0 -35.7,145.6 -53.9,144.8 -72.0,143.0 -89.5,139.5 -106.0,134.3 -120.8,127.2 -133.8,118.9 -145.3,109.8 -155.8,100.6 -166.2,91.6 -176.7,82.9 -187.4,74.1 -197.5,65.0 -206.1,55.1 -211.9,44.4 -214.0,33.2 -212.0,21.7 -206.7,10.5 -199.4,0.0 -191.8,-9.7 -185.7,-19.0 -182.2,-28.2 -181.7,-38.1 -183.4,-49.0 -186.0,-61.2 -187.6,-74.2 -186.9,-87.6 -182.6,-100.7 -174.5,-112.7 -162.9,-123.1 -148.5,-131.9 -132.1,-139.1 -114.4,-144.9 -95.8,-149.3 -76.6,-152.3 -57.1,-153.4 -37.4,-152.2 -18.1,-148.5 -0.0,-142.1 16.3,-133.5 30.4,-123.7 42.4,-114.0 53.2,-105.6 63.9,-99.6 76.0,-96.3 90.6,-95.4 108.1,-96.1 128.5,-97.1 150.5,-97.2 172.7,-95.2 193.4,-90.7 211.3,-83.6 225.7,-74.2 236.4,-63.2 243.8,-51.1 248.4,-38.5 250.6,-25.6 250.3,-12.7" vector-effect="non-scaling-stroke" />
+    <polygon id="hill-3" points="204.0,0.0 196.7,11.4 188.7,22.1 179.9,31.9 170.6,40.9 161.5,49.4 153.4,57.7 147.1,66.5 142.6,76.5 139.7,88.1 137.3,101.3 134.0,115.8 128.4,130.5 119.6,144.0 107.2,155.3 91.6,163.2 73.8,167.5 54.8,168.5 35.8,167.1 17.5,164.2 0.0,160.9 -16.8,158.0 -33.4,155.4 -49.7,152.9 -65.9,149.8 -81.6,145.5 -96.3,139.5 -109.5,131.9 -121.1,123.1 -131.4,113.5 -140.9,104.0 -150.2,94.7 -159.9,85.8 -170.1,76.9 -180.1,67.7 -189.1,57.8 -196.1,47.0 -200.3,35.5 -201.4,23.5 -199.9,11.6 -196.9,0.0 -193.8,-11.3 -191.9,-22.4 -191.9,-34.0 -193.7,-46.5 -196.4,-60.0 -198.4,-74.6 -198.1,-89.6 -194.1,-104.1 -185.8,-117.1 -173.2,-127.8 -157.1,-135.8 -138.8,-141.0 -119.5,-143.9 -100.2,-145.2 -81.6,-145.4 -63.8,-144.9 -46.8,-143.8 -30.4,-141.9 -14.8,-138.9 -0.0,-135.0 13.9,-130.3 26.9,-125.5 39.5,-121.5 52.4,-119.1 66.6,-118.7 83.0,-120.2 102.0,-122.9 123.5,-125.5 146.6,-126.7 169.6,-125.2 190.6,-120.2 207.9,-111.5 220.1,-99.6 227.0,-85.4 229.0,-70.0 227.2,-54.5 222.8,-39.5 217.1,-25.4 210.8,-12.2" vector-effect="non-scaling-stroke" />
+    <polygon id="hill-4" points="168.2,0.0 167.1,8.1 166.9,16.2 166.8,24.5 166.2,33.1 165.1,41.9 163.7,51.1 162.1,60.8 160.3,71.3 157.9,82.6 154.2,94.5 148.2,106.3 139.0,117.2 126.3,126.3 110.3,132.7 91.8,135.9 72.0,135.8 52.2,133.2 33.3,128.9 15.9,124.2 0.0,119.8 -15.0,116.5 -29.6,114.4 -44.2,112.9 -59.2,111.6 -74.0,109.5 -88.4,106.3 -101.8,101.8 -114.0,96.2 -125.2,89.8 -135.6,83.1 -146.1,76.4 -156.8,69.8 -168.1,63.1 -179.2,56.0 -189.6,48.1 -198.0,39.4 -203.8,30.0 -206.6,20.1 -206.8,10.0 -205.2,0.0 -203.0,-9.8 -201.3,-19.5 -200.5,-29.5 -200.5,-39.9 -200.5,-50.9 -199.0,-62.1 -194.7,-73.1 -186.6,-83.1 -174.5,-91.3 -158.8,-97.3 -140.7,-100.9 -121.5,-102.5 -102.7,-102.7 -85.1,-102.3 -69.0,-102.1 -54.4,-102.5 -40.6,-103.7 -27.2,-105.4 -13.8,-107.3 -0.0,-109.0 14.2,-110.3 28.8,-111.2 43.9,-112.1 60.0,-113.2 77.4,-114.5 96.4,-115.9 116.8,-116.8 138.0,-116.4 158.7,-113.9 177.3,-108.6 192.1,-100.5 201.7,-89.8 205.6,-77.2 204.2,-63.8 198.7,-50.4 191.0,-38.0 182.8,-26.9 175.8,-17.1 170.9,-8.2" vector-effect="non-scaling-stroke" />
+  </defs>
+  <g transform="translate(-30 120)" fill="none" stroke="black">
+    <use href="#hill-0" transform="scale(0.0909)" stroke-width="0.75" opacity="0.3" fill="black" fill-opacity=".7" />
+    <use href="#hill-0" transform="scale(0.1818)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-0" transform="scale(0.2727)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-0" transform="scale(0.3636)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-0" transform="scale(0.4545)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-0" transform="scale(0.5455)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-0" transform="scale(0.6364)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-0" transform="scale(0.7273)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-0" transform="scale(0.8182)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-0" transform="scale(0.9091)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-0" transform="scale(1.0000)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-0" transform="scale(1.0909)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-0" transform="scale(1.1818)" stroke-width="0.75" opacity="0.3" />
+  </g>
+  <g transform="translate(230 408)" fill="none" stroke="black">
+    <use href="#hill-1" transform="scale(0.0909)" stroke-width="0.75" opacity="0.3" fill="black" fill-opacity=".7" />
+    <use href="#hill-1" transform="scale(0.1818)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-1" transform="scale(0.2727)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-1" transform="scale(0.3636)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-1" transform="scale(0.4545)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-1" transform="scale(0.5455)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-1" transform="scale(0.6364)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-1" transform="scale(0.7273)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-1" transform="scale(0.8182)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-1" transform="scale(0.9091)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-1" transform="scale(1.0000)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-1" transform="scale(1.0909)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-1" transform="scale(1.1818)" stroke-width="0.75" opacity="0.3" />
+  </g>
+  <g transform="translate(505 25)" fill="none" stroke="black">
+    <use href="#hill-2" transform="scale(0.0909)" stroke-width="0.75" opacity="0.3" fill="black" fill-opacity=".7" />
+    <use href="#hill-2" transform="scale(0.1818)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-2" transform="scale(0.2727)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-2" transform="scale(0.3636)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-2" transform="scale(0.4545)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-2" transform="scale(0.5455)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-2" transform="scale(0.6364)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-2" transform="scale(0.7273)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-2" transform="scale(0.8182)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-2" transform="scale(0.9091)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-2" transform="scale(1.0000)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-2" transform="scale(1.0909)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-2" transform="scale(1.1818)" stroke-width="0.75" opacity="0.3" />
+  </g>
+  <g transform="translate(855 312)" fill="none" stroke="black">
+    <use href="#hill-3" transform="scale(0.0909)" stroke-width="0.75" opacity="0.3" fill="black" fill-opacity=".7" />
+    <use href="#hill-3" transform="scale(0.1818)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-3" transform="scale(0.2727)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-3" transform="scale(0.3636)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-3" transform="scale(0.4545)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-3" transform="scale(0.5455)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-3" transform="scale(0.6364)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-3" transform="scale(0.7273)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-3" transform="scale(0.8182)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-3" transform="scale(0.9091)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-3" transform="scale(1.0000)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-3" transform="scale(1.0909)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-3" transform="scale(1.1818)" stroke-width="0.75" opacity="0.3" />
+  </g>
+  <g transform="translate(987 -32)" fill="none" stroke="black">
+    <use href="#hill-4" transform="scale(0.0909)" stroke-width="0.75" opacity="0.3" fill="black" fill-opacity=".7" />
+    <use href="#hill-4" transform="scale(0.1818)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-4" transform="scale(0.2727)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-4" transform="scale(0.3636)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-4" transform="scale(0.4545)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-4" transform="scale(0.5455)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-4" transform="scale(0.6364)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-4" transform="scale(0.7273)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-4" transform="scale(0.8182)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-4" transform="scale(0.9091)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-4" transform="scale(1.0000)" stroke-width="0.75" opacity="0.3" />
+    <use href="#hill-4" transform="scale(1.0909)" stroke-width="1.3" opacity="0.45" />
+    <use href="#hill-4" transform="scale(1.1818)" stroke-width="0.75" opacity="0.3" />
+  </g>
+</svg>

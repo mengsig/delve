@@ -108,16 +108,17 @@ async function historySnapshot(workspace: Workspace, cacheRoot: string, request:
 export async function gitHistory(workspace: Workspace, cacheRoot: string, request: HistoryRequest) {
   assert.equal(workspace.id, request.workspaceId);
   assert.ok(workspace.kind === 'git' || workspace.kind === 'github');
+  let snapshot: Awaited<ReturnType<typeof historySnapshot>>;
   try {
-    const { path, warning } = await historySnapshot(workspace, cacheRoot, request);
-    const history = await openGitHistory(path, request.branch, request.kind !== 'pr');
-    if (warning) history.warnings.push(warning);
-    return history;
+    snapshot = await historySnapshot(workspace, cacheRoot, request);
   } catch (cause) {
     if (!(cause instanceof DomainError)) throw cause;
     const warnings = request.kind === 'pr' && cause.code === 'GITHUB_CACHE_MISSING' ? [] : [cause.message];
     return { branches: [], warnings, read: null };
   }
+  const history = await openGitHistory(snapshot.path, request.branch, request.kind !== 'pr');
+  if (snapshot.warning) history.warnings.push(snapshot.warning);
+  return history;
 }
 
 export async function pullHistory(workspace: Workspace, commitsOnly: boolean) {

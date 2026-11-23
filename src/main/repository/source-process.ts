@@ -40,6 +40,7 @@ interface CommandOptions {
   timeoutMs?: number;
   authenticated?: boolean;
   cwd?: string;
+  graftFile?: string;
 }
 
 export interface CommandResult {
@@ -50,10 +51,14 @@ export interface CommandResult {
 }
 
 export async function sourceCommand(bin: 'git' | 'gh', args: string[], options: CommandOptions = {}): Promise<CommandResult> {
-  const { maxBytes = 1024 * 1024, timeoutMs = 8_000, authenticated = false, cwd = dirname(process.execPath) } = options;
+  const { maxBytes = 1024 * 1024, timeoutMs = 8_000, authenticated = false, cwd = dirname(process.execPath), graftFile } = options;
   assert.ok(maxBytes > 0 && timeoutMs > 0);
   assert.ok(isAbsolute(cwd));
   const env = commandEnv(authenticated);
+  if (graftFile) {
+    assert.ok(bin === 'git' && !authenticated && isAbsolute(graftFile));
+    env.GIT_GRAFT_FILE = graftFile;
+  }
   const executable = await findExecutable(bin, env);
   if (!executable) {
     const help = bin === 'gh' ? 'Install GitHub CLI and run gh auth login.' : 'Install Git to read repository snapshots.';

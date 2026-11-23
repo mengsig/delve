@@ -25,6 +25,10 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
     'tutor:preview': () => { throw new Error('Unexpected tutor preview'); },
     'tutor:run': () => { throw new Error('Unexpected tutor turn'); },
     'tutor:cancel': () => false,
+    'tutor:jobs': () => [],
+    'tutor:wait': unexpected,
+    'tutor:retry': unexpected,
+    'tutor:dismiss': () => false,
     'reader:start-topic': () => { throw new Error('Unexpected topic request'); },
     'reader:lesson': () => { throw new Error('Unexpected lesson request'); },
     'reader:message': () => { throw new Error('Unexpected message request'); },
@@ -126,7 +130,7 @@ describe('graph IPC', () => {
       expect(await dispatch(h, 'workspaces:head', { workspaceId: origin.id })).toEqual({ ok: true, value: { kind: 'topic' } });
       expect(await dispatch(h, 'progress:read', null)).toEqual({
         ok: true,
-        value: [origin, linked].map(({ id }) => ({ workspaceId: id, total: 1, known: { high: 0, medium: 1, low: 0 } })),
+        value: [origin, linked].map(({ id }) => ({ workspaceId: id, total: 1, known: { high: 1, medium: 1, low: 0 } })),
       });
       const reset = { workspaceId: origin.id, conceptId: concept.id, depth: 'medium' };
       expect(await dispatch(h, 'evidence:reset', { ...reset, workspaceId: linked.id })).toMatchObject({

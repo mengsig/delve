@@ -1,10 +1,30 @@
 import assert from 'node:assert/strict';
 import type { DatabaseSync } from 'node:sqlite';
+import { compatibleDescriptions, normalizedConceptName, portableAlias } from './portable-identity';
 
 export interface Migration {
   version: number;
   name: string;
   sql: string;
+  registerFunctions?: (db: DatabaseSync) => void;
+}
+
+function registerPortableIdentity(db: DatabaseSync): void {
+  db.function('delve_portable_key', { deterministic: true, directOnly: true }, (key, title) => {
+    assert.ok(typeof key === 'string');
+    assert.ok(typeof title === 'string');
+    const alias = portableAlias(key, title);
+    return alias === undefined ? key : alias;
+  });
+  db.function('delve_compatible_descriptions', { deterministic: true, directOnly: true }, (left, right) => {
+    assert.equal(typeof left, 'string');
+    assert.equal(typeof right, 'string');
+    return Number(compatibleDescriptions(String(left), String(right)));
+  });
+  db.function('delve_normalized_concept', { deterministic: true, directOnly: true }, text => {
+    assert.ok(typeof text === 'string');
+    return normalizedConceptName(text);
+  });
 }
 
 const INITIAL_SCHEMA = `
@@ -220,6 +240,136 @@ export const MIGRATIONS: readonly Migration[] = [
     CREATE INDEX workspace_baselines ON repository_generations (workspace_id, last_used DESC) WHERE kind = 'baseline';
     CREATE INDEX workspace_snapshots ON snapshots (workspace_id, created_at DESC, id DESC);`,
   },
+  {
+    version: 7,
+    name: 'link duplicate repository concepts to portable identities',
+    registerFunctions: registerPortableIdentity,
+    sql: `CREATE TABLE concept_identity_links (
+      legacy_concept_id INTEGER PRIMARY KEY REFERENCES concepts ON DELETE CASCADE,
+      portable_concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
+      CHECK (legacy_concept_id <> portable_concept_id)
+    );
+    CREATE INDEX concept_identity_portable ON concept_identity_links (portable_concept_id);
+    CREATE TABLE scoped_proposal_concepts (
+      workspace_id TEXT NOT NULL REFERENCES workspaces ON DELETE CASCADE,
+      fingerprint TEXT NOT NULL,
+      concept_id INTEGER NOT NULL UNIQUE REFERENCES concepts ON DELETE CASCADE,
+      PRIMARY KEY (workspace_id, fingerprint)
+    );
+    CREATE TABLE migrated_evidence_archive (
+      id INTEGER PRIMARY KEY,
+      original_evidence_id INTEGER NOT NULL,
+      concept_id INTEGER NOT NULL,
+      portable_concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
+      depth TEXT NOT NULL, status TEXT NOT NULL, source TEXT NOT NULL, note TEXT NOT NULL,
+      workspace_id TEXT, snapshot_id INTEGER, revision INTEGER NOT NULL,
+      recorded_at TEXT NOT NULL, mastery_verified INTEGER NOT NULL
+    );
+    CREATE TEMP TABLE migration_candidates AS
+    SELECT id, workspace_id, delve_portable_key(local_key, title) AS general_key,
+      delve_portable_key(delve_normalized_concept(title), '') AS normalized_title,
+      delve_normalized_concept(summary) AS normalized_summary
+    FROM (SELECT c.*, substr(c.key, length('ws/' || c.workspace_id || '/') + 1) AS local_key
+    FROM concepts c JOIN workspaces w ON w.id = c.workspace_id
+    WHERE c.portable = 0 AND w.kind <> 'topic' AND w.source NOT LIKE 'Demo:%'
+      AND substr(c.key, 1, length('ws/' || c.workspace_id || '/')) = 'ws/' || c.workspace_id || '/'
+      AND substr(c.key, length('ws/' || c.workspace_id || '/') + 1) <> ''
+      AND substr(c.key, length('ws/' || c.workspace_id || '/') + 1) NOT LIKE 'change/%'
+      AND substr(c.key, length('ws/' || c.workspace_id || '/') + 1) NOT LIKE 'Demo:%'
+      AND c.title NOT LIKE 'Demo:%');
+    CREATE INDEX migration_candidates_key ON migration_candidates(general_key, workspace_id);
+    CREATE TEMP TABLE migration_portable AS
+    SELECT id, delve_portable_key(key, title) AS general_key,
+      delve_portable_key(delve_normalized_concept(title), '') AS normalized_title,
+      delve_normalized_concept(summary) AS normalized_summary
+    FROM concepts WHERE portable = 1 AND key NOT LIKE 'Demo:%';
+    CREATE INDEX migration_portable_key ON migration_portable(general_key);
+    CREATE INDEX migration_portable_title ON migration_portable(normalized_title, normalized_summary);
+    CREATE TEMP TABLE migration_groups AS
+    SELECT general_key, min(id) AS sample_id, min(normalized_title) AS normalized_title,
+      count(DISTINCT workspace_id) AS workspace_count,
+      CASE WHEN count(DISTINCT normalized_summary) = 1 AND min(normalized_summary) <> '' THEN min(normalized_summary) END AS shared_summary
+    FROM migration_candidates WHERE general_key IS NOT NULL
+    GROUP BY general_key HAVING count(DISTINCT normalized_title) = 1 AND count(DISTINCT workspace_id) = count(*);
+    CREATE INDEX migration_groups_key ON migration_groups(general_key);
+    ALTER TABLE migration_groups ADD COLUMN portable_id INTEGER;
+    UPDATE migration_groups AS groups SET portable_id = (
+      SELECT CASE WHEN count(*) = 1 AND groups.shared_summary IS NOT NULL
+        AND delve_compatible_descriptions(min(p.normalized_summary), groups.shared_summary)
+        THEN min(p.id) END
+      FROM migration_portable p WHERE p.general_key = groups.general_key
+    );
+    CREATE TEMP TABLE migration_duplicate_memberships AS
+    SELECT m.workspace_id, g.portable_id FROM migration_candidates m
+    JOIN migration_groups g ON g.general_key = m.general_key
+    WHERE g.portable_id IS NOT NULL
+    GROUP BY m.workspace_id, g.portable_id HAVING count(*) > 1;
+    CREATE INDEX migration_duplicate_memberships_id ON migration_duplicate_memberships(portable_id);
+    DELETE FROM migration_groups WHERE portable_id IN (SELECT portable_id FROM migration_duplicate_memberships);
+    DELETE FROM migration_groups WHERE shared_summary IS NULL OR (portable_id IS NULL AND (
+      workspace_count < 2
+      OR EXISTS (SELECT 1 FROM migration_portable p WHERE p.general_key = migration_groups.general_key)
+      OR EXISTS (SELECT 1 FROM migration_portable p WHERE p.normalized_title = migration_groups.normalized_title)
+      OR EXISTS (SELECT 1 FROM concepts c WHERE c.key = migration_groups.general_key)
+    ));
+    DROP TABLE migration_duplicate_memberships;
+    INSERT INTO concepts (key, title, summary, portable, workspace_id, created_at, updated_at)
+    SELECT g.general_key, c.title, c.summary, 1, NULL, c.created_at, c.updated_at
+    FROM migration_groups g JOIN concepts c ON c.id = g.sample_id WHERE g.portable_id IS NULL;
+    UPDATE migration_groups SET portable_id = (SELECT c.id FROM concepts c WHERE c.key = migration_groups.general_key) WHERE portable_id IS NULL;
+    INSERT INTO concept_identity_links (legacy_concept_id, portable_concept_id)
+    SELECT m.id, g.portable_id FROM migration_candidates m JOIN migration_groups g ON g.general_key = m.general_key;
+    INSERT INTO workspace_concepts (workspace_id, concept_id, on_atlas)
+    SELECT wc.workspace_id, l.portable_concept_id, max(wc.on_atlas)
+    FROM workspace_concepts wc JOIN concept_identity_links l ON l.legacy_concept_id = wc.concept_id
+    GROUP BY wc.workspace_id, l.portable_concept_id
+    ON CONFLICT (workspace_id, concept_id) DO UPDATE SET on_atlas = max(on_atlas, excluded.on_atlas);
+    INSERT INTO snapshot_concepts (snapshot_id, concept_id)
+    SELECT DISTINCT sc.snapshot_id, l.portable_concept_id FROM snapshot_concepts sc
+    JOIN concept_identity_links l ON l.legacy_concept_id = sc.concept_id
+    WHERE true ON CONFLICT (snapshot_id, concept_id) DO NOTHING;
+    UPDATE workspace_concepts SET on_atlas = 0 WHERE concept_id IN (SELECT legacy_concept_id FROM concept_identity_links);
+    INSERT INTO migrated_evidence_archive (original_evidence_id, concept_id, portable_concept_id, depth, status,
+      source, note, workspace_id, snapshot_id, revision, recorded_at, mastery_verified)
+    SELECT e.id, e.concept_id, l.portable_concept_id, e.depth, e.status, e.source, e.note,
+      e.workspace_id, e.snapshot_id, e.revision, e.recorded_at, e.mastery_verified
+    FROM evidence e JOIN concept_identity_links l ON l.legacy_concept_id = e.concept_id
+    UNION ALL
+    SELECT e.id, e.concept_id, e.concept_id, e.depth, e.status, e.source, e.note,
+      e.workspace_id, e.snapshot_id, e.revision, e.recorded_at, e.mastery_verified
+    FROM evidence e WHERE e.concept_id IN (SELECT portable_concept_id FROM concept_identity_links);
+    INSERT INTO evidence (concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at, mastery_verified)
+    SELECT portable_concept_id, depth, status, source, note, workspace_id, snapshot_id, revision, recorded_at, mastery_verified
+    FROM (SELECT *, row_number() OVER (PARTITION BY portable_concept_id, depth ORDER BY mastery_verified DESC,
+      CASE status WHEN 'demonstrated' THEN 2 WHEN 'partial' THEN 1 ELSE 0 END DESC,
+      revision DESC, recorded_at DESC, original_evidence_id DESC) AS rank FROM migrated_evidence_archive)
+    WHERE rank = 1
+    ON CONFLICT (concept_id, depth) DO UPDATE SET status = excluded.status, source = excluded.source,
+      note = excluded.note, workspace_id = excluded.workspace_id, snapshot_id = excluded.snapshot_id,
+      revision = excluded.revision, recorded_at = excluded.recorded_at, mastery_verified = excluded.mastery_verified;
+    DROP TABLE migration_candidates;
+    DROP TABLE migration_portable;
+    DROP TABLE migration_groups;`,
+  },
+  {
+    version: 8,
+    name: 'persist approved tutor requests',
+    sql: `CREATE TABLE tutor_jobs (
+      id TEXT PRIMARY KEY NOT NULL,
+      workspace_id TEXT NOT NULL,
+      concept_id INTEGER NOT NULL,
+      depth TEXT NOT NULL CHECK (depth IN ('high', 'medium', 'low')),
+      token TEXT NOT NULL CHECK (length(token) = 64),
+      detail TEXT NOT NULL CHECK (json_valid(detail)),
+      phase TEXT NOT NULL CHECK (phase IN ('running', 'ready', 'failed')),
+      code TEXT,
+      message TEXT,
+      CHECK ((phase = 'failed' AND code IS NOT NULL AND message IS NOT NULL)
+        OR (phase <> 'failed' AND code IS NULL AND message IS NULL)),
+      UNIQUE (workspace_id, concept_id, depth),
+      FOREIGN KEY (workspace_id, concept_id) REFERENCES workspace_concepts ON DELETE CASCADE
+    );`,
+  },
 ];
 
 function assertOrdered(migrations: readonly Migration[]): void {
@@ -246,6 +396,7 @@ export function migrate(db: DatabaseSync, migrations: readonly Migration[] = MIG
   for (const migration of migrations.slice(current)) {
     db.exec('BEGIN IMMEDIATE');
     try {
+      migration.registerFunctions?.(db);
       db.exec(migration.sql);
       db.exec(`PRAGMA user_version = ${migration.version}`);
       db.exec('COMMIT');

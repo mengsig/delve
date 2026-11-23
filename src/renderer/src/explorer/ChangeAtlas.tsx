@@ -9,11 +9,11 @@ import type { ChangeRef } from '../../../shared/repository';
 
 export interface AtlasFocus {
   id: number;
-  change: ChangeRef;
+  change?: ChangeRef;
 }
 
 function includeFocusedConcept(reviewed: WorkspaceGraph, change: WorkspaceGraph, id: number): WorkspaceGraph {
-  if (reviewed.workspaceId !== change.workspaceId) throw new Error('The change concept belongs to another workspace.');
+  if (reviewed.workspaceId !== change.workspaceId) throw new Error('The selected concept belongs to another workspace.');
   const concept = change.concepts.find(entry => entry.id === id);
   if (!concept) throw new Error('This concept is no longer available in the workspace.');
   const ids = new Set([...reviewed.concepts.map(entry => entry.id), id]);
@@ -34,9 +34,9 @@ function FocusedAtlas({ focus, onClearFocus, ...props }: Props & { focus: AtlasF
     return includeFocusedConcept(graph, all, focus.id);
   }, [graph, focus.id]);
   const { result, refresh } = useRead(query);
-  if (result.status !== 'ready') return <ReadState label="Change concept" retry={refresh}
+  if (result.status !== 'ready') return <ReadState label="Selected concept" retry={refresh}
     message={result.status === 'error' ? result.message : undefined} />;
-  return <><div className="atlas-focus"><p>Viewing a concept from {changeLabel(focus.change)} alongside your reviewed map.</p>
+  return <><div className="atlas-focus"><p>Viewing a concept from {focus.change ? changeLabel(focus.change) : 'Knowledge'} alongside your reviewed map.</p>
     <button className="back" onClick={onClearFocus}>Return to reviewed map</button></div>
     <Atlas {...props} graph={result.value} initialConceptId={focus.id} /></>;
 }

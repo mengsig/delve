@@ -1,0 +1,108 @@
+.knowledge-map {
+  position: relative;
+  isolation: isolate;
+  height: clamp(280px, calc(100dvh - 306px), 660px);
+  overflow: hidden;
+  color: #254938;
+  background:
+    radial-gradient(circle, #5b795625 1px, transparent 1.65px) 15px 12px / 30px 30px,
+    radial-gradient(ellipse at 40% 35%, #edf2d8, #e4ecd6);
+}
+.knowledge-map::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: #809d71;
+  mask: url('./area-contours.svg') center / 100% 100% no-repeat;
+  content: '';
+}
+html[data-theme='dark'] .knowledge-map {
+  color: #dcebc7;
+  background:
+    radial-gradient(circle, #bfd5a427 1px, transparent 1.65px) 15px 12px / 30px 30px,
+    radial-gradient(ellipse at 40% 35%, #315841, #1d3e33);
+}
+html[data-theme='dark'] .knowledge-map::before { background: #98aa75; opacity: .76; }
+.knowledge-map canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+}
+.knowledge-map canvas[data-hover] { cursor: pointer; }
+.knowledge-map canvas[data-dragging] { cursor: grabbing; }
+.knowledge-map canvas:focus-visible { outline-offset: -3px; }
+.knowledge-map-compass {
+  position: absolute;
+  top: 15px;
+  right: 16px;
+  width: 17px;
+  height: 17px;
+  pointer-events: none;
+}
+.knowledge-map .knowledge-map-tools {
+  position: absolute;
+  inset: auto 14px 14px auto;
+  display: flex;
+  gap: 0;
+  border: 1px solid #a8bc9f;
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 2px 5px #2335210b;
+}
+.knowledge-map-tools button {
+  min-width: 33px;
+  min-height: 33px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 650;
+}
+.knowledge-map-tools button:first-child { border-radius: 9px 0 0 9px; }
+.knowledge-map-tools button:last-child { border-radius: 0 9px 9px 0; }
+.knowledge-map-tools button + button { border-left: 1px solid var(--rule); }
+.knowledge-map-tools button:hover { background: var(--soft); }
+.knowledge-map-tools button:focus-visible { position: relative; outline-offset: -3px; }
+.knowledge-map-tip {
+  position: absolute;
+  bottom: 57px;
+  left: 14px;
+  max-width: min(310px, calc(100% - 28px));
+  max-height: calc(100% - 75px);
+  overflow: auto;
+  padding: 9px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+.knowledge-map-tip > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.knowledge-map-tip p { margin-top: 4px; }
+.knowledge-map-tip span, .knowledge-map-tip p { color: var(--dim); }
+.knowledge-map-instructions {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.knowledge-map-zoom-hint, .knowledge-map-error {
+  position: absolute;
+  bottom: 16px;
+  left: 14px;
+  max-width: calc(100% - 162px);
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--dim);
+  font-size: 11px;
+  pointer-events: none;
+}

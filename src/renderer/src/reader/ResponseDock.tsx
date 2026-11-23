@@ -21,12 +21,13 @@ interface Props {
 
 function EmptyCheck({ body, tutor, opening }: Pick<Props, 'body' | 'tutor' | 'opening'>) {
   const adapt = body.mastery.needsAdaptation;
-  const label = adapt ? 'Prepare four choices' : body.invalidLatest && !body.revision ? 'Retry lesson generation' : 'Start lesson';
+  if (!adapt && body.invalidLatest && !body.revision) return null;
   return <section className="empty-check">
     <strong>{adapt ? 'Update this saved check' : 'Your first check will appear here.'}</strong>
     {adapt && <p>Your original question is in the conversation. Prepare choices to continue this round.</p>}
-    {body.invalidLatest && !body.revision && <p>The stored lesson could not be displayed. Generate a new lesson to continue.</p>}
-    <button disabled={!tutor.signedIn || tutor.pending} onClick={() => tutor.prepare(opening ?? { kind: 'teach' })}>{label}</button>
+    <button disabled={!tutor.signedIn || tutor.pending} onClick={() => tutor.prepare(opening ?? { kind: 'teach' })}>
+      {adapt ? 'Prepare four choices' : 'Start lesson'}
+    </button>
   </section>;
 }
 

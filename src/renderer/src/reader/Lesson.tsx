@@ -8,7 +8,7 @@ import { errorMessage, useRead } from '../useRead';
 import { Conversation, LessonBlocks } from './Conversation';
 import { LessonHeading, LessonNotes } from './LessonNotes';
 import { useLessonDraft } from './LessonDraft';
-import { useOpenLesson } from './LessonStart';
+import { LessonRecovery, useOpenLesson } from './LessonStart';
 import { LessonRail } from './Mastery';
 import type { ReaderProps } from './ReaderHeader';
 import { ResponseDock } from './ResponseDock';
@@ -27,26 +27,27 @@ interface LessonProps extends ReaderProps {
 }
 
 function Thread({ body, tutor, scope }: { body: ReaderLesson; tutor: LessonTutor; scope: string }) {
-  const pending = tutor.job?.phase === 'running' ? tutor.job : undefined;
-  const intent = pending?.request.intent;
-  const selection = intent?.kind === 'answer' && typeof intent.answer === 'number' && body.mastery.activeCheck?.options?.[intent.answer];
-  const pendingText = intent?.kind === 'ask' ? intent.text : selection && intent?.kind === 'answer' ? [selection, intent.reasoning].filter(Boolean).join('\n') : '';
+  const job = tutor.job;
+  const submitted = job?.phase === 'running' || job?.phase === 'cancelling' || job?.phase === 'failed' && job.code === 'TUTOR_INTERRUPTED' ? job : undefined;
+  const intent = submitted?.request.intent;
+  const selection = intent?.kind === 'answer' && (submitted?.submittedAnswer ??
+    (typeof intent.answer === 'number' && body.mastery.activeCheck?.options?.[intent.answer]));
+  const submittedText = intent?.kind === 'ask' ? intent.text : selection && intent?.kind === 'answer'
+    ? [selection, intent.reasoning].filter(Boolean).join('\n') : '';
   return <>
     <header className="thread-heading"><span className="tutor-mark"><Icon name="layer" /></span>
       <div><b>Delve tutor</b><small>Lesson conversation</small></div><LatestInstrumentLink body={body} compact /><small className="local-status">● &nbsp;Saved locally</small>
     </header>
-    <Transcript scope={scope} lastMessage={body.messages.at(-1)?.id} pendingTurn={pending?.id}>
-      {body.invalidLatest && body.revision && <section className="reader-notice" role="status">
-        <p>The newest lesson could not be displayed. You can continue with the last readable version.</p>
-        <button disabled={tutor.pending || !tutor.signedIn} onClick={() => tutor.prepare({ kind: 'teach' })}>Retry lesson generation</button>
-        {tutor.provider !== 'demo' && <button disabled={tutor.pending || !tutor.signedIn} onClick={() => tutor.prepare({ kind: 'teach' }, true)}>Preview lesson request</button>}
-      </section>}
+    <Transcript scope={scope} lastMessage={body.messages.at(-1)?.id} pendingTurn={submitted?.id}>
+      <LessonRecovery body={body} tutor={tutor} />
       {body.blocks.length > 0 && <section id="opening-lesson"><span className="message-author">Delve tutor</span>
         <LessonBlocks blocks={body.blocks} /></section>}
       {body.mastery.needsAdaptation && <section><strong>Saved question</strong><p>{body.mastery.activeCheck?.prompt}</p>
         {body.mastery.activeCheck?.options && <ol>{body.mastery.activeCheck.options.map((choice, i) => <li key={i}>{choice}</li>)}</ol>}</section>}
       <Conversation messages={body.messages} earlierMessages={body.earlierMessages} />
-      {pendingText && <div className="reader-message reader-message-learner"><span className="message-author">You · sending</span><p>{pendingText}</p></div>}
+      {submittedText && <div className="reader-message reader-message-learner">
+        <span className="message-author">{submitted?.phase === 'failed' ? 'You · awaiting feedback' : 'You · sending'}</span>
+        <p>{submittedText}</p></div>}
     </Transcript>
   </>;
 }
@@ -72,7 +73,10 @@ function Session({ props, initial, title, address, reload }: {
 }) {
   const [body, setBody] = useState(initial);
   const scope = lessonKey(address);
-  const { draft, change } = useLessonDraft(scope, body.mastery, props.initialQuestion);
+  const { jobs, dismiss } = useTutorJobs();
+  const job = jobs.get(scope);
+  const submitted = job?.phase === 'failed' && job.code === 'TUTOR_INTERRUPTED' ? job.request.intent : undefined;
+  const { draft, change } = useLessonDraft(scope, body.mastery, props.initialQuestion, submitted);
   function commit(next: ReaderLesson) { setBody(next); props.onEvidence?.(next); }
   const tutor = useTutor(address, title, props.graph.demo, (lesson, intent) => {
     if (intent.kind === 'ask' && draft.question.trim() === intent.text) change({ question: '' });
@@ -80,9 +84,8 @@ function Session({ props, initial, title, address, reload }: {
   });
   const opening = useOpenLesson(body, tutor, props.initialReview);
   const skip = useSkip(address, body, commit);
-  const { dismiss } = useTutorJobs();
-  function refresh() {
-    if (tutor.job?.phase === 'failed') dismiss(tutor.job);
+  async function refresh() {
+    if (tutor.job?.phase === 'failed') await dismiss(tutor.job);
     reload();
   }
   const activity = useContext(EnvironmentActivity);
@@ -119,7 +122,7 @@ export function Lesson(props: LessonProps) {
   const [version, update] = useState(0);
   const concept = props.graph.concepts.find(node => node.id === props.conceptId);
   if (!concept || props.graph.workspaceId !== props.workspace.id) return <>
-    <button className="back" onClick={props.onBack}>← Back to atlas</button><p role="alert">This workspace does not contain the selected concept.</p>
+    <button className="back" onClick={props.onBack}>{props.backLabel ?? '← Back to atlas'}</button><p role="alert">This workspace does not contain the selected concept.</p>
   </>;
   return <Reader key={[props.workspace.id, props.conceptId, props.depth, props.graph.snapshot, version].join('/')} props={props} title={concept.title} reload={() => update(value => value + 1)} />;
 }

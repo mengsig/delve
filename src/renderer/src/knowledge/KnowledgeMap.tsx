@@ -1,238 +1,156 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import type { GlobalKnowledgeGraph, KnowledgeConcept } from '../../../shared/knowledge';
-import type { Point } from './layout.worker';
-import { workspaceColor } from './colors';
+import { useEffect, useId, useMemo, useRef, type RefObject } from 'react';
+import type { GlobalKnowledgeGraph } from '../../../shared/knowledge';
+import { fitViewport, revealPoint, useMapCamera, type Size, type Viewport } from './map-camera';
+import { drawGraph, prepareDrawData } from './map-drawing';
+import { stateName, type NodeState } from './map-geometry';
+import { labelThreshold, type HitRegion } from './map-labels';
+import { framePoints, type MapLayout, type Point } from './map-layout';
+import { useMapInput } from './use-map-input';
+import { useCanvasSize, useMapLayout } from './use-map-layout';
+import './map.css';
 
-interface Viewport { x: number; y: number; scale: number }
-interface Props { graph: GlobalKnowledgeGraph; selected: number | null; visible: Set<number>; focus: Set<number> | null; onSelect: (id: number) => void }
-const defaultView = { x: 70, y: 70, scale: 0.8 };
-function initialView(): Viewport {
-  try {
-    const saved = JSON.parse(localStorage.getItem('delve.knowledge.viewport') ?? 'null') as Viewport | null;
-    if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y) && saved.scale >= 0.1 && saved.scale <= 3) return saved;
-  } catch { /* Invalid saved preferences fall back to the initial view. */ }
-  return defaultView;
+interface Props {
+  graph: GlobalKnowledgeGraph;
+  selected: number | null;
+  visible: Set<number>;
+  focus: Set<number> | null;
+  onSelect: (id: number) => void;
+  cameras: Map<string, Viewport>;
+  states: ReadonlyMap<number, NodeState>;
+  areaKey: string;
+  global: boolean;
+}
+interface Framing { selected: number | null; visible: Set<number>; focus: Set<number> | null }
+type Camera = ReturnType<typeof useMapCamera>;
+type DrawingOptions = Parameters<typeof drawGraph>[3];
+const emptyLayout: MapLayout = { points: [], areas: [] };
+
+function sameMembers(a: Set<number> | null, b: Set<number> | null) {
+  return a === b || !!(a && b && a.size === b.size && Array.from(a).every(id => b.has(id)));
 }
 
-export function KnowledgeMap({ graph, selected, visible, focus, onSelect }: Props) {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const drag = useRef<{ x: number; y: number; view: Viewport; moved: boolean } | null>(null);
-  const needsFitRef = useRef(!localStorage.getItem('delve.knowledge.viewport'));
-  const [view, setView] = useState(initialView);
-  const { points, layoutError } = useLayoutPoints(graph.concepts);
-  useFitView(canvas, points, selected, needsFitRef, setView);
-  usePersistView(view);
-  useWheelZoom(canvas, setView);
-  const drawData = useMemo(() => prepareDrawData(graph, points), [graph, points]);
-  useGraphDrawing(canvas, drawData, view, visible, focus, selected);
-  function pick(event: React.PointerEvent<HTMLCanvasElement>) {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - bounds.left - view.x) / view.scale;
-    const y = (event.clientY - bounds.top - view.y) / view.scale;
-    const nearest = points.find(point => visible.has(point.id) && Math.hypot(point.x - x, point.y - y) < 18 / view.scale);
-    if (nearest) onSelect(nearest.id);
-  }
-  function zoom(factor: number) {
+function useAutomaticFraming(camera: Camera, size: Size, points: Point[], layout: MapLayout | undefined, framing: Framing) {
+  const previous = useRef<Framing | null>(null);
+  const beforeFocus = useRef<Viewport | null>(null);
+  const { current, move, restored } = camera;
+  const { focus, selected, visible } = framing;
+  useEffect(() => {
+    if (!layout || !size.width || !size.height) return;
+    const last = previous.current;
+    previous.current = { focus, selected, visible };
+    if (!points.length) return;
+    if (!last) {
+      if (!restored) move(fitViewport(framePoints(points, layout, focus), size));
+      return;
+    }
+    const filterChanged = !sameMembers(last.visible, visible);
+    const focusChanged = focus && !sameMembers(last.focus, focus);
+    if (focus && !last.focus) beforeFocus.current = current.current;
+    if (last.focus && !focus && !filterChanged && selected === last.selected) {
+      move(beforeFocus.current ?? fitViewport(framePoints(points, layout, null), size), true);
+      beforeFocus.current = null;
+      return;
+    }
+    if (filterChanged || focusChanged) {
+      move(fitViewport(framePoints(points, layout, focus), size), true);
+      return;
+    }
+    const point = points.find(item => item.id === selected);
+    if (point && selected !== last.selected) {
+      const view = current.current;
+      const target = revealPoint(view, point, size);
+      if (target !== view) move(target, true);
+    }
+  }, [current, move, restored, size, points, layout, visible, focus, selected]);
+}
+
+function useDrawing(canvas: RefObject<HTMLCanvasElement | null>, data: ReturnType<typeof prepareDrawData>,
+  size: Size, view: Camera['view'], options: DrawingOptions, hitsRef: RefObject<HitRegion[]>) {
+  const paint = useRef<() => void>(() => { hitsRef.current = []; });
+  const measurements = useMemo(() => new Map<string, { text: string; width: number }>(), []);
+  const { visible, focus, states, selected, preview } = options;
+  useEffect(() => {
     const element = canvas.current;
-    if (element) setView(old => zoomAt(old, factor, element.clientWidth / 2, element.clientHeight / 2));
-  }
+    if (!element) return;
+    paint.current = () => {
+      hitsRef.current = drawGraph(element, data, view, { visible, focus, states, selected, preview }, measurements);
+    };
+    paint.current();
+  }, [canvas, data, size, view, visible, focus, states, selected, preview, measurements, hitsRef]);
+  useEffect(() => {
+    const observer = new MutationObserver(() => paint.current());
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
+}
+
+function MapPreview({ concept, state, keyboard, prerequisites }: {
+  concept: GlobalKnowledgeGraph['concepts'][number] | undefined; state: NodeState | undefined; keyboard: boolean; prerequisites: string[];
+}) {
+  const text = concept && <div className="knowledge-map-tip">
+    <div><strong>{concept.title}</strong><span>{stateName[state ?? 'locked']}</span></div>
+    {concept.summary && <p>{concept.summary}</p>}
+    {prerequisites.length > 0 && <p>Builds on {prerequisites.join(', ')}.</p>}
+    {concept.bridge && <p>Shared across {concept.memberships.map(w => w.workspaceName).join(', ')}.</p>}
+  </div>;
+  return <>
+    <div role="status" aria-live="polite" aria-atomic="true">{keyboard ? text : null}</div>
+    {keyboard ? null : text}
+  </>;
+}
+
+function MapCompass() {
+  return <svg className="knowledge-map-compass" aria-hidden="true" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
+    <path d="m19 5-4.5 9.5L5 19l4.5-9.5L19 5Z" /><path d="m9.5 9.5 5 5" />
+  </svg>;
+}
+
+function AreaMap({ graph, selected, visible, focus, onSelect, cameras, states, areaKey, global }: Props) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const instructions = useId();
+  const { concepts, edges } = graph;
+  const input = useMemo(() => ({ concepts, edges, global }), [concepts, edges, global]);
+  const result = useMapLayout(input);
+  const layout = result?.layout;
+  const size = useCanvasSize(canvas);
+  const camera = useMapCamera(areaKey, cameras);
+  const points = useMemo(() => layout?.points.filter(point => visible.has(point.id)) ?? [], [layout, visible]);
+  const data = useMemo(() => prepareDrawData(graph, layout ?? emptyLayout), [graph, layout]);
+  useAutomaticFraming(camera, size, points, layout, { selected, visible, focus });
+  const hitsRef = useRef<HitRegion[]>([]);
+  const fit = () => {
+    if (layout && points.length && size.width && size.height) camera.move(fitViewport(framePoints(points, layout, null), size), true);
+  };
+  const interaction = useMapInput({ canvas, hits: hitsRef, size, points, selected, onSelect, fit,
+    current: camera.current, move: camera.move });
+  const preview = interaction.preview && visible.has(interaction.preview.id) ? interaction.preview.id : null;
+  useDrawing(canvas, data, size, camera.view, { visible, focus, states, selected, preview }, hitsRef);
+
+  const titles = useMemo(() => new Map(concepts.map(c => [c.id, c])), [concepts]);
+  const concept = preview === null ? undefined : titles.get(preview);
+  const prerequisites = useMemo(() => preview === null ? [] : edges.filter(e => e.conceptId === preview)
+    .flatMap(e => titles.get(e.prerequisiteId)?.title ?? []), [preview, edges, titles]);
   return <div className="knowledge-map">
-    {layoutError && <p role="alert">{layoutError}</p>}
-    <canvas ref={canvas} aria-label="Knowledge graph. Use search or the learned list to select a concept."
-      onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); drag.current = { x: event.clientX, y: event.clientY, view, moved: false }; }}
-      onPointerMove={event => { const start = drag.current; if (!start) return; const dx = event.clientX - start.x; const dy = event.clientY - start.y;
-        if (Math.abs(dx) + Math.abs(dy) > 3) start.moved = true; setView({ ...start.view, x: start.view.x + dx, y: start.view.y + dy }); }}
-      onPointerUp={event => { if (drag.current && !drag.current.moved) pick(event); drag.current = null; }}
-      onPointerCancel={() => { drag.current = null; }} />
-    <div className="knowledge-map-tools"><button onClick={() => zoom(1.2)} aria-label="Zoom in">+</button>
-      <button onClick={() => zoom(1 / 1.2)} aria-label="Zoom out">−</button><button onClick={() => setView(defaultView)}>Reset view</button></div>
+    {result?.error && <p className="knowledge-map-error" role="alert">{result.error}</p>}
+    <p id={instructions} className="knowledge-map-instructions">
+      Arrow keys explore concepts. Enter selects. Shift and arrow keys pan. Plus and minus zoom. Home fits the map.
+    </p>
+    <canvas ref={canvas} tabIndex={0} aria-label="Knowledge map concepts" aria-describedby={instructions}
+      data-dragging={interaction.dragging || undefined} data-hover={preview !== null || undefined}
+      {...interaction.handlers} onKeyDown={interaction.onKeyDown} onFocus={interaction.onFocus} onBlur={interaction.onBlur} />
+    <MapCompass />
+    <MapPreview concept={concept} prerequisites={prerequisites} state={preview === null ? undefined : states.get(preview)}
+      keyboard={interaction.preview?.keyboard ?? false} />
+    {points.length > 12 && camera.view.scale < labelThreshold && <span className="knowledge-map-zoom-hint">Zoom in to see concept names</span>}
+    <div className="knowledge-map-tools" role="group" aria-label="Map controls">
+      <button type="button" onClick={() => interaction.zoom(1 / 1.2)} aria-label="Zoom out">−</button>
+      <button type="button" onClick={() => interaction.zoom(1.2)} aria-label="Zoom in">+</button>
+      <button type="button" onClick={fit} disabled={!points.length}>Fit map</button>
+    </div>
   </div>;
 }
 
-function useLayoutPoints(concepts: KnowledgeConcept[]) {
-  const [points, setPoints] = useState<Point[]>([]);
-  const [layoutError, setLayoutError] = useState('');
-  useEffect(() => {
-    const worker = new Worker(new URL('./layout.worker.ts', import.meta.url), { type: 'module' });
-    worker.onmessage = (event: MessageEvent<Point[]>) => setPoints(event.data);
-    worker.onerror = () => setLayoutError('Could not lay out the knowledge graph. Try reopening Knowledge.');
-    worker.postMessage(concepts);
-    return () => worker.terminate();
-  }, [concepts]);
-  return { points, layoutError };
-}
-
-function useFitView(canvas: RefObject<HTMLCanvasElement | null>, points: Point[], selected: number | null,
-  needsFitRef: RefObject<boolean>, setView: React.Dispatch<React.SetStateAction<Viewport>>) {
-  useEffect(() => {
-    const element = canvas.current;
-    const point = points.find(item => item.id === selected);
-    if (!element || !points.length) return;
-    if (!point && needsFitRef.current) {
-      needsFitRef.current = false;
-      const maxX = Math.max(...points.map(item => item.x));
-      const maxY = Math.max(...points.map(item => item.y));
-      const scale = Math.max(.1, Math.min(1, (element.clientWidth - 100) / (maxX + 100), (element.clientHeight - 100) / (maxY + 100)));
-      setView({ x: 50, y: 50, scale });
-      return;
-    }
-    if (!point) return;
-    needsFitRef.current = false;
-    setView(old => ({ ...old, x: element.clientWidth / 2 - point.x * old.scale, y: element.clientHeight / 2 - point.y * old.scale }));
-  }, [canvas, selected, points, needsFitRef, setView]);
-}
-
-function useWheelZoom(canvas: RefObject<HTMLCanvasElement | null>, setView: React.Dispatch<React.SetStateAction<Viewport>>) {
-  useEffect(() => {
-    const element = canvas.current;
-    if (!element) return;
-    const wheel = (event: WheelEvent) => {
-      event.preventDefault();
-      const bounds = element.getBoundingClientRect();
-      const x = event.clientX - bounds.left; const y = event.clientY - bounds.top;
-      setView(old => zoomAt(old, event.deltaY < 0 ? 1.12 : 1 / 1.12, x, y));
-    };
-    element.addEventListener('wheel', wheel, { passive: false });
-    return () => element.removeEventListener('wheel', wheel);
-  }, [canvas, setView]);
-}
-
-function zoomAt(view: Viewport, factor: number, x: number, y: number): Viewport {
-  const scale = Math.max(.1, Math.min(3, view.scale * factor));
-  const ratio = scale / view.scale;
-  return { x: x - (x - view.x) * ratio, y: y - (y - view.y) * ratio, scale };
-}
-
-interface DrawNode { concept: KnowledgeConcept; point: Point; label: string; labelBounds?: Bounds }
-interface DrawEdge { from: Point; to: Point; transfer: boolean }
-interface DrawData { nodes: DrawNode[]; edges: DrawEdge[] }
-interface Bounds { left: number; top: number; right: number; bottom: number }
-
-export function prepareDrawData(graph: GlobalKnowledgeGraph, points: Point[]): DrawData {
-  const byId = new Map(points.map(point => [point.id, point]));
-  const nodes: DrawNode[] = [];
-  const edges: DrawEdge[] = [];
-  for (const concept of graph.concepts) {
-    const point = byId.get(concept.id);
-    if (point) nodes.push({ concept, point, label: concept.title.slice(0, 28) });
-  }
-  const addEdge = (fromId: number, toId: number, transfer: boolean) => {
-    const from = byId.get(fromId); const to = byId.get(toId);
-    if (from && to) edges.push({ from, to, transfer });
-  };
-  graph.edges.forEach(edge => addEdge(edge.prerequisiteId, edge.conceptId, false));
-  graph.links.forEach(link => addEdge(link.fromConceptId, link.toConceptId, true));
-  return { nodes, edges };
-}
-
-function usePersistView(view: Viewport) {
-  const latest = useRef(view);
-  useEffect(() => {
-    latest.current = view;
-    const timer = window.setTimeout(() => localStorage.setItem('delve.knowledge.viewport', JSON.stringify(view)), 250);
-    return () => window.clearTimeout(timer);
-  }, [view]);
-  useEffect(() => () => localStorage.setItem('delve.knowledge.viewport', JSON.stringify(latest.current)), []);
-}
-
-function useGraphDrawing(canvas: RefObject<HTMLCanvasElement | null>, data: DrawData, view: Viewport,
-  visible: Set<number>, focus: Set<number> | null, selected: number | null) {
-  const draw = useRef<() => void>(() => {});
-  useEffect(() => {
-    const element = canvas.current;
-    if (!element) return;
-    draw.current = () => drawGraph(element, data, view, visible, focus, selected);
-    draw.current();
-  }, [canvas, data, view, visible, focus, selected]);
-  useEffect(() => {
-    const element = canvas.current;
-    if (!element) return;
-    const redraw = () => draw.current();
-    const observer = new ResizeObserver(redraw);
-    observer.observe(element);
-    const theme = new MutationObserver(redraw);
-    theme.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => { observer.disconnect(); theme.disconnect(); };
-  }, [canvas]);
-}
-
-export function drawGraph(canvas: HTMLCanvasElement, data: DrawData, view: Viewport,
-  visible: Set<number>, focus: Set<number> | null, selected: number | null) {
-  const rect = canvas.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
-  const ratio = window.devicePixelRatio || 1;
-  if (!Number.isFinite(view.scale) || view.scale <= 0 || !Number.isFinite(view.x) || !Number.isFinite(view.y)) {
-    throw new Error('Invalid knowledge graph viewport');
-  }
-  if (!Number.isFinite(ratio) || ratio <= 0) throw new Error('Invalid device pixel ratio');
-  const width = Math.floor(rect.width * ratio); const height = Math.floor(rect.height * ratio);
-  if (canvas.width !== width) canvas.width = width;
-  if (canvas.height !== height) canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.setTransform(ratio * view.scale, 0, 0, ratio * view.scale, ratio * view.x, ratio * view.y);
-  ctx.lineWidth = 1;
-  const bounds = { left: -view.x / view.scale, top: -view.y / view.scale,
-    right: (rect.width - view.x) / view.scale, bottom: (rect.height - view.y) / view.scale };
-  drawEdges(ctx, data.edges, bounds, view.scale, visible, focus);
-  drawNodes(ctx, canvas, data.nodes, bounds, view.scale, visible, focus, selected);
-  ctx.globalAlpha = 1;
-}
-
-function drawEdges(ctx: CanvasRenderingContext2D, edges: DrawEdge[], bounds: Bounds, scale: number,
-  visible: Set<number>, focus: Set<number> | null) {
-  const margin = 2 / scale;
-  for (const { from, to, transfer } of edges) {
-    if (!visible.has(from.id) || !visible.has(to.id)) continue;
-    if (Math.max(from.x, to.x) < bounds.left - margin || Math.min(from.x, to.x) > bounds.right + margin ||
-      Math.max(from.y, to.y) < bounds.top - margin || Math.min(from.y, to.y) > bounds.bottom + margin) continue;
-    ctx.globalAlpha = focus && (!focus.has(from.id) || !focus.has(to.id)) ? .08 : .55;
-    ctx.strokeStyle = transfer ? '#cf9d4d' : '#8aab9b'; ctx.setLineDash(transfer ? [5, 5] : []);
-    ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
-  }
-  ctx.setLineDash([]);
-}
-
-function drawNodes(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, nodes: DrawNode[], bounds: Bounds,
-  scale: number, visible: Set<number>, focus: Set<number> | null, selected: number | null) {
-  const textColor = getComputedStyle(canvas).color;
-  ctx.font = '12px sans-serif';
-  for (const node of nodes) {
-    const { concept, point } = node;
-    if (!visible.has(concept.id)) continue;
-    if (scale >= .55 && !node.labelBounds) {
-      const metrics = ctx.measureText(node.label);
-      node.labelBounds = { left: 18 - metrics.actualBoundingBoxLeft, right: 18 + metrics.actualBoundingBoxRight,
-        top: 4 - metrics.actualBoundingBoxAscent, bottom: 4 + metrics.actualBoundingBoxDescent };
-    }
-    const label = scale >= .55 ? node.labelBounds : undefined;
-    if (point.x + Math.max(17, label?.right ?? 0) < bounds.left ||
-      point.x + Math.min(-17, label?.left ?? 0) > bounds.right ||
-      point.y + Math.max(17, label?.bottom ?? 0) < bounds.top ||
-      point.y + Math.min(-17, label?.top ?? 0) > bounds.bottom) continue;
-    drawNode(ctx, node, scale, focus, selected, textColor);
-  }
-}
-
-function drawNode(ctx: CanvasRenderingContext2D, node: DrawNode, scale: number, focus: Set<number> | null,
-  selected: number | null, textColor: string) {
-  const { concept, point } = node;
-  ctx.globalAlpha = focus && !focus.has(concept.id) ? .12 : 1;
-  ctx.fillStyle = concept.masteryState === 'verified' ? '#547d5e' : concept.masteryState === 'in-progress' ? '#d29d42' : concept.masteryState === 'skipped' ? '#a37d8f' : '#a2b0a7';
-  ctx.beginPath(); ctx.arc(point.x, point.y, concept.id === selected ? 11 : 8, 0, Math.PI * 2); ctx.fill();
-  if (concept.masteredDepth && scale >= .55) {
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText({ high: 'H', medium: 'M', low: 'D' }[concept.masteredDepth], point.x, point.y + 3);
-    ctx.textAlign = 'start';
-  }
-  ctx.lineWidth = 3;
-  concept.memberships.forEach((membership, index) => {
-    ctx.strokeStyle = workspaceColor(membership.workspaceId);
-    ctx.beginPath(); ctx.arc(point.x, point.y, 12, index * Math.PI * 2 / concept.memberships.length,
-      (index + 1) * Math.PI * 2 / concept.memberships.length); ctx.stroke();
-  });
-  if (concept.bridge) { ctx.strokeStyle = '#e2b451'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(point.x, point.y, 15, 0, Math.PI * 2); ctx.stroke(); }
-  if (scale >= .55) { ctx.fillStyle = textColor; ctx.font = '12px sans-serif'; ctx.fillText(node.label, point.x + 18, point.y + 4); }
+export function KnowledgeMap(props: Props) {
+  return <AreaMap key={props.areaKey} {...props} />;
 }

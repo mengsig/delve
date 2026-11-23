@@ -157,6 +157,7 @@ export function listWorkspaceConcepts(db: Db, workspaceId: string, includeChange
     .prepare(
       `SELECT c.* FROM workspace_concepts wc JOIN concepts c ON c.id = wc.concept_id
        WHERE wc.workspace_id = ? AND (wc.on_atlas = 1 OR ? = 1) AND (c.portable = 1 OR c.workspace_id = wc.workspace_id)
+         AND NOT EXISTS (SELECT 1 FROM concept_identity_links l WHERE l.legacy_concept_id = c.id)
        ORDER BY c.title`,
     )
     .all(workspaceId, Number(includeChangeLessons)) as unknown as ConceptRow[];

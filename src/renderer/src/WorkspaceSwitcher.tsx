@@ -4,6 +4,7 @@ import { filterCommands, moveIndex } from './switcher';
 import './setup.css';
 
 interface Props {
+  switching: boolean;
   commands: Command[];
   onClose: () => void;
   onAdd: () => void;
@@ -59,10 +60,11 @@ function SwitcherSearch({ commands, onChoose, pending }: Pick<Props, 'commands'>
   );
 }
 
-export function WorkspaceSwitcher({ commands, onClose, onAdd }: Props) {
+export function WorkspaceSwitcher({ switching, commands, onClose, onAdd }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const opening = useRef(false);
-  const [pending, setPending] = useState(false);
+  const [openingCommand, setPending] = useState(false);
+  const pending = openingCommand || switching;
   const [error, setError] = useState('');
 
   const dismiss = useEffectEvent(onClose);
@@ -89,7 +91,7 @@ export function WorkspaceSwitcher({ commands, onClose, onAdd }: Props) {
   }, []);
 
   async function choose(command: Command) {
-    if (opening.current) return;
+    if (opening.current || switching) return;
     opening.current = true;
     setError('');
     setPending(true);

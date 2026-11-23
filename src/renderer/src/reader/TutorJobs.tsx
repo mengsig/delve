@@ -1,97 +1,11 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { LessonAddress, ReaderLesson, TutorRequest } from '../../../shared/reader';
-import { call, IpcCallError } from '../api';
+import type { LessonAddress, TutorRequest } from '../../../shared/reader';
+import { preferredProvider, PROVIDER_LABELS } from '../preferences';
 import { errorMessage } from '../useRead';
+import { useQueue, type TutorJob } from './TutorQueue';
 
-type Phase = { phase: 'running'; warning?: string } | { phase: 'cancelling' }
-  | { phase: 'ready'; lesson: ReaderLesson } | { phase: 'failed'; message: string; code?: string };
-
-interface JobInput {
-  request: TutorRequest;
-  title: string;
-}
-
-export type TutorJob = JobInput & Phase & { id: string; key: string };
-export const lessonKey = ({ workspaceId, conceptId, depth }: LessonAddress) => [workspaceId, conceptId, depth].join('/');
-
-function useJobStore() {
-  const [jobs, setJobs] = useState<ReadonlyMap<string, TutorJob>>(() => new Map());
-  function add(job: TutorJob) {
-    setJobs(previous => new Map(previous).set(job.key, job));
-  }
-
-  function replace(job: TutorJob, next?: TutorJob) {
-    if (next && (next.id !== job.id || next.key !== job.key)) throw new Error('Tutor job identity changed.');
-    setJobs(previous => {
-      if (previous.get(job.key)?.id !== job.id) return previous;
-      const changed = new Map(previous);
-      if (next) changed.set(job.key, next);
-      else changed.delete(job.key);
-      return changed;
-    });
-  }
-
-  return { jobs, add, replace };
-}
-
-function useQueue() {
-  const { jobs, add, replace } = useJobStore();
-  const running = useRef(new Map<string, TutorJob>());
-
-
-  async function generate(job: TutorJob, token: string) {
-    try {
-      const lesson = await call('tutor:run', { ...job.request, token, requestId: job.id });
-      replace(job, { ...job, phase: 'ready', lesson });
-    } catch (cause) {
-      replace(job, { ...job, phase: 'failed', message: errorMessage(cause), code: cause instanceof IpcCallError ? cause.code : undefined });
-    } finally {
-      running.current.delete(job.key);
-    }
-  }
-
-  function start({ token, ...input }: JobInput & { token: string }) {
-    const key = lessonKey(input.request);
-    if (!token || !input.title.trim()) throw new Error('Tutor jobs need a reviewed request and lesson title.');
-    if (running.current.has(key)) return false;
-    const job: TutorJob = { ...input, id: crypto.randomUUID(), key, phase: 'running' };
-    running.current.set(key, job);
-    add(job);
-    void generate(job, token);
-    return true;
-  }
-
-  function reportFailure(request: TutorRequest, title: string, cause: unknown) {
-    const key = lessonKey(request);
-    if (running.current.has(key)) return;
-    add({ request, title, key, id: crypto.randomUUID(),
-      phase: 'failed', code: cause instanceof IpcCallError ? cause.code : undefined, message: errorMessage(cause) });
-  }
-
-  async function cancel(job: TutorJob) {
-    const current = running.current.get(job.key);
-    if (current?.id !== job.id || current.phase !== 'running') return;
-    const runningJob = current;
-    const cancelling: TutorJob = { ...runningJob, phase: 'cancelling' };
-    running.current.set(job.key, cancelling);
-    replace(job, cancelling);
-    try {
-      const cancelled = await call('tutor:cancel', { requestId: job.id });
-      if (!cancelled && running.current.get(job.key)?.id === job.id) restore('The tutor request is finishing.');
-    } catch (cause) {
-      if (running.current.get(job.key)?.id !== job.id) return;
-      restore('Could not cancel the tutor. ' + errorMessage(cause));
-    }
-    function restore(warning: string) {
-      const restored: TutorJob = { ...runningJob, warning };
-      running.current.set(job.key, restored);
-      replace(job, restored);
-    }
-  }
-
-  return { jobs, start, reportFailure, cancel,
-    dismiss: (job: TutorJob) => { if (!running.current.has(job.key)) replace(job); } };
-}
+export { lessonKey } from '../../../shared/reader';
+export const tutorName = (provider: TutorRequest['provider']) => provider === 'demo' ? 'the offline tutor' : PROVIDER_LABELS[provider];
 
 export interface ReadingPosition {
   top: number;
@@ -145,28 +59,37 @@ function jobLabel(job: TutorJob) {
     case 'running': return opening ? 'Preparing lesson' : 'Preparing tutor response';
     case 'cancelling': return 'Cancelling tutor request';
     case 'ready': return opening ? 'Lesson ready' : 'Tutor response ready';
-    case 'failed': return job.code === 'TUTOR_CANCELLED' ? 'Tutor request cancelled' : 'Tutor request failed';
+    case 'failed': {
+      if (job.code === 'TUTOR_INTERRUPTED') return 'Tutor request interrupted';
+      return job.code === 'TUTOR_CANCELLED' ? 'Tutor request cancelled' : 'Tutor request failed';
+    }
   }
 }
 
 function JobNotice({ job, onOpen }: { job: TutorJob; onOpen: () => void }) {
-  const { cancel, dismiss } = useTutorJobs();
+  const { cancel, dismiss, retry } = useTutorJobs();
   const inProgress = job.phase === 'running' || job.phase === 'cancelling';
+  const interrupted = job.phase === 'failed' && job.code === 'TUTOR_INTERRUPTED';
+  const provider = job.request.provider === 'demo' ? 'demo' : preferredProvider();
+  const canRetry = interrupted && provider === job.request.provider;
   return <li className="map-job">
     <div role="status"><strong>{jobLabel(job)} · {job.title}</strong>
       {job.phase === 'failed' && <div>{job.message}</div>}
+      {canRetry && <div>Retry will use {tutorName(provider)}.</div>}
+      {interrupted && !canRetry && <div>Open the lesson to review the request for {tutorName(provider)}.</div>}
       {job.phase === 'running' && job.warning && <div>{job.warning}</div>}
     </div>
     <div className="actions">
       <button onClick={onOpen}>Open lesson</button>
       {job.phase === 'running' && <button onClick={() => void cancel(job)}>Cancel tutor request</button>}
-      {!inProgress && <button onClick={() => dismiss(job)}>Dismiss</button>}
+      {canRetry && <button onClick={() => retry(job, provider === 'demo' ? 'demo' : preferredProvider())}>Retry</button>}
+      {!inProgress && <button onClick={() => void dismiss(job)}>Dismiss</button>}
     </div>
   </li>;
 }
 
 export function TutorJobStatus({ onOpen }: { onOpen: (address: LessonAddress) => void | Promise<void> }) {
-  const { jobs, visible, openError, setOpenError } = useTutorJobs();
+  const { jobs, visible, openError, setOpenError, saved, dismissError } = useTutorJobs();
   const notices = [...jobs.values()].filter(job => job.key !== visible);
   async function open({ request: { workspaceId, conceptId, depth } }: TutorJob) {
     setOpenError('');
@@ -177,9 +100,14 @@ export function TutorJobStatus({ onOpen }: { onOpen: (address: LessonAddress) =>
     }
   }
 
-  if (!notices.length && !openError) return null;
+  if (!notices.length && !saved.unreadable.length && !openError && !saved.error && !dismissError) return null;
   return <section className="map-jobs" aria-label="Tutor activity">
     {openError && <p role="alert">{openError}</p>}
-    <ul>{notices.map(job => <JobNotice key={job.id} job={job} onOpen={() => void open(job)} />)}</ul>
+    {saved.error && <p role="alert">{saved.error} <button onClick={saved.reload}>Retry loading tutor activity</button></p>}
+    {dismissError && <p role="alert">{dismissError}</p>}
+    <ul>
+      {saved.unreadable.map(job => <li className="map-job" key={job.rowKey}><div role="alert">{job.message}</div></li>)}
+      {notices.map(job => <JobNotice key={job.id} job={job} onOpen={() => void open(job)} />)}
+    </ul>
   </section>;
 }
