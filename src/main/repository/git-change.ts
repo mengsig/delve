@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { ChangeDetail } from '../../shared/explorer';
 import { gitOutput } from './git-diagnostics';
-import { gitHistoryNode, readCommitLog } from './git-history';
+import { gitHistoryNode, readCommitLog, withMissingParents } from './git-history';
 import { DomainError } from '../../shared/errors';
 import { changeTitle, gitReader, nulRecords, readBlob, requireReachable, resolveCommit,
   withoutChangePatches, type ChangeSnapshot, type ChangePatch, type GitReader } from './git-reader';
@@ -67,24 +67,36 @@ async function textPatch(reader: GitReader, revisions: string[], file: ChangedFi
   return sourceText(output) || null;
 }
 
-async function openGitChange(path: string, ref: string) {
-  if (!/^[a-fA-F0-9]{7,64}$/.test(ref)) throw new DomainError('INVALID_COMMIT', 'Choose a hexadecimal Git commit ID.');
-  const reader = await gitReader(path);
-  const commit = await resolveCommit(reader, ref);
-  await requireReachable(reader, commit);
-  const { title, parents, description } = await commitInfo(reader, commit);
-  const [parent] = parents;
-  const snapshot: ChangeSnapshot = { commit, base: parent, title, description, diff: '', partial: false, files: [] };
-  const revisions = parent ? [parent, commit] : [commit];
-  if (parent) {
+async function missingParents(reader: GitReader, parents: string[]): Promise<string[]> {
+  assert.ok(parents.every(parent => OBJECT_ID.test(parent)));
+  const missing: string[] = [];
+  for (const parent of new Set(parents)) {
     const check = await reader.run(['cat-file', '-t', parent], 1024);
     const errors = check.diagnostic.split(/\r?\n/).filter(line => /^(?:fatal|error):/.test(line));
     if (!check.truncated && check.status === 128 && check.output.length === 0
       && errors.length === 1 && errors[0] === 'fatal: git cat-file: could not get object info') {
-      const coverageNote = `Git parent ${parent} is missing from the local snapshot.`;
-      return { reader, snapshot: { ...snapshot, partial: true, coverageNote }, revisions: null, parents };
+      missing.push(parent);
+      continue;
     }
     assert.equal(gitOutput(check, 'Could not read the parent of that commit.').toString('utf8').trim(), 'commit');
+  }
+  assert.ok(missing.every(parent => parents.includes(parent)));
+  return missing;
+}
+
+async function openGitChange(path: string, ref: string) {
+  if (!/^[a-fA-F0-9]{7,64}$/.test(ref)) throw new DomainError('INVALID_COMMIT', 'Choose a hexadecimal Git commit ID.');
+  const reader = await gitReader(path);
+  const commit = await resolveCommit(reader, ref);
+  const { title, parents, description } = await commitInfo(reader, commit);
+  const missing = await missingParents(reader, parents);
+  await withMissingParents(reader, commit, parents, missing, git => requireReachable(git, commit));
+  const [parent] = parents;
+  const snapshot: ChangeSnapshot = { commit, base: parent, title, description, diff: '', partial: false, files: [] };
+  const revisions = parent ? [parent, commit] : [commit];
+  if (parent && missing.includes(parent)) {
+    const coverageNote = `Git parent ${parent} is missing from the local snapshot.`;
+    return { reader, snapshot: { ...snapshot, partial: true, coverageNote }, revisions: null, parents };
   }
   assert.ok(revisions.every(revision => OBJECT_ID.test(revision)));
   assert.equal(revisions.at(-1), snapshot.commit);

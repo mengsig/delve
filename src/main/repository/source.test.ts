@@ -227,6 +227,15 @@ describe('Git changes with missing parents', () => {
       coverageNote: note + ' File and line totals are unavailable.',
     });
   });
+
+  it('rejects an unreachable commit even when its parent is missing', async () => {
+    const parent = commit('Missing parent', '--allow-empty');
+    const boundary = commit('Unreachable boundary', '--allow-empty');
+    const unrelated = git('commit-tree', `${parent}^{tree}`, '-m', 'Unrelated tip');
+    git('update-ref', 'refs/heads/main', unrelated);
+    await rm(join(repo, '.git', 'objects', parent.slice(0, 2), parent.slice(2)));
+    await expect(readChange(repo, workspace, 'commit', boundary)).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
+  });
 });
 
 it('reports a fatal parent read instead of showing missing-parent coverage', async () => {

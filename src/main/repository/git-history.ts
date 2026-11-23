@@ -210,6 +210,15 @@ async function withBoundaries<T>(reader: GitReader, boundaries: Map<string, Brok
   }
 }
 
+export async function withMissingParents<T>(reader: GitReader, commit: string, parents: string[], missing: string[],
+  action: (reader: GitReader) => Promise<T>): Promise<T> {
+  assert.ok(OBJECT_ID.test(commit) && parents.every(parent => OBJECT_ID.test(parent)));
+  assert.ok(missing.every(parent => parents.includes(parent)));
+  const boundaries = new Map<string, BrokenBoundary>();
+  if (missing.length) boundaries.set(commit, { parents, missing: new Set(missing) });
+  return withBoundaries(reader, boundaries, action);
+}
+
 export interface GitHistorySource {
   branches: string[];
   warnings: string[];
