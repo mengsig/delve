@@ -1,13 +1,14 @@
 import { DEPTHS, type Depth, type Workspace } from '../../../shared/domain';
-import type { WorkspaceGraph } from '../../../shared/graph';
+import type { StudyGraph } from '../progress/model';
 
 export interface ReaderProps {
   workspace: Workspace;
-  graph: WorkspaceGraph;
+  graph: StudyGraph;
   depth: Depth;
   onDepth: (depth: Depth) => void;
   onBack: () => void;
   onLesson: (id: number) => void;
+  onProgress: () => void;
   view: 'contour' | 'folio';
 }
 

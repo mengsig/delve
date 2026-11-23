@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { demoGuardedWrite } from '../../shared/reader-demo';
 import type { Depth } from '../../shared/domain';
 import type { Db } from '../db/connection';
-import { lessonCacheKey, saveLesson } from '../db/lessons';
-import { documentSchema, type Document } from './document';
+import { lessonCacheKey, saveLesson, TUTOR_GENERATION } from '../db/lessons';
+import { documentSchema, freshCheckSchema, type Document } from './document';
 import material from './demo-material.json';
 
 export interface LessonContext {
@@ -56,14 +56,15 @@ export function demoDocument(context: LessonContext): Document {
   if (id === 'lease' && depth === 'low') blocks.push(demoGuardedWrite);
   if (id === 'lease') blocks.push({ type: 'analogy', heading: 'A claim ticket that expires',
     text: 'Think of a numbered claim ticket. The desk issues a new number when your time runs out. An old ticket still names the right job, but it cannot collect the result.' });
-  blocks.push(item.checks[depth]);
+  blocks.push(freshCheckSchema.parse(item.checks[depth]));
   return documentSchema.parse({ schema: 'delve.lesson/1', blocks, source });
 }
 
 export function createDemoLesson(db: Db, context: LessonContext): void {
   const { workspaceId, conceptId, depth } = context;
   const doc = demoDocument(context);
-  const parts = { schemaVersion: doc.schema, depth, provider: 'demo', model: 'field-tutor-v1', sourceRef: workspaceId + '/' + (context.snapshot ?? 'concept'), conceptKey: context.key };
+  const parts = { schemaVersion: doc.schema, generation: TUTOR_GENERATION, depth, provider: 'demo', model: 'field-tutor-v1',
+    sourceRef: workspaceId + '/' + (context.snapshot ?? 'concept'), conceptKey: context.key };
   const cacheKey = lessonCacheKey(parts);
   saveLesson(db, { ...parts, cacheKey, workspaceId, conceptId, snapshotId: context.snapshotId ?? undefined, body: doc });
 }

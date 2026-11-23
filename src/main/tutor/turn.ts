@@ -5,7 +5,7 @@ import { transaction, type Db } from '../db/connection';
 import { saveLessonInTransaction } from '../db/lessons';
 import { appendEntries } from '../reader/conversation';
 import { storedLesson } from '../reader/stored-lesson';
-import type { Document } from '../reader/document';
+import { freshCheckSchema, type Document } from '../reader/document';
 import { readLesson } from '../reader/ipc';
 import { saveCheckEvidence } from './assessment';
 import { checkIn, loadMastery, nextGrade, saveMastery } from './mastery';
@@ -23,7 +23,7 @@ function reuseOpening(db: Db, turn: PreparedTurn): boolean {
   if (turn.request.intent.kind !== 'teach' || turn.selected.invalidLatest) return false;
   if (turn.reused) return true;
   const cached = storedLesson(db, turn.context, turn.cacheKey);
-  if (!cached.document || cached.invalidLatest || !checkIn(cached.document)) return false;
+  if (!cached.document || cached.invalidLatest || !freshCheckSchema.safeParse(checkIn(cached.document)).success) return false;
   const lesson = cached.document;
   if (turn.selected.id !== cached.id) transaction(db, () => saveOpening(db, turn, lesson));
   return true;
@@ -32,19 +32,21 @@ function reuseOpening(db: Db, turn: PreparedTurn): boolean {
 function gradeFeedback(correct: boolean, stage: 'understood' | 'review' | 'checking') {
   const verdict = correct ? 'Correct.' : 'That answer was incorrect.';
   if (stage === 'understood') return verdict + ' You demonstrated understanding at this depth.';
-  if (stage === 'review') return verdict + ' This round is complete. Review the lesson or skip the remaining checks.';
+  if (stage === 'review') return verdict + ' This round is complete. Start a fresh practice round when you are ready.';
   return verdict + ' Try a fresh example to show how the rule applies.';
 }
 
 function commitAnswer(db: Db, turn: PreparedTurn, reply: TutorReply): void {
   const { context, mastery, response } = turn;
-  assert.ok(response && reply.assessment !== null, 'a check answer has a validated grade');
-  const next = nextGrade(mastery, reply.assessment);
+  assert.ok(response, 'a check answer has a trusted local grade');
+  assert.equal(reply.assessment, response.correct);
+  const next = nextGrade(mastery, response.correct);
   const revision = saveMastery(db, context, mastery, { ...next, check: checkIn(reply.lesson) });
   saveCheckEvidence(db, context, response, next.stage === 'understood');
   appendEntries(db, context, turn.selected.id, [
-    { role: 'learner', text: response.answer },
-    { role: 'tutor', text: gradeFeedback(reply.assessment, next.stage), lesson: reply.lesson,
+    { role: 'learner', text: !response.reasoning
+      ? response.answer : response.answer + '\n\nReasoning: ' + response.reasoning },
+    { role: 'tutor', text: gradeFeedback(response.correct, next.stage), correct: response.correct, lesson: reply.lesson, reasoningFeedback: reply.reasoningFeedback,
       observation: reply.observation ?? undefined, recommendation: reply.recommendation ?? undefined,
       masteryRevision: reply.recommendation ? revision : undefined },
   ]);
@@ -55,6 +57,13 @@ function commitReply(db: Db, turn: PreparedTurn, reply: TutorReply): void {
   const tutor = { role: 'tutor' as const, observation: reply.observation ?? undefined,
     recommendation: reply.recommendation ?? undefined, masteryRevision: reply.recommendation ? mastery.revision ?? undefined : undefined };
   if (intent.kind === 'answer') return commitAnswer(db, turn, reply);
+  if (intent.kind === 'adapt') {
+    const check = checkIn(reply.lesson);
+    assert.ok(check && mastery.check);
+    assert.equal(mastery.revision, intent.revision);
+    saveMastery(db, context, mastery, { check });
+    return;
+  }
   if (intent.kind === 'teach' || intent.kind === 'review' && !selected.document) {
     const id = saveOpening(db, turn, reply.lesson);
     const current = loadMastery(db, context, storedLesson(db, context), false);

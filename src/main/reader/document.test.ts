@@ -133,14 +133,16 @@ describe('provider lesson documents', () => {
   });
 
   it('adapts required nullable fields and validates the resulting lesson', () => {
+    const prediction = { type: 'check', kind: 'prediction', prompt: 'Which turn gets the rider in frame?',
+      options: ['First', 'Second', 'Third', 'Fourth'], expected: 1 };
     const wire = { ...lesson(
       prose, table, { type: 'diagram', nodes, edges: null },
       { type: 'diagram', nodes, edges: [{ from: 0, to: 1, label: null }] },
-      { ...code, spans: [] }, { type: 'environment', pack: null, fallback: 'Review the map.' }, written,
+      { ...code, spans: [] }, { type: 'environment', pack: null, fallback: 'Review the map.' }, prediction,
     ), source: null };
     expect(documentGenerationSchema.parse(wire)).toStrictEqual(lesson(
       prose, table, { type: 'diagram', nodes }, { type: 'diagram', nodes, edges: [{ from: 0, to: 1 }] },
-      { ...code, spans: [] }, { type: 'environment', fallback: 'Review the map.' }, written,
+      { ...code, spans: [] }, { type: 'environment', fallback: 'Review the map.' }, prediction,
     ));
     expect(documentGenerationSchema.safeParse({ ...wire, blocks: [{ ...table, rows: [['Local']] }] }).success).toBe(false);
     expect(documentGenerationSchema.safeParse({ ...wire, blocks: [{ ...prose, extra: 'ignored?' }] }).success).toBe(false);
@@ -163,5 +165,18 @@ describe('provider lesson documents', () => {
       return schema;
     });
     expect(json).not.toMatch(/"(?:\$schema|oneOf|const|pattern|minItems|maxItems|minimum|maximum|minLength|maxLength)"/);
+  });
+
+  it.each([
+    ['Either claim', 'Either claim '],
+    ['CLAIM 7', 'claim 7'],
+    ['Ⅳ', 'IV'],
+    ['Next worker', 'Next\u200b worker'],
+    ['This worker', '   '],
+  ])('rejects ambiguous fresh options %j and %j while preserving historical wording', (first, second) => {
+    const check = { type: 'check', kind: 'prediction', prompt: 'Which worker can finish?', options: [first, second, 'A', 'B'], expected: 1 };
+    const saved = lesson(check);
+    expect(documentSchema.parse(saved)).toEqual(saved);
+    expect(documentGenerationSchema.safeParse({ ...saved, source: null }).success).toBe(false);
   });
 });

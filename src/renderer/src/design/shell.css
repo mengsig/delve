@@ -1,0 +1,90 @@
+.shell {
+  width: 100%;
+  min-height: 100dvh;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: visible;
+}
+.windowbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  justify-content: flex-start;
+  gap: clamp(7px, 1.25vw, 18px);
+  padding: 8px clamp(15px, 2.4vw, 36px);
+  min-height: 60px;
+  background: var(--surface);
+}
+.windowbar .brand { flex: 0 1 auto; text-align: left; font-size: 24px; }
+.windowbar .mark { width: 25px; height: 28px; }
+.brand-name { flex: none; }
+.workspace-identity {
+  display: grid;
+  gap: 2px;
+  margin-inline-start: 5px;
+  padding-inline-start: 14px;
+  border-inline-start: 1px solid var(--rule);
+  font-size: 13px;
+  line-height: 1.2;
+  letter-spacing: normal;
+}
+.workspace-identity > * { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.workspace-identity small { color: var(--dim); font: 10px/1.2 ui-monospace, monospace; }
+.workspace-chevron { flex: none; font-size: 14px; }
+.windowbar .appnav { flex: none; }
+.windowbar .appnav button { white-space: nowrap; padding: 7px 8px; }
+.shell-location {
+  margin-inline-start: auto;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.shell-mastery {
+  flex: 0 0 clamp(116px, 13vw, 178px);
+  font-size: 11px;
+  --meter-height: 4px;
+}
+.window-tools { flex: none; gap: 4px; }
+.window-tools .tool { padding: 5px 7px; }
+.window-tools .icon { width: 15px; height: 15px; }
+.shell > .app { width: min(100%, 1488px); margin-inline: auto; }
+
+.shell--lesson {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: clip;
+  background: var(--paper);
+}
+.shell--lesson > .app,
+.shell--lesson > .app > .screen { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.shell--lesson > .app { padding: clamp(12px, 1.4vw, 20px) clamp(15px, 2.4vw, 36px); }
+.shell--lesson > .app > .screen > :is(.contour, .folio) { flex: 1; height: 100%; min-height: 0; }
+.shell--lesson .app > .map-jobs { max-height: 12vh; overflow-y: auto; }
+body:has(.shell--lesson) { padding-bottom: 0; }
+
+@media (max-width: 1080px) {
+  .windowbar { gap: 7px; }
+  .windowbar .brand { gap: 6px; }
+  .windowbar .appnav button { gap: 4px; padding-inline: 6px; }
+  .workspace-identity { margin-inline-start: 1px; padding-inline-start: 8px; }
+}
+@media (max-width: 900px) {
+  .windowbar .brand-name { display: none; }
+  .windowbar .appnav .icon { display: none; }
+}
+@media (max-width: 760px) {
+  .windowbar .appnav { order: 1; }
+  .shell-location { white-space: normal; }
+}
+@media print {
+  .windowbar { display: none; }
+  .shell--lesson { height: auto; overflow: visible; }
+}
+
+.windowbar .appnav [aria-current="location"] { background: var(--soft); color: var(--green); }
+.shell-mastery .learning-meter-label { font: 650 10px/1.3 ui-monospace, monospace; }
+.shell-mastery .learning-meter-label span + span { font: inherit; color: var(--green); }

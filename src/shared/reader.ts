@@ -14,6 +14,8 @@ export interface ReaderMessage {
   text: string;
   blocks?: LessonBlock[];
   observation?: string;
+  reasoningFeedback?: string;
+  correct?: boolean;
   recommendation?: { action: string; reason: string; targetId?: number | null };
 }
 
@@ -32,6 +34,8 @@ export interface ReaderMastery {
   maxAttempts: number;
   correctAnswers: number;
   requiredCorrectAnswers: number;
+  appliedPassed: boolean;
+  needsAdaptation: boolean;
 }
 
 export interface ReaderLesson {
@@ -58,8 +62,9 @@ export interface ReaderContract {
 export type TutorIntent =
   | { kind: 'teach' }
   | { kind: 'review'; revision: string }
+  | { kind: 'adapt'; revision: string }
   | { kind: 'ask'; text: string }
-  | { kind: 'answer'; revision: string; answer: number | string };
+  | { kind: 'answer'; revision: string; answer: number | string; reasoning?: string };
 
 export interface TutorRequest extends LessonAddress {
   intent: TutorIntent;

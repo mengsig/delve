@@ -37,7 +37,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     const topic = 'Linux shutdown checks';
     const providerPids: number[] = [];
     try {
-      await page.getByRole('button', { name: '+ Add', exact: true }).click();
+      await page.getByRole('button', { name: 'Add a workspace', exact: true }).click();
       await page.getByRole('textbox', { name: 'Topic or repository' }).fill(topic);
       await page.getByRole('button', { name: 'Allow once and start lesson' }).click();
       providerPids.push(await providerPid(directory, 'provider.pid'));

@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { LessonAddress, ReaderLesson, TutorRequest } from '../../../shared/reader';
 import { call, IpcCallError } from '../api';
 import { errorMessage } from '../useRead';
@@ -93,18 +93,44 @@ function useQueue() {
     dismiss: (job: TutorJob) => { if (!running.current.has(job.key)) replace(job); } };
 }
 
+export interface ReadingPosition {
+  top: number;
+  following: boolean;
+  seen?: number;
+}
+
+export interface LessonDraft {
+  mode: 'answer' | 'ask';
+  question: string;
+  revision: string | null;
+  choice?: number;
+  reasoning: string;
+}
+
 function useTutorActivity() {
   const queue = useQueue();
-  const positions = useRef(new Map<string, number>());
+  const [positions] = useState(() => new Map<string, ReadingPosition>());
+  const [drafts] = useState(() => new Map<string, LessonDraft>());
   const [visible, setVisible] = useState<string>();
   const [openError, setOpenError] = useState('');
-  return { ...queue, positions, visible, setVisible, openError, setOpenError };
+  return { ...queue, positions, drafts, visible, setVisible, openError, setOpenError };
 }
 
 const TutorJobsContext = createContext<ReturnType<typeof useTutorActivity> | null>(null);
 
 export function TutorJobsProvider({ children }: { children: ReactNode }) {
   return <TutorJobsContext.Provider value={useTutorActivity()}>{children}</TutorJobsContext.Provider>;
+}
+
+export function useBackgroundTutorCompletion(refresh: () => void) {
+  const { jobs, visible } = useTutorJobs();
+  const previous = useRef(new Set<string>());
+  useEffect(() => {
+    const ready = new Set([...jobs.values()].filter(job => job.phase === 'ready' && job.key !== visible
+      && job.request.intent.kind !== 'ask').map(job => job.id));
+    if ([...ready].some(id => !previous.current.has(id))) refresh();
+    previous.current = ready;
+  }, [jobs, visible, refresh]);
 }
 
 export function useTutorJobs() {

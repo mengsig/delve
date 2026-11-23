@@ -34,9 +34,30 @@ export interface WorkspaceGraph {
   snapshot: string | null;
   baselineCommit?: string;
   demo: boolean;
+  atlasConceptIds?: number[];
   changeSuggestions?: Partial<Record<Depth, ChangeRef & { title: string; reason: string }>>;
   suggestions?: Partial<Record<Depth, { conceptId: number; reason: string }>>;
+  progress?: WorkspaceProgress;
 }
+
+export interface SavedCheckProgress {
+  conceptId: number;
+  snapshot: string | null;
+  lessonRevision: string | null;
+  masteryRevision: string;
+  streak: number;
+  attempted: boolean;
+}
+
+export interface WorkspaceProgress {
+  depth: Depth;
+  checks: SavedCheckProgress[];
+}
+
+export type WorkspaceHead =
+  | { kind: 'topic' | 'demo' | 'unavailable' }
+  | { kind: 'branch'; branch: string; cached: boolean }
+  | { kind: 'detached'; commit: string; cached: boolean };
 
 export interface WorkspaceCoverage {
   workspaceId: string;

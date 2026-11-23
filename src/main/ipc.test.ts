@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { tmpdir } from 'node:os';
 import { DomainError } from '../shared/errors';
 import { IPC_CHANNELS } from '../shared/ipc';
 import { upsertConcept } from './db/concepts';
@@ -18,6 +19,7 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
     'workspaces:add': () => workspace,
     'workspaces:switch': () => ({ workspaces: [workspace], activeId: workspace.id }),
     'workspaces:pick-folder': () => null,
+    'workspaces:head': () => ({ kind: 'topic' }),
     'providers:detect': () => [],
     'tutor:preview-topic': () => { throw new Error('Unexpected topic preview'); },
     'tutor:preview': () => { throw new Error('Unexpected tutor preview'); },
@@ -98,6 +100,8 @@ describe('graph IPC', () => {
     const invalid = { ok: false, error: { code: 'INVALID_REQUEST' } };
     expect(await dispatch(h, 'graph:read', { workspaceId: 'invalid' })).toMatchObject(invalid);
     expect(await dispatch(h, 'graph:read', { workspaceId: workspace.id, source: 'anything' })).toMatchObject(invalid);
+    expect(await dispatch(h, 'graph:read', { workspaceId: workspace.id, depth: 'other' })).toMatchObject(invalid);
+    expect(await dispatch(h, 'workspaces:head', { workspaceId: workspace.id, source: '/tmp' })).toMatchObject(invalid);
     expect(await dispatch(h, 'progress:read', { workspaceId: workspace.id })).toMatchObject(invalid);
     for (const conceptId of [0, -1, 1.2, '1', Number.MAX_SAFE_INTEGER + 1]) {
       expect(await dispatch(h, 'evidence:reset', { workspaceId: workspace.id, conceptId, depth: 'medium' })).toMatchObject(invalid);
@@ -118,7 +122,8 @@ describe('graph IPC', () => {
       const concept = upsertConcept(db, { ...input, workspaceId: origin.id });
       upsertConcept(db, { ...input, workspaceId: linked.id });
       recordEvidence(db, { conceptId: concept.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true, workspaceId: origin.id });
-      const h = handlers(graphHandlers(db));
+      const h = handlers(graphHandlers(db, tmpdir()));
+      expect(await dispatch(h, 'workspaces:head', { workspaceId: origin.id })).toEqual({ ok: true, value: { kind: 'topic' } });
       expect(await dispatch(h, 'progress:read', null)).toEqual({
         ok: true,
         value: [origin, linked].map(({ id }) => ({ workspaceId: id, total: 1, known: { high: 0, medium: 1, low: 0 } })),

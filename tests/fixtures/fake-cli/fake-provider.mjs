@@ -2,6 +2,7 @@
 // Fake claude/codex CLI. Behaviour: FAKE_PROVIDER_MODE; recording: FAKE_PROVIDER_RECORD, FAKE_PROVIDER_SELF_PID;
 // counter: FAKE_PROVIDER_COUNTER.
 import { spawn } from 'node:child_process';
+import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const argv = process.argv.slice(2);
@@ -41,9 +42,24 @@ function handleStatus() {
   }
 }
 
-function succeed() {
+function tutorFeedback(text, stdin) {
+  const start = stdin.indexOf('\n{\n');
+  assert.ok(start >= 0, 'expected the tutor preview payload');
+  const { intent, check } = JSON.parse(stdin.slice(start));
+  if (intent !== 'answer') return text;
+  assert.ok(check && typeof check.answer === 'string' && typeof check.correct === 'boolean');
+  const reply = JSON.parse(text);
+  const reason = check.reasoning?.trim().slice(0, 160);
+  const verdict = check.correct ? 'matches the saved reference' : 'conflicts with the saved reference';
+  return JSON.stringify({ ...reply, assessment: check.correct,
+    ...(reason && { reasoningFeedback: 'Reasoning received: ' + reason }),
+    observation: `Selected “${check.answer.slice(0, 200)}” ${verdict}.` });
+}
+
+function succeed(stdin) {
   const responseFile = process.env.FAKE_PROVIDER_RESPONSE_FILE;
-  const text = mode === 'invalid' ? '{"wrong":true}' : responseFile ? fs.readFileSync(responseFile, 'utf8') : payload;
+  const base = mode === 'invalid' ? '{"wrong":true}' : responseFile ? fs.readFileSync(responseFile, 'utf8') : payload;
+  const text = mode === 'tutor-feedback' ? tutorFeedback(base, stdin) : base;
   if (invokedAs === 'claude') {
     console.log(JSON.stringify({ type: 'result', is_error: false, subtype: 'success', result: '', structured_output: JSON.parse(text) }));
     return;
@@ -127,7 +143,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  succeed();
+  succeed(stdin);
 }
 
 main();

@@ -9,6 +9,7 @@ const paths = {
   layer: "m3 8 9-5 9 5-9 5zm0 5 9 5 9-5m-18 5 9 5 9-5",
   frame: "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5",
   book: "M3 5q5-2 9 1 4-3 9-1v14q-5-2-9 1-4-3-9-1zM12 6v14",
+  lock: "M6 10h12v11H6zM9 10V7a3 3 0 1 1 6 0v3m-3 5v2",
   check: "m4 12 5 5L20 6",
 } as const;
 

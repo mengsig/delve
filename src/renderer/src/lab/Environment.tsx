@@ -19,9 +19,30 @@ const runnable = (block: LessonBlock) => block.type === 'environment' && Boolean
 
 function latestInstrument(body: ReaderLesson): string | null {
   const message = body.messages.findLast(entry => entry.blocks?.some(runnable));
-  if (message?.blocks) return blockKey(message.id, message.blocks.findIndex(runnable));
-  const index = body.blocks.findIndex(runnable);
+  if (message?.blocks) return blockKey(message.id, message.blocks.findLastIndex(runnable));
+  const index = body.blocks.findLastIndex(runnable);
   return index >= 0 ? blockKey(null, index) : null;
+}
+
+export function LatestInstrumentLink({ body, onOpen, compact }: { body: ReaderLesson; onOpen?: () => void; compact?: boolean }) {
+  const scope = useContext(LabContext);
+  const latest = latestInstrument(body);
+  if (!scope || !latest) return null;
+  return <button className={compact ? 'jump-bench' : undefined} onClick={() => {
+    onOpen?.();
+    scope.select(latest);
+    requestAnimationFrame(() => {
+      const chapter = document.getElementById('instrument');
+      if (chapter) revealInstrument(chapter);
+    });
+  }}>{compact ? 'Jump to instrument' : 'Open latest Lab bench'}</button>;
+}
+
+function revealInstrument(chapter: HTMLElement) {
+  const details = chapter.closest('details');
+  if (details) details.open = true;
+  chapter.focus({ preventScroll: true });
+  chapter.scrollIntoView({ block: 'start', behavior: 'instant' });
 }
 
 function instrumentExists(body: ReaderLesson, key: string) {
@@ -106,8 +127,7 @@ export function Environment({ block, messageId, blockIndex }: { block: Block; me
   const resume = active && activity?.resumeKey === key;
   useEffect(() => {
     if (!resume || !chapter.current) return;
-    chapter.current.focus({ preventScroll: true });
-    chapter.current.scrollIntoView({ block: 'start', behavior: 'instant' });
+    revealInstrument(chapter.current);
   }, [resume]);
   return <section ref={chapter} className="chapter lab-chapter" tabIndex={-1} id={active ? 'instrument' : undefined}
     onFocus={event => { if (active && event.target === chapter.current) activity?.onUse(key, heading); }}>

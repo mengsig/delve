@@ -19,6 +19,7 @@ import { isSwitcherShortcut } from './switcher';
 import { errorMessage, useRead } from './useRead';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { Knowledge } from './knowledge/Knowledge';
+import { useWorkspaceStudy } from './useWorkspaceStudy';
 
 const readWorkspaces = () => call('workspaces:list', null);
 
@@ -67,7 +68,7 @@ function useStudyDestinations(nav: DesktopNavigation) {
     onResume={() => void resume(last).catch(report)} />;
   const workspaceBar = nav.active && <WorkspaceBar workspaces={workspaces} activeId={nav.active.id}
     onSwitch={id => { if (id !== nav.list.activeId) void select(id).catch(report); }} />;
-  return { view, onView: changeView, remember, commands, continueActivity, workspaceBar };
+  return { view, onView: changeView, remember, last, commands, continueActivity, workspaceBar };
 }
 
 function DesktopJobs({ nav }: { nav: DesktopNavigation }) {
@@ -92,7 +93,12 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
   const destinations = useStudyDestinations(nav);
   const main = useRef<HTMLElement>(null);
   const { active, route } = nav;
-  const setup = route.screen === 'setup' || route.screen === 'first-run' || !active;
+  const study = useWorkspaceStudy(active?.id, nav.depth);
+  const firstRun = route.screen === 'first-run' || !active;
+  const setup = firstRun || route.screen === 'setup';
+  const last = destinations.last;
+  const lab = route.screen === 'lesson' && last?.kind === 'environment' && last.workspaceId === active?.id
+    && last.conceptId === route.conceptId && last.depth === nav.depth;
   useEffect(() => {
     if (!setup) main.current?.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -109,8 +115,8 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
   }
   return <>
     <a className="skip-link" href="#workspace-page">Skip to workspace</a>
-    <section className="shell" aria-label="Delve desktop">
-      <Header screen={route.screen} go={nav.openPrimary} openSwitcher={palette.show} />
+    <section className={route.screen === 'lesson' && !setup ? 'shell shell--lesson' : 'shell'} aria-label="Delve desktop">
+      <Header screen={route.screen} lab={lab} workspace={firstRun ? undefined : active} head={study.head} progress={study.progress} go={nav.openPrimary} openSwitcher={palette.show} />
       <main id="workspace-page" ref={main} tabIndex={-1} className="app">
         {nav.error && <div role="alert">{nav.error} <button onClick={palette.show}>Choose workspace</button> <button onClick={() => nav.setError('')}>Dismiss</button></div>}
         {nav.switching && <span className="workspace-wait" role="status">Opening workspace…</span>}
@@ -122,7 +128,7 @@ function Desktop({ initial }: { initial: WorkspaceList }) {
               .catch(cause => nav.setError(errorMessage(cause)));
           }} /> : setup ? <AddWorkspaceForm onOpenSwitcher={palette.show} onAdded={added} onCancel={active ? nav.back : undefined}
             firstRun={route.screen === 'first-run' || !active} />
-            : <Study {...destinations} nav={nav} workspace={active} onSwitch={palette.show}
+            : <Study {...destinations} nav={nav} workspace={active} study={study} onSwitch={palette.show}
               onSelect={id => void nav.select(id, { screen: 'progress' }).catch(cause => nav.setError(errorMessage(cause)))} />}
         </div>
       </main>

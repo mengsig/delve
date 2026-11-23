@@ -13,7 +13,7 @@ export const observationSchema = z.string().trim().min(1).max(1500);
 const messageBody = z.union([
   z.string().transform(text => ({ text })),
   z.object({ text: z.string(), lesson: documentSchema.optional(), observation: observationSchema.optional(),
-    recommendation: recommendationSchema.optional() }),
+    reasoningFeedback: observationSchema.optional(), correct: z.boolean().optional(), recommendation: recommendationSchema.optional() }),
 ]);
 const historyLimit = 80;
 
@@ -22,6 +22,8 @@ interface TranscriptEntry {
   text: string;
   lesson?: Document;
   observation?: string;
+  reasoningFeedback?: string;
+  correct?: boolean;
   recommendation?: ReaderMessage['recommendation'];
   masteryRevision?: string;
 }
@@ -34,7 +36,7 @@ function decodeMessage(row: Record<string, unknown>): ReaderMessage {
   const parsed = messageBody.safeParse(JSON.parse(row.body));
   const entry: Omit<TranscriptEntry, 'role'> = parsed.success ? parsed.data : { text: 'This saved message has an unsupported format.' };
   return { id: row.id, role: row.role, text: entry.text, blocks: entry.lesson && teachingBlocks(entry.lesson),
-    observation: entry.observation, recommendation: entry.recommendation };
+    observation: entry.observation, correct: entry.correct, reasoningFeedback: entry.reasoningFeedback, recommendation: entry.recommendation };
 }
 
 export function readHistory(db: Db, { workspaceId, conceptId, depth }: LessonAddress) {
@@ -63,7 +65,7 @@ export function appendEntries(db: Db, context: LessonContext, lessonId: number |
     const result = insert.run(conversationId, role, JSON.stringify(saved), now);
     assert.equal(result.changes, 1);
     return { role, text: body.text, id: Number(result.lastInsertRowid), blocks: body.lesson && teachingBlocks(body.lesson),
-      recommendation: body.recommendation, observation: body.observation };
+      recommendation: body.recommendation, observation: body.observation, correct: body.correct, reasoningFeedback: body.reasoningFeedback };
   });
 }
 

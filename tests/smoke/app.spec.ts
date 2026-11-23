@@ -5,7 +5,7 @@ import { test, shortcut } from './desktop';
 import packageInfo from '../../package.json';
 
 async function add(page: Page, value: string, topic = false) {
-  await page.getByRole('button', { name: '+ Add', exact: true }).click();
+  await page.getByRole('button', { name: 'Add a workspace', exact: true }).click();
   await page.getByLabel('Topic or repository').fill(value);
   await page.getByRole('button', { name: topic ? 'Start lesson →' : 'Add to atlas →' }).click();
 }
@@ -20,7 +20,7 @@ test('loads a hardened desktop and persists workspaces added through the source 
   expect(await page.evaluate(() => typeof (globalThis as { require?: unknown }).require)).toBe('undefined');
   expect(await page.evaluate(() => typeof (globalThis as { process?: unknown }).process)).toBe('undefined');
 
-  await page.getByRole('button', { name: '+ Add', exact: true }).click();
+  await page.getByRole('button', { name: 'Add a workspace', exact: true }).click();
   await page.getByText('Advanced options', { exact: false }).click();
   await expect(page.locator('[data-provider="claude"]')).toHaveAttribute('data-state', 'not-found');
   await expect(page.locator('[data-provider="codex"]')).toContainText('CLI not found');

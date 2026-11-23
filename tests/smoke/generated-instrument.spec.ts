@@ -8,7 +8,7 @@ test.use({ tutorCli: true });
 const routeLab = { type: 'environment', fallback: 'Connect the client to the proxy, then the proxy to the service.',
   pack: 'network-builder@1', config: null };
 const prose = { type: 'prose', heading: 'A simulated path', text: 'Build the path and trace its two hops.' };
-const check = { type: 'check', kind: 'choice', prompt: 'What carries the request?', options: ['A connected path', 'An unrelated service'], expected: 0 };
+const check = { type: 'check', kind: 'prediction', prompt: 'What carries the request?', options: ['A connected path', 'An unrelated service', 'A missing link', 'A dropped packet'], expected: 0 };
 
 function response(directory: string, block: object, opening = true) {
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({
@@ -26,7 +26,7 @@ function boardWithFollowingContent(directory: string) {
 }
 
 async function createTopic(page: Page) {
-  await page.getByRole('button', { name: '+ Add', exact: true }).click();
+  await page.getByRole('button', { name: 'Add a workspace', exact: true }).click();
   await page.getByRole('textbox', { name: 'Topic or repository' }).fill('Routing workshop');
   await page.getByRole('button', { name: 'Allow once and start lesson' }).click();
 }
@@ -50,15 +50,19 @@ test('a pointer can move the token while scrolling past the composer', async ({ 
   const button = page.frameLocator('.instrument-frame').getByRole('button', { name: 'Move token' });
   await expect(button).toBeVisible();
   await expect(page.frameLocator('.instrument-frame').getByRole('status')).toHaveText('Token at square 2');
-  await page.locator('.reader-composer').scrollIntoViewIfNeeded();
-  const scrollPastInstrument = await page.evaluate(() => window.scrollY);
+  await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
+  const transcript = page.locator('.reader-scroll');
+  await transcript.evaluate(node => { node.scrollTop = node.scrollHeight; });
+  const scrollPastInstrument = await transcript.evaluate(node => node.scrollTop);
   expect(scrollPastInstrument).toBeGreaterThan(0);
-  const offscreenButton = await button.boundingBox();
-  expect(offscreenButton).not.toBeNull();
-  await page.evaluate(y => window.scrollBy({ top: y - window.innerHeight / 2, behavior: 'instant' }),
-    offscreenButton!.y + offscreenButton!.height / 2);
+  const hiddenButton = await button.boundingBox();
+  const viewport = await transcript.boundingBox();
+  if (!hiddenButton || !viewport) throw new Error('Expected a mounted board and transcript.');
+  await transcript.evaluate((node, offset) => node.scrollBy({ top: offset, behavior: 'instant' }),
+    hiddenButton.y + hiddenButton.height / 2 - viewport.y - viewport.height / 2);
   await expect(button).toBeInViewport({ ratio: 1 });
-  expect(await page.evaluate(() => window.scrollY)).toBeLessThan(scrollPastInstrument);
+  expect(await transcript.evaluate(node => node.scrollTop)).toBeLessThan(scrollPastInstrument);
+  await expect(page.locator('.reader-composer')).toBeInViewport({ ratio: 1 });
   const visibleButton = await button.boundingBox();
   expect(visibleButton).not.toBeNull();
   if (process.env['DELVE_POINTER_EVIDENCE']) await page.screenshot({ path: process.env['DELVE_POINTER_EVIDENCE'] });
@@ -77,11 +81,13 @@ for (const size of ['default', '1280x800', '960x640'] as const) {
       const frame = page.locator('#instrument .instrument-frame');
       await expect(frame).toBeVisible();
       await expect(page.frameLocator('#instrument .instrument-frame').locator('button').first()).toBeVisible();
-      await page.getByRole('link', { name: 'Jump to instrument' }).click();
+      await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
+      await page.getByRole('button', { name: 'Jump to instrument' }).click();
+      await expect(page.locator('#instrument')).toBeFocused();
       if (process.env['DELVE_LAYOUT_EVIDENCE'] && size === 'default' && pack === 'network-builder@1') {
         await page.screenshot({ path: process.env['DELVE_LAYOUT_EVIDENCE'] });
       }
-      const instrument = await frame.boundingBox();
+      const instrument = await page.locator('.reader-scroll').boundingBox();
       const composer = await page.locator('.reader-composer').boundingBox();
       expect(instrument).not.toBeNull();
       expect(composer).not.toBeNull();
@@ -108,6 +114,7 @@ test('a new topic wires a network, then opens a generated board inside a tutor r
   await stage.getByRole('button', { name: 'Test path' }).click();
   await expect(page.getByRole('log')).toContainText('reached the service through the proxy');
   response(directory, bundle(boardSource), false);
+  await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
   await page.getByRole('textbox', { name: 'Ask your tutor' }).fill('Show the idea on a board');
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
   const preview = page.getByRole('dialog');
@@ -128,6 +135,28 @@ test('terminates a looping bundle, retains the text alternative and collects no 
   await expect(page.locator('iframe')).toHaveCount(0);
   await expect(page.locator('#instrument details p')).toBeVisible();
   await expect(page.locator('#instrument details')).toContainText('Advance the token');
-  await expect(page.getByRole('complementary')).toContainText('Not yet marked understood');
+  await expect(page.getByRole('meter', { name: 'Correct checks in a row' })).toHaveJSProperty('value', 0);
   await expect(page.getByRole('log').locator('.reader-message')).toHaveCount(0);
+});
+
+test('lesson notes find a runnable bench added by a reply', async ({ desktop: { page, directory } }) => {
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify({
+    lesson: { schema: 'delve.lesson/1', source: null, blocks: [prose, check] },
+    assessment: null, observation: null, recommendation: null,
+  }));
+  await createTopic(page);
+  await expect(page.getByRole('heading', { name: check.prompt })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Jump to instrument' })).toHaveCount(0);
+  response(directory, bundle(boardSource), false);
+  await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Ask your tutor' }).fill('Give me a practice bench.');
+  await page.getByRole('button', { name: 'Ask question' }).click();
+  await page.getByRole('button', { name: 'Allow once and continue' }).click();
+  await expect(page.getByRole('log').frameLocator('.instrument-frame').getByText('Token at square 2')).toBeVisible();
+  await page.getByRole('button', { name: 'Lesson notes' }).click();
+  await page.getByRole('button', { name: 'Open latest Lab bench' }).click();
+  await expect(page.locator('#instrument')).toBeFocused();
+  const board = page.frameLocator('#instrument .instrument-frame');
+  await board.getByRole('button', { name: 'Move token' }).click();
+  await expect(board.getByRole('status')).toHaveText('Token at square 3');
 });

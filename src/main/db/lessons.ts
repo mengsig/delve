@@ -3,13 +3,16 @@ import { createHash } from 'node:crypto';
 import { DEPTHS, type Depth } from '../../shared/domain';
 import { DomainError } from '../../shared/errors';
 import { nowIso, transaction, type Db } from './connection';
+import { boundedLessonBody, decodeSavedDocument, lessonRevision } from './lesson-selection';
 import { resolveScope } from './scope';
 
 const SCHEMA_VERSION = /^delve\.lesson\/\d+$/;
 const COMMIT_SHA = /^[0-9a-f]{7,64}$/i;
+export const TUTOR_GENERATION = 'four-choice/1';
 
 export interface CacheKeyParts {
   schemaVersion: string;
+  generation?: string;
   conceptKey: string;
   depth: Depth;
   provider: string;
@@ -23,6 +26,7 @@ export function lessonCacheKey(parts: CacheKeyParts): string {
   assert.ok(SCHEMA_VERSION.test(parts.schemaVersion), `bad schema version ${parts.schemaVersion}`);
   assert.ok((DEPTHS as readonly string[]).includes(parts.depth), `bad depth ${parts.depth}`);
   const fields = [parts.schemaVersion, parts.conceptKey, parts.depth, parts.provider, parts.model, parts.sourceRef];
+  if (parts.generation !== undefined) fields.push(parts.generation);
   assert.ok(fields.every((field) => field.length > 0), 'every cache key part is required');
   return createHash('sha256').update(JSON.stringify(fields)).digest('hex');
 }
@@ -109,11 +113,13 @@ export function saveLessonInTransaction(db: Db, input: LessonInput): StoredLesso
   assert.ok(typeof body === 'string' && body.length > 0, 'lesson body must serialize to JSON');
   const scope = resolveScope(db, input.conceptId, input.workspaceId, input.snapshotId);
   const createdAt = nextLessonTime(db, input);
-  db.prepare(
+  const valid = validateReplacement(db, input, body);
+  const saved = db.prepare(
     `INSERT INTO lessons (cache_key, schema_version, concept_id, workspace_id, snapshot_id, depth, provider, model, body, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (cache_key) DO UPDATE SET body = excluded.body, created_at = excluded.created_at`,
-  ).run(
+     ON CONFLICT (cache_key) DO UPDATE SET body = excluded.body, created_at = excluded.created_at
+     RETURNING *`,
+  ).get(
     input.cacheKey,
     input.schemaVersion,
     input.conceptId,
@@ -124,10 +130,27 @@ export function saveLessonInTransaction(db: Db, input: LessonInput): StoredLesso
     input.model,
     body,
     createdAt,
-  );
-  const saved = getLessonByCacheKey(db, input.cacheKey);
-  assert.ok(saved, 'saved lesson must be readable');
-  return saved;
+  ) as LessonRow | undefined;
+  assert.ok(saved && Number.isSafeInteger(saved.id), 'the cache entry must have a lesson ID');
+  const result = db.prepare('UPDATE lessons SET document_revision = ? WHERE id = ?')
+    .run(valid ? lessonRevision(saved.id, body) : '', saved.id);
+  assert.equal(result.changes, 1);
+  return toLesson(saved);
+}
+
+function validateReplacement(db: Db, input: LessonInput, body: string): boolean {
+  const existing = db.prepare('SELECT id, schema_version, document_revision FROM lessons WHERE cache_key = ?')
+    .get(input.cacheKey);
+  assert.ok(!existing || typeof existing.schema_version === 'string');
+  if (decodeSavedDocument(existing?.schema_version ?? input.schemaVersion, body)) return true;
+  if (!existing || existing.document_revision === '') return false;
+  assert.ok(typeof existing.id === 'number' && Number.isSafeInteger(existing.id));
+  if (existing.document_revision === null) {
+    const previous = db.prepare(`SELECT ${boundedLessonBody} AS body FROM lessons l WHERE l.id = ?`).get(existing.id);
+    assert.ok(previous, 'the previous cache entry must exist within the transaction');
+    if (!decodeSavedDocument(existing.schema_version, previous.body)) return false;
+  }
+  throw new DomainError('INVALID_LESSON', 'The replacement lesson is unreadable. The saved lesson was preserved.');
 }
 
 // A cache hit can replace an older row in the same millisecond as a newer revision.

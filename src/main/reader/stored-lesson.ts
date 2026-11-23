@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import type { LessonAddress } from '../../shared/reader';
 import { DomainError } from '../../shared/errors';
 import { learningSnapshot } from '../db/repository-snapshot';
 import type { Db } from '../db/connection';
 import { isDemoWorkspace } from '../db/demo';
+import { boundedLessonBody, decodeSavedDocument, lessonOrderSql, lessonRevision, lessonScopeSql } from '../db/lesson-selection';
 import { createDemoLesson, type LessonContext } from './demo';
-import { documentSchema, type Document } from './document';
+import type { Document } from './document';
 
 export function lessonContext(db: Db, address: LessonAddress): LessonContext {
   const { workspaceId, conceptId } = address;
@@ -34,20 +34,18 @@ export interface SelectedLesson {
 }
 
 export function storedLesson(db: Db, context: LessonContext, cacheKey: string | null = null): SelectedLesson {
-  const rows = db.prepare(`SELECT id, schema_version, snapshot_id, CASE WHEN length(CAST(body AS BLOB)) <= 524288 THEN body END AS body
-    FROM lessons WHERE concept_id = ? AND depth = ? AND (workspace_id = ? OR workspace_id IS NULL)
-    AND (snapshot_id IS NULL OR snapshot_id = ?) AND (provider <> 'demo' OR ? = 1) AND (? IS NULL OR cache_key = ?)
-    ORDER BY created_at DESC, id DESC`).iterate(context.conceptId, context.depth, context.workspaceId, context.snapshotId, Number(context.demo), cacheKey, cacheKey);
+  const rows = db.prepare(`SELECT l.id, l.schema_version, l.snapshot_id,
+    CASE WHEN l.document_revision IS NOT '' THEN ${boundedLessonBody} END AS body
+    FROM lessons l WHERE ${lessonScopeSql('?', '?', '?', '?', '?')} AND (? IS NULL OR l.cache_key = ?)
+    ${lessonOrderSql}`).iterate(context.conceptId, context.depth, context.workspaceId, context.snapshotId, Number(context.demo), cacheKey, cacheKey);
   let invalidLatest = false;
   for (const row of rows) {
-    if (row.schema_version === 'delve.lesson/1' && typeof row.body === 'string') {
-      const result = documentSchema.safeParse(JSON.parse(row.body));
-      if (result.success) {
-        assert.ok(typeof row.id === 'number');
-        const revision = createHash('sha256').update(String(row.id)).update(':').update(row.body).digest('hex');
-        const source = result.data.source ?? (row.snapshot_id === null ? null : context.snapshot);
-        return { id: row.id, document: result.data, invalidLatest, revision, source };
-      }
+    const document = decodeSavedDocument(row.schema_version, row.body);
+    if (document) {
+      assert.ok(typeof row.id === 'number' && typeof row.body === 'string');
+      assert.ok(row.snapshot_id === null || row.snapshot_id === context.snapshotId);
+      const source = document.source ?? (row.snapshot_id === null ? null : context.snapshot);
+      return { id: row.id, document, invalidLatest, revision: lessonRevision(row.id, row.body), source };
     }
     invalidLatest = true;
   }
