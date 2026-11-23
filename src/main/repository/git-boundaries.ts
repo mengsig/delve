@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -73,15 +74,49 @@ async function* withoutMissingParents(stream: Readable, commit: string, { parent
   }
 }
 
-async function writeReplacement(reader: GitReader, run: GitReader['run'], directory: string,
+async function* withReplacementHeader(chunks: AsyncIterable<Buffer>) {
+  // A parent-stripped commit can otherwise match an original commit missing elsewhere in the walk.
+  const header = Buffer.from(`delve-replacement ${randomBytes(32).toString('hex')}\n`);
+  let added = false;
+  let previousEndedInNewline = false;
+  for await (const chunk of chunks) {
+    assert.ok(Buffer.isBuffer(chunk));
+    if (chunk.length === 0) continue;
+    if (added) {
+      yield chunk;
+      continue;
+    }
+    const startsWithSeparator = previousEndedInNewline && chunk[0] === 10;
+    const separator = chunk.indexOf('\n\n');
+    if (startsWithSeparator || separator !== -1) {
+      const offset = startsWithSeparator ? 0 : separator + 1;
+      assert.equal(chunk[offset], 10);
+      yield chunk.subarray(0, offset);
+      yield header;
+      yield chunk.subarray(offset);
+      added = true;
+      continue;
+    }
+    yield chunk;
+    previousEndedInNewline = chunk.at(-1) === 10;
+  }
+  if (!added) {
+    if (!previousEndedInNewline) yield Buffer.from('\n');
+    yield header;
+  }
+}
+
+async function writeReplacement(reader: GitReader, directory: string,
   commit: string, boundary: BrokenBoundary): Promise<void> {
   assert.ok(OBJECT_ID.test(commit));
   assert.ok(isAbsolute(directory));
   const file = join(directory, 'replacement');
   const original = await reader.stream(['cat-file', 'commit', commit], stream =>
-    pipeline(withoutMissingParents(stream, commit, boundary), createWriteStream(file)));
+    pipeline(withReplacementHeader(withoutMissingParents(stream, commit, boundary)), createWriteStream(file)));
   gitOutput(original, SETUP_FAILED);
-  const result = await run(['hash-object', '-w', '-t', 'commit', '--no-filters', '--', file], 4096);
+  // Git can refresh an existing object's mtime in an alternate during a write.
+  const result = await gitSource(['--bare', `--git-dir=${directory}`, 'hash-object', '-w', '-t', 'commit',
+    '--no-filters', '--', file], { maxBytes: 4096 });
   const replacement = gitOutput(result, SETUP_FAILED).toString('ascii').trim();
   assert.ok(OBJECT_ID.test(replacement) && replacement.length === commit.length);
   assert.notEqual(replacement, commit);
@@ -103,13 +138,12 @@ export async function withBoundaries<T>(reader: GitReader, boundaries: Map<strin
     const init = await gitSource(['-c', 'init.defaultRefFormat=files', 'init', '--quiet', '--bare', '--template=',
       `--object-format=${objectFormat}`, directory]);
     gitOutput(init, SETUP_FAILED);
-    // The source object store is an alternate. All objects and refs we write belong to this directory.
     const run: GitReader['run'] = (args, maxBytes) =>
       gitSource(['--bare', `--git-dir=${directory}`, '--literal-pathspecs', ...args], { maxBytes, isolatedGit: { alternate } });
     await copyShallowFile(reader, directory);
     if (scope === 'reachability') await copyReachabilityRefs(reader, directory);
     await mkdir(join(directory, 'refs', 'replace'));
-    for (const [id, boundary] of entries) await writeReplacement(reader, run, directory, id, boundary);
+    for (const [id, boundary] of entries) await writeReplacement(reader, directory, id, boundary);
     return await action({ run, stream: reader.stream });
   } finally {
     await rm(directory, { recursive: true, force: true });

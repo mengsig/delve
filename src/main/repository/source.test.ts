@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -27,13 +27,12 @@ function commit(title: string, ...args: string[]): string {
   return git('rev-parse', 'HEAD');
 }
 
-const FIXTURE_IDENTITY = 'Fixture User <fixture@example.invalid> 1700000000 +0000';
-
-function writeCommitObject(tree: string, parents: string[], message: string): string {
+function writeCommitObject(tree: string, parents: string[], message: string, timestamp = 1700000000): string {
   expect(tree).toMatch(/^[a-f0-9]+$/);
   expect(parents.every(parent => parent.length === tree.length && /^[a-f0-9]+$/.test(parent))).toBe(true);
+  const identity = `Fixture User <fixture@example.invalid> ${timestamp} +0000`;
   const header = `tree ${tree}\n${parents.map(parent => `parent ${parent}\n`).join('')}`;
-  const object = `${header}author ${FIXTURE_IDENTITY}\ncommitter ${FIXTURE_IDENTITY}\n\n${message}\n`;
+  const object = `${header}author ${identity}\ncommitter ${identity}\n\n${message}\n`;
   return execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'],
     { input: object, encoding: 'utf8' }).trim();
 }
@@ -404,6 +403,72 @@ it('keeps commits from other branches that are not behind the missing parent', a
   expect(refs).toHaveLength(expected.size);
   expect(pages.at(-1)?.warning).toContain(missing);
 }, 30_000);
+
+it('does not show a replacement as the missing parent on another branch', async () => {
+  const base = commit('Base', '--allow-empty');
+  const tree = git('rev-parse', `${base}^{tree}`);
+  const missing = 'c'.repeat(40);
+  const missingOnOther = writeCommitObject(tree, [base], 'Main boundary');
+  const main = writeCommitObject(tree, [missing, base], 'Main boundary');
+  const other = writeCommitObject(tree, [missingOnOther, base], 'Other boundary', 1699999999);
+  git('update-ref', 'refs/heads/main', main);
+  git('update-ref', 'refs/heads/other', other);
+  await rm(join(repo, '.git', 'objects', missingOnOther.slice(0, 2), missingOnOther.slice(2)));
+
+  const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+  const page = await history.advance(() => 1);
+  expect(page.nodes.map(node => node.ref).sort()).toEqual([main, other, base].sort());
+  expect(page.nodes).toEqual(expect.arrayContaining([
+    expect.objectContaining({ ref: main, title: 'Main boundary', author: 'Fixture User', parents: [missing, base] }),
+    expect.objectContaining({ ref: other, title: 'Other boundary', author: 'Fixture User', parents: [missingOnOther, base] }),
+  ]));
+  expect(page.warning).toContain(missing);
+});
+
+async function gitMetadata(dotGit: string) {
+  const files = (await readdir(dotGit, { recursive: true, withFileTypes: true }))
+    .filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name)).sort();
+  expect(files).toContain(join(dotGit, 'config'));
+  expect(files).toContain(join(dotGit, 'refs', 'heads', 'main'));
+  return Promise.all(files.map(async file => ({ file, contents: await readFile(file), mtime: (await stat(file)).mtimeMs })));
+}
+
+it.each(['loose', 'packed'])('keeps source Git metadata unchanged when a matching %s object exists', async storage => {
+  const base = commit('Base', '--allow-empty');
+  const tree = git('rev-parse', `${base}^{tree}`);
+  const matching = writeCommitObject(tree, [base], 'Boundary');
+  const dotGit = join(repo, '.git');
+  const objects = join(dotGit, 'objects');
+  const loose = join(objects, matching.slice(0, 2), matching.slice(2));
+  let existing = loose;
+  if (storage === 'packed') {
+    git('update-ref', 'refs/heads/packed', matching);
+    git('repack', '-ad');
+    const packs = (await readdir(join(objects, 'pack'))).filter(file => file.endsWith('.pack'));
+    expect(packs).toHaveLength(1);
+    await expect(stat(loose)).rejects.toMatchObject({ code: 'ENOENT' });
+    existing = join(objects, 'pack', packs[0]!);
+    git('update-ref', '-d', 'refs/heads/packed');
+  }
+  const missing = 'a'.repeat(40);
+  const boundary = writeCommitObject(tree, [missing, base], 'Boundary');
+  git('update-ref', 'refs/heads/main', boundary);
+  const old = new Date('2001-01-01T00:00:00Z');
+  await utimes(existing, old, old);
+  const before = await gitMetadata(dotGit);
+  const spy = vi.spyOn(sourceProcess, 'gitSource');
+  try {
+    await expect(readChange(repo, workspace, 'commit', boundary)).resolves.toMatchObject({ commit: boundary, partial: true });
+    const after = await gitMetadata(dotGit);
+    expect(after.find(entry => entry.file === existing)?.mtime).toBe(old.getTime());
+    expect(after).toEqual(before);
+    const writes = spy.mock.calls.filter(([args]) => args.includes('hash-object') && args.includes('-w'));
+    expect(writes.length).toBeGreaterThan(0);
+    expect(writes.every(([, options]) => options?.isolatedGit === undefined)).toBe(true);
+  } finally {
+    spy.mockRestore();
+  }
+});
 
 it('repairs a SHA-256 boundary through an annotated tag without changing the repository', async () => {
   repo = join(root, 'sha256 repo');

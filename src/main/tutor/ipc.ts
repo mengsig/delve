@@ -17,9 +17,7 @@ export const tutorSchemas = {
   'tutor:wait': jobAddress,
   'tutor:retry': jobAddress.extend({ provider: tutorRequest.shape.provider }),
   'tutor:dismiss': jobAddress,
-  'tutor:dismiss-unreadable': unreadableJobIdentity.extend({
-    jobKey: unreadableJobIdentity.shape.jobKey.max(1024),
-  }),
+  'tutor:dismiss-unreadable': unreadableJobIdentity,
 };
 
 export function tutorHandlers(db: Db, session: TutorSession): Pick<IpcHandlers, keyof typeof tutorSchemas> {

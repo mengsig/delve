@@ -8,6 +8,8 @@ import { recordEvidence } from './db/evidence';
 import { addWorkspace } from './db/workspaces';
 import { graphHandlers } from './graph-ipc';
 import { dispatch, registerIpc, type IpcHandlers, type IpcRegistrar } from './ipc';
+import { tutorHandlers } from './tutor/ipc';
+import { TutorSession } from './tutor/session';
 
 const workspace = { id: '0b0f5f56-1d3c-4a5e-9a51-3c8f4c2f3e10', kind: 'topic', name: 'Chess', source: 'chess', createdAt: 'now', lastOpenedAt: null } as const;
 
@@ -57,7 +59,6 @@ describe('dispatch', () => {
     for (const malformed of [
       { jobKey: identity.jobKey }, { ...identity, jobKey: 27 }, { ...identity, jobKey: 'A' },
       { ...identity, jobKey: 'ZZ' }, { ...identity, version: 'a'.repeat(31) }, { ...identity, rowid: 27 },
-      { ...identity, jobKey: '00'.repeat(513) },
     ]) {
       expect(await dispatch(h, 'tutor:dismiss-unreadable', malformed)).toMatchObject({
         ok: false, error: { code: 'INVALID_REQUEST' },
@@ -68,10 +69,34 @@ describe('dispatch', () => {
     expect(dismiss).toHaveBeenCalledExactlyOnceWith(identity);
   });
 
+  it('dismisses an oversized saved tutor key through the IPC dispatcher', async () => {
+    const db = openDatabase(':memory:');
+    const session = new TutorSession(db, async () => unexpected());
+    try {
+      const { id: workspaceId } = addWorkspace(db, { kind: 'topic', title: 'Routing' });
+      const { id: conceptId } = upsertConcept(db, { key: 'routing', title: 'Routing', workspaceId, portable: true });
+      const id = 'é'.repeat(257);
+      db.prepare(`INSERT INTO tutor_jobs (id, workspace_id, concept_id, depth, token, detail, phase)
+        VALUES (?, ?, ?, 'low', ?, '{}', 'running')`).run(id, workspaceId, conceptId, 'a'.repeat(64));
+      const h = handlers(tutorHandlers(db, session));
+      const listing = await dispatch(h, 'tutor:jobs', null);
+      if (!listing.ok) throw new Error(listing.error.message);
+      expect(listing.value).toHaveLength(1);
+      const [job] = listing.value;
+      if (job?.phase !== 'unreadable') throw new Error('Expected an unreadable tutor job.');
+      const { jobKey, version } = job;
+      expect(jobKey.length).toBeGreaterThan(1024);
+      expect(await dispatch(h, 'tutor:dismiss-unreadable', { jobKey, version })).toEqual({ ok: true, value: 'dismissed' });
+      expect(await dispatch(h, 'tutor:jobs', null)).toEqual({ ok: true, value: [] });
+    } finally {
+      session.close();
+      db.close();
+    }
+  });
+
   it.each([
     { kind: 'empty', jobKey: '' },
     { kind: 'blob', jobKey: '00FF80' },
-    { kind: 'maximum length', jobKey: '00'.repeat(512) },
   ])('accepts a $kind dismissal key', async ({ jobKey }) => {
     const dismiss = vi.fn(() => 'dismissed' as const);
     const h = handlers({ 'tutor:dismiss-unreadable': dismiss });
