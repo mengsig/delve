@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { ChangeDetail } from '../../shared/explorer';
 import { gitOutput } from './git-diagnostics';
-import { gitHistoryNode } from './git-history';
+import { gitHistoryNode, readCommitLog } from './git-history';
 import { DomainError } from '../../shared/errors';
 import { changeTitle, gitReader, nulRecords, readBlob, requireReachable, resolveCommit,
   withoutChangePatches, type ChangeSnapshot, type ChangePatch, type GitReader } from './git-reader';
@@ -20,20 +20,19 @@ interface ChangedFile {
   regular: boolean;
 }
 
-async function commitInfo(reader: GitReader, commit: string): Promise<{ title: string; parent: string | undefined; description?: string }> {
+async function commitInfo(reader: GitReader, commit: string): Promise<{ title: string; parents: string[]; description?: string }> {
   assert.ok(OBJECT_ID.test(commit));
   const raw = await reader.run(['cat-file', 'commit', commit], COMMIT_LIMIT);
   const content = gitOutput(raw, 'Could not read the Git commit.', COMMIT_LIMIT);
   const headers = content.indexOf('\n\n');
   if (headers < 0) throw new DomainError('SOURCE_READ_FAILED', 'Git did not return the commit headers.');
-  const parent = /^parent ([a-f0-9]+)$/m.exec(content.subarray(0, headers).toString('utf8'))?.[1];
-  assert.ok(parent === undefined || OBJECT_ID.test(parent));
-  const metadata = await reader.run(['log', '--no-notes', '--no-show-signature', '--encoding=UTF-8',
-    '--max-count=1', '--format=%s', commit, '--'], COMMIT_LIMIT);
+  const parents = [...content.subarray(0, headers).toString('utf8').matchAll(/^parent ([a-f0-9]+)$/gm)].map(match => match[1] ?? '');
+  assert.ok(parents.every(parent => OBJECT_ID.test(parent)));
+  const metadata = await readCommitLog(reader, commit, parents, '%s', COMMIT_LIMIT);
   const title = gitOutput(metadata, 'Could not read the Git commit title.', COMMIT_LIMIT).toString('utf8');
   const message = sourceText(content.subarray(headers + 2));
   const body = message?.split(/\n\s*\n/).slice(1).join('\n\n').trim().slice(0, 4000);
-  return { parent, title: changeTitle(title), description: body || undefined };
+  return { parents, title: changeTitle(title), description: body || undefined };
 }
 
 async function changedFiles(reader: GitReader, revisions: string[]): Promise<{ files: ChangedFile[]; partial: boolean }> {
@@ -73,7 +72,8 @@ async function openGitChange(path: string, ref: string) {
   const reader = await gitReader(path);
   const commit = await resolveCommit(reader, ref);
   await requireReachable(reader, commit);
-  const { title, parent, description } = await commitInfo(reader, commit);
+  const { title, parents, description } = await commitInfo(reader, commit);
+  const [parent] = parents;
   const snapshot: ChangeSnapshot = { commit, base: parent, title, description, diff: '', partial: false, files: [] };
   const revisions = parent ? [parent, commit] : [commit];
   if (parent) {
@@ -81,13 +81,14 @@ async function openGitChange(path: string, ref: string) {
     const errors = check.diagnostic.split(/\r?\n/).filter(line => /^(?:fatal|error):/.test(line));
     if (!check.truncated && check.status === 128 && check.output.length === 0
       && errors.length === 1 && errors[0] === 'fatal: git cat-file: could not get object info') {
-      return { reader, snapshot, revisions: null };
+      const coverageNote = `Git parent ${parent} is missing from the local snapshot.`;
+      return { reader, snapshot: { ...snapshot, partial: true, coverageNote }, revisions: null, parents };
     }
     assert.equal(gitOutput(check, 'Could not read the parent of that commit.').toString('utf8').trim(), 'commit');
   }
   assert.ok(revisions.every(revision => OBJECT_ID.test(revision)));
   assert.equal(revisions.at(-1), snapshot.commit);
-  return { reader, snapshot, revisions };
+  return { reader, snapshot, revisions, parents };
 }
 
 async function collectGitPatches(reader: GitReader, revisions: string[]) {
@@ -114,7 +115,7 @@ export async function readGitChange(path: string, ref: string): Promise<ChangeSn
 
 export async function readGitChangeWithPatches(path: string, ref: string): Promise<ChangeSnapshot & { patches: ChangePatch[] }> {
   const { reader, snapshot, revisions } = await openGitChange(path, ref);
-  if (!revisions) return { ...snapshot, partial: true, patches: [] };
+  if (!revisions) return { ...snapshot, patches: [] };
   const { files, partial } = await collectGitPatches(reader, revisions);
   const patches = files.flatMap(file => file.patch === null ? [] : [{ path: file.path, patch: file.patch }]);
   assert.ok(patches.length <= files.length);
@@ -142,14 +143,14 @@ async function gitStats(reader: GitReader, revisions: string[]) {
 }
 
 export async function readGitDetail(path: string, ref: string): Promise<ChangeDetail> {
-  const { reader, snapshot, revisions } = await openGitChange(path, ref);
-  const node = await gitHistoryNode(reader, snapshot.commit);
+  const { reader, snapshot, revisions, parents } = await openGitChange(path, ref);
+  const node = await gitHistoryNode(reader, snapshot.commit, parents);
   const base = snapshot.base;
-  if (base && !node.parents.includes(base)) node.parents.unshift(base);
   const common = { node, base, description: snapshot.description };
   if (!revisions) {
+    assert.ok(snapshot.partial && snapshot.coverageNote);
     return { ...common, files: [], fileCount: 0, additions: 0, deletions: 0, partial: true, statsCoverage: 'unavailable',
-      coverageNote: 'The parent is missing from the local snapshot. File and line totals are unavailable.' };
+      coverageNote: snapshot.coverageNote + ' File and line totals are unavailable.' };
   }
   const [changes, stats] = await Promise.allSettled([collectGitPatches(reader, revisions), gitStats(reader, revisions)]);
   if (changes.status === 'rejected') throw changes.reason;

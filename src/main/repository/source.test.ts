@@ -169,22 +169,6 @@ describe('Git change read boundaries', () => {
     await expect(stat(sentinel)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it.each([false, true])('returns shallow-boundary coverage with config warnings set to %s', async withWarning => {
-    await writeFile(join(repo, 'main.ts'), 'old\n');
-    const base = commit('Baseline');
-    await writeFile(join(repo, 'main.ts'), 'new\n');
-    const head = commit('Change');
-    const shallow = join(root, 'shallow.git');
-    git('clone', '--bare', '--depth=1', '--no-local', repo, shallow);
-    if (withWarning) git('config', '--file', join(shallow, 'config'), 'core.fsyncMethod', 'unknown-fsync-mode');
-    expect(await readChange(shallow, workspace, 'commit', head)).toMatchObject({
-      commit: head, title: 'Change', diff: '', files: [], partial: true,
-    });
-    expect(await readChangeDetail(shallow, workspace, 'commit', head)).toMatchObject({
-      node: { ref: head, parents: [base] }, base, partial: true, statsCoverage: 'unavailable', files: [],
-    });
-  });
-
   it('omits binary and oversized patches while keeping complete text patches', async () => {
     await writeFile(join(repo, 'huge.txt'), Buffer.alloc(65 * 1024, 'x'));
     await writeFile(join(repo, 'binary.png'), Buffer.from([0, 255]));
@@ -204,6 +188,44 @@ describe('Git change read boundaries', () => {
     git('reset', '--hard', head);
     await expect(readChange(repo, workspace, 'commit', 'HEAD~1')).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
     await expect(readChange(repo, workspace, 'commit', dangling)).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
+  });
+});
+
+describe('Git changes with missing parents', () => {
+  it.each([false, true])('returns shallow-boundary coverage with config warnings set to %s', async withWarning => {
+    await writeFile(join(repo, 'main.ts'), 'old\n');
+    const base = commit('Baseline');
+    await writeFile(join(repo, 'main.ts'), 'new\n');
+    const head = commit('Change');
+    const shallow = join(root, 'shallow.git');
+    git('clone', '--bare', '--depth=1', '--no-local', repo, shallow);
+    if (withWarning) git('config', '--file', join(shallow, 'config'), 'core.fsyncMethod', 'unknown-fsync-mode');
+    expect(await readChange(shallow, workspace, 'commit', head)).toMatchObject({
+      commit: head, title: 'Change', diff: '', files: [], partial: true,
+    });
+    expect(await readChangeDetail(shallow, workspace, 'commit', head)).toMatchObject({
+      node: { ref: head, parents: [base] }, base, partial: true, statsCoverage: 'unavailable', files: [],
+    });
+  });
+
+  it('opens a non-shallow history boundary whose parent object is missing', async () => {
+    const parent = commit('Missing parent', '--allow-empty');
+    const boundary = commit('Readable boundary', '--allow-empty', '-m', 'The boundary message survives.');
+    const tip = commit('Tip', '--allow-empty');
+    await rm(join(repo, '.git', 'objects', parent.slice(0, 2), parent.slice(2)));
+
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    expect((await history.advance(() => 1)).nodes.map(node => node.ref)).toEqual([tip, boundary]);
+    const note = `Git parent ${parent} is missing from the local snapshot.`;
+    await expect(readChange(repo, workspace, 'commit', boundary)).resolves.toMatchObject({
+      commit: boundary, base: parent, title: 'Readable boundary', description: 'The boundary message survives.',
+      partial: true, diff: '', files: [], coverageNote: note,
+    });
+    await expect(readChangeDetail(repo, workspace, 'commit', boundary)).resolves.toMatchObject({
+      node: { ref: boundary, title: 'Readable boundary', author: 'Fixture User', parents: [parent] },
+      base: parent, partial: true, statsCoverage: 'unavailable', files: [],
+      coverageNote: note + ' File and line totals are unavailable.',
+    });
   });
 });
 
@@ -251,6 +273,9 @@ it('reports a fatal parent read instead of showing missing-parent coverage', asy
       expect(pages.flatMap(page => page.nodes).find(node => node.ref === boundary)?.parents).toEqual(parents);
       expect(pages.at(-1)?.warning).toContain(missing[0]);
       expect(pages.at(-1)?.warning).toContain('git fsck');
+      await expect(readChangeDetail(repo, workspace, 'commit', boundary)).resolves.toMatchObject({
+        node: { ref: boundary, parents }, base: missing[0], partial: true, statsCoverage: 'unavailable',
+      });
     }, 30_000);
 
   it('keeps commits from other branches that are not behind the missing parent', async () => {

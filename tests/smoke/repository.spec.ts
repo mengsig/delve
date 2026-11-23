@@ -195,7 +195,7 @@ test('accepts a folder dropped into the initial repository field and offers a re
   });
 });
 
-test('shows readable commits and names the missing parent in History', async ({ desktop }, info) => {
+test('opens a readable history boundary with partial coverage and names the missing parent', async ({ desktop }, info) => {
   const { repo, head } = createRepository(desktop.directory);
   await desktop.page.evaluate(async path => {
     const result = await (globalThis as unknown as { delve: DelveApi }).delve.invoke('workspaces:add', { kind: 'git', path });
@@ -221,6 +221,13 @@ test('shows readable commits and names the missing parent in History', async ({ 
   await expect(history).toContainText('git fsck');
   await expect(history).not.toContainText('No commits or pull requests are available');
   await capture(page, info, 's17-missing-parent');
+
+  await history.getByRole('option', { name: /Add dispatch retries/ }).click();
+  const selected = page.getByRole('region', { name: 'Selected change' });
+  await selected.getByRole('tab', { name: 'Files changed' }).click();
+  const coverage = selected.getByText(`Git parent ${missing} is missing from the local snapshot. File and line totals are unavailable.`);
+  await expect(coverage).toBeVisible();
+  await capture(page, info, 's17-boundary-detail');
 });
 
 test.describe('model rejection', () => {

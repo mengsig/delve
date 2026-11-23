@@ -15,7 +15,8 @@ const MAX_PARENT_REPAIRS = 4;
 const WALK_LIMIT = 2 * 1024 * 1024;
 const METADATA_LIMIT = 1024 * 1024;
 const LOG = ['log', '--no-notes', '--no-show-signature', '--no-color', '--encoding=UTF-8', '-z'];
-const LOG_RECORDS = [...LOG, '--format=%H%x00%P%x00%an%x00%aI%x00%s'];
+const LOG_RECORD_FORMAT = '%H%x00%P%x00%an%x00%aI%x00%s';
+const LOG_RECORDS = [...LOG, `--format=${LOG_RECORD_FORMAT}`];
 const TIP_LOG = [...LOG, '--no-walk=unsorted', '--format=%H'];
 
 type ObjectFailure = { object: string; child?: string };
@@ -116,10 +117,34 @@ async function headTip(reader: GitReader): Promise<string | null> {
   return head;
 }
 
-export async function gitHistoryNode(reader: GitReader, head: string): Promise<HistoryNode> {
+export async function readCommitLog(reader: GitReader, head: string, parents: string[], format: string, limit: number): Promise<CommandResult> {
+  assert.ok(OBJECT_ID.test(head) && parents.every(parent => OBJECT_ID.test(parent)));
+  assert.ok(Number.isSafeInteger(limit) && limit > 0);
+  const args = [...LOG, `--format=${format}`, '--max-count=1', head, '--'];
+  let result = await reader.run(args, limit);
+  if (result.status !== 128) return result;
+
+  const boundaries = new Map<string, BrokenBoundary>();
+  for (let attempt = 0; attempt < MAX_PARENT_REPAIRS; attempt++) {
+    const parent = missingCommitLogParent(result, head, parents);
+    if (!parent || !addBrokenBoundary(boundaries, { commit: head, parents, missing: parent })) break;
+    await verifyUnreadable(reader, parent, result);
+    result = await withBoundaries(reader, boundaries, git => git.run(args, limit));
+  }
+  return result;
+}
+
+function missingCommitLogParent(result: CommandResult, head: string, parents: string[]): string | undefined {
+  if (result.truncated || result.status !== 128 || result.output.length > 0) return;
+  const errors = result.diagnostic.split(/\r?\n/).filter(line => /^(?:error|fatal):/.test(line));
+  if (errors.length !== 2 || errors[1] !== `fatal: Failed to traverse parents of commit ${head}`) return;
+  return parents.find(parent => errors[0] === `error: Could not read ${parent}`);
+}
+
+export async function gitHistoryNode(reader: GitReader, head: string, parents: string[]): Promise<HistoryNode> {
   assert.ok(OBJECT_ID.test(head));
   const { labels } = await branchTips(reader);
-  const result = await reader.run([...LOG_RECORDS, '--max-count=1', head, '--'], METADATA_LIMIT);
+  const result = await readCommitLog(reader, head, parents, LOG_RECORD_FORMAT, METADATA_LIMIT);
   if (gitReadState(result, METADATA_LIMIT) === 'limited') {
     throw new DomainError('SOURCE_LIMIT', 'The Git commit metadata exceeded the read limit.');
   }
@@ -127,7 +152,7 @@ export async function gitHistoryNode(reader: GitReader, head: string): Promise<H
   const [node] = nodes;
   assert.ok(nodes.length === 1 && node);
   assert.equal(node.head, head);
-  return node;
+  return { ...node, parents };
 }
 
 interface BrokenParent {
