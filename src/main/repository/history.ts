@@ -70,6 +70,27 @@ function byDate(node: HistoryNode) {
 
 const changeKey = (node: HistoryNode) => node.kind + '/' + node.ref;
 
+/** Login advice asking for the same recovery step shares a key; any other warning is keyed by its own text. */
+function adviceKey(warning: string) {
+  if (/^Install GitHub CLI and run gh auth login\b/.test(warning)) return 'github:install';
+  if (/^Run gh auth login\b/.test(warning)) return 'github:login';
+  return warning;
+}
+
+/** Keeps the first of each identical or equivalent warning, in order. */
+export function distinctWarnings(warnings: string[]): string[] {
+  assert.ok(warnings.every(warning => warning.length > 0));
+  const seen = new Set<string>();
+  const kept = warnings.filter(warning => {
+    const key = adviceKey(warning);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  assert.ok(kept.length <= warnings.length && kept.length === seen.size);
+  return kept;
+}
+
 class RepositoryHistory {
   private readonly seenPulls = new Set<string>();
   private readonly commits: HistoryFeed;
@@ -121,9 +142,8 @@ class RepositoryHistory {
     }
 
     const liveDone = this.commits.done && this.pulls.done;
-    const warnings = [...this.git.warnings, this.github.warning, this.commits.warning, this.pulls.warning].filter(Boolean);
-    const loginWarning = warnings.findIndex(warning => warning?.includes('gh auth login'));
-    const uniqueWarnings = warnings.filter((warning, index) => index === loginWarning || !warning?.includes('gh auth login'));
+    const warnings = [...this.git.warnings, this.github.warning, this.commits.warning, this.pulls.warning];
+    const uniqueWarnings = distinctWarnings(warnings.filter((warning): warning is string => Boolean(warning)));
     if (liveDone && this.saved.size && uniqueWarnings.length) uniqueWarnings.push('Previously saved changes are included.');
     if (liveDone) {
       for (const [key, node] of this.saved) {
@@ -135,7 +155,7 @@ class RepositoryHistory {
     assert.ok(nodes.length <= PAGE_SIZE);
     const next = liveDone && this.saved.size === 0 ? null : cursor();
     return { nodes, next, branches: [...this.branches].sort(), pullStatus: this.pullStatus,
-      warning: [...new Set(uniqueWarnings)].join(' ') || null };
+      warning: uniqueWarnings.join(' ') || null };
   }
 }
 
