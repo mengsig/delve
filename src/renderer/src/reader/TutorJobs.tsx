@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { LessonAddress, TutorRequest } from '../../../shared/reader';
+import type { LessonAddress, TutorRequest, UnreadableTutorJob } from '../../../shared/reader';
 import { preferredProvider, PROVIDER_LABELS } from '../preferences';
 import { errorMessage } from '../useRead';
 import { useQueue, type TutorJob } from './TutorQueue';
@@ -88,6 +88,24 @@ function JobNotice({ job, onOpen }: { job: TutorJob; onOpen: () => void }) {
   </li>;
 }
 
+function UnreadableJobNotice({ job }: { job: UnreadableTutorJob }) {
+  const { saved } = useTutorJobs();
+  const [pending, setPending] = useState(false);
+  async function dismiss() {
+    setPending(true);
+    try {
+      await saved.dismiss(job);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return <li className="map-job">
+    <div role="alert">{job.message}</div>
+    <div className="actions"><button disabled={pending} onClick={() => void dismiss()}>Dismiss</button></div>
+  </li>;
+}
+
 export function TutorJobStatus({ onOpen }: { onOpen: (address: LessonAddress) => void | Promise<void> }) {
   const { jobs, visible, openError, setOpenError, saved, dismissError } = useTutorJobs();
   const notices = [...jobs.values()].filter(job => job.key !== visible);
@@ -106,7 +124,7 @@ export function TutorJobStatus({ onOpen }: { onOpen: (address: LessonAddress) =>
     {saved.error && <p role="alert">{saved.error} <button onClick={saved.reload}>Retry loading tutor activity</button></p>}
     {dismissError && <p role="alert">{dismissError}</p>}
     <ul>
-      {saved.unreadable.map(job => <li className="map-job" key={job.rowKey}><div role="alert">{job.message}</div></li>)}
+      {saved.unreadable.map(job => <UnreadableJobNotice key={job.version} job={job} />)}
       {notices.map(job => <JobNotice key={job.id} job={job} onOpen={() => void open(job)} />)}
     </ul>
   </section>;

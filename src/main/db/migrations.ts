@@ -370,6 +370,19 @@ export const MIGRATIONS: readonly Migration[] = [
       FOREIGN KEY (workspace_id, concept_id) REFERENCES workspace_concepts ON DELETE CASCADE
     );`,
   },
+  {
+    version: 9,
+    name: 'version saved tutor jobs',
+    sql: `ALTER TABLE tutor_jobs ADD COLUMN version TEXT NOT NULL DEFAULT '';
+    UPDATE tutor_jobs SET version = lower(hex(randomblob(16)));
+    CREATE TRIGGER tutor_jobs_version_insert AFTER INSERT ON tutor_jobs BEGIN
+      UPDATE tutor_jobs SET version = lower(hex(randomblob(16))) WHERE rowid = NEW.rowid;
+    END;
+    CREATE TRIGGER tutor_jobs_version_update
+      AFTER UPDATE OF id, workspace_id, concept_id, depth, token, detail, phase, code, message ON tutor_jobs BEGIN
+      UPDATE tutor_jobs SET version = lower(hex(randomblob(16))) WHERE rowid = NEW.rowid;
+    END;`,
+  },
 ];
 
 function assertOrdered(migrations: readonly Migration[]): void {

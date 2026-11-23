@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
-import { lessonKey, type ReaderLesson, type SavedTutorJob, type TutorRequest, type UnreadableTutorJob } from '../../../shared/reader';
+import { lessonKey, type ReaderLesson, type SavedTutorJob, type TutorRequest, type UnreadableTutorJob, type UnreadableTutorJobIdentity } from '../../../shared/reader';
 import { call, IpcCallError } from '../api';
 import { errorMessage } from '../useRead';
 
@@ -33,12 +33,15 @@ function useJobStore() {
   return { jobs, add, replace, restore: (entries: TutorJob[]) => setJobs(new Map(entries.map(job => [job.key, job]))) };
 }
 
-function useSavedJobs(restore: (jobs: SavedTutorJob[]) => void) {
+function useSavedJobs(restore: (jobs: SavedTutorJob[]) => void, onDismissError: (message: string) => void) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
   const [unreadable, setUnreadable] = useState<UnreadableTutorJob[]>([]);
   const [attempt, setAttempt] = useState(0);
-  const loaded = useEffectEvent(restore);
+  // Notice refreshes must preserve the locally tracked turns.
+  const loaded = useEffectEvent((jobs: SavedTutorJob[]) => {
+    if (!ready) restore(jobs);
+  });
   useEffect(() => {
     let current = true;
     void call('tutor:jobs', null).then(jobs => {
@@ -51,7 +54,28 @@ function useSavedJobs(restore: (jobs: SavedTutorJob[]) => void) {
     });
     return () => { current = false; };
   }, [attempt]);
-  return { ready, error, unreadable, reload: () => { setError(''); setAttempt(value => value + 1); } };
+  function reload() {
+    setError('');
+    setAttempt(value => value + 1);
+  }
+
+  async function dismiss({ jobKey, version }: UnreadableTutorJobIdentity) {
+    onDismissError('');
+    try {
+      const result = await call('tutor:dismiss-unreadable', { jobKey, version });
+      if (result === 'active') {
+        onDismissError('This tutor request is still active. Wait for it to finish before dismissing it.');
+        return;
+      }
+      if (result === 'changed') onDismissError('This saved tutor request already changed.');
+      setUnreadable(previous => previous.filter(job => job.jobKey !== jobKey || job.version !== version));
+      reload();
+    } catch (cause) {
+      onDismissError('Could not dismiss the tutor request. ' + errorMessage(cause));
+    }
+  }
+
+  return { ready, error, unreadable, reload, dismiss };
 }
 
 function useLiveJobs({ replace }: ReturnType<typeof useJobStore>) {
@@ -85,7 +109,7 @@ export function useQueue() {
     for (const job of hydrated) {
       if (job.phase === 'running') void follow(job, () => call('tutor:wait', { requestId: job.id }));
     }
-  });
+  }, setDismissError);
 
   function start({ token, ...input }: JobInput & { token: string }) {
     const key = lessonKey(input.request);
