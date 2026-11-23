@@ -3,9 +3,12 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { coversDepth } from '../../shared/evidence-depth';
 import { DomainError } from '../../shared/errors';
+import type { WorkspaceGraph } from '../../shared/graph';
+import { plainConceptTitle } from '../../shared/plain-language';
 import type { FoundationProgress, FoundationStep, ReaderContract } from '../../shared/reader';
 import { transaction, type Db } from '../db/connection';
 import { listEvidence } from '../db/evidence';
+import { readWorkspaceGraph } from '../db/graph';
 import { persistTutorPrerequisites } from '../db/tutor-prerequisites';
 import type { LessonContext } from '../reader/demo';
 import { checkResponse, saveCheckEvidence } from './assessment';
@@ -13,7 +16,9 @@ import { foundationSchema, type Foundation } from './foundation-content';
 import { formatAnswerFeedback } from './language';
 import { nextGrade } from './mastery';
 
-const entriesSchema = z.array(z.strictObject({ conceptId: z.int().positive(), content: foundationSchema })).max(4);
+const entriesSchema = z.array(z.strictObject({
+  conceptId: z.int().positive(), content: foundationSchema, practised: z.literal(true).optional(),
+})).max(4);
 const progressSchema = z.object({
   entries: z.string().max(60_000), phase: z.enum(['probe', 'practice', 'done']), cursor: z.int().min(0).max(4),
 }).transform(({ entries, ...progress }) => ({ ...progress, entries: entriesSchema.parse(JSON.parse(entries)) }));
@@ -23,9 +28,10 @@ type SavedProgress = z.infer<typeof progressSchema>;
 type Decision = NonNullable<ReaderContract['reader:foundation']['request']['decision']>;
 type FoundationScope = Pick<LessonContext, 'depth' | 'workspaceId' | 'canonicalConceptId'>;
 
-function knowsFoundation(db: Db, context: FoundationScope, conceptId: number): boolean {
-  const evidence = listEvidence(db, conceptId);
-  return evidence.some(row => row.masteryVerified && row.status === 'demonstrated' && coversDepth(row.depth, context.depth));
+function foundationMastery(db: Db, context: FoundationScope, conceptId: number) {
+  const evidence = listEvidence(db, conceptId).filter(row => row.masteryVerified && row.status === 'demonstrated');
+  if (evidence.some(row => coversDepth(row.depth, context.depth))) return 'known';
+  return evidence.length ? 'shallower' : 'unlearned';
 }
 
 function answeredProbe(db: Db, conceptId: number): boolean {
@@ -43,7 +49,7 @@ export function saveFoundations(db: Db, context: FoundationScope, lessonId: numb
   const entries = resolved.flatMap(({ concept, candidateKey }) => {
     const content = source.get(candidateKey);
     assert.ok(content, 'every resolved prerequisite comes from a foundation candidate');
-    return knowsFoundation(db, context, concept.id) ? [] : [{ conceptId: concept.id, content }];
+    return foundationMastery(db, context, concept.id) === 'known' ? [] : [{ conceptId: concept.id, content }];
   });
   db.prepare(`INSERT INTO lesson_foundations (lesson_id, entries, phase) VALUES (?, ?, ?)
     ON CONFLICT (lesson_id) DO UPDATE SET entries = excluded.entries, phase = excluded.phase, cursor = 0`)
@@ -54,9 +60,9 @@ function nextFoundation(db: Db, context: LessonContext, lessonId: number) {
   const row = db.prepare("SELECT entries, phase, cursor FROM lesson_foundations WHERE lesson_id = ? AND phase <> 'done'").get(lessonId);
   if (!row) return null;
   const saved = progressSchema.parse(row);
-  const unknown = (entry: Entry) => !knowsFoundation(db, context, entry.conceptId);
-  const nextProbe = (entry: Entry, index: number) => index >= saved.cursor && unknown(entry) && !answeredProbe(db, entry.conceptId);
-  const nextPractice = (entry: Entry, index: number) => (saved.phase === 'probe' || index >= saved.cursor) && unknown(entry);
+  const mastery = saved.entries.map(entry => foundationMastery(db, context, entry.conceptId));
+  const nextProbe = (entry: Entry, index: number) => index >= saved.cursor && mastery[index] === 'unlearned' && !answeredProbe(db, entry.conceptId);
+  const nextPractice = (_entry: Entry, index: number) => (saved.phase === 'probe' || index >= saved.cursor) && mastery[index] !== 'known';
   const probeIndex = saved.phase === 'probe' ? saved.entries.findIndex(nextProbe) : -1;
   const phase = probeIndex >= 0 ? 'probe' : 'practice';
   const index = phase === 'probe' ? probeIndex : saved.entries.findIndex(nextPractice);
@@ -68,18 +74,57 @@ function nextFoundation(db: Db, context: LessonContext, lessonId: number) {
   const check = entry.content[phase];
   const revision = createHash('sha256').update(JSON.stringify([lessonId, phase, index, entry])).digest('hex');
   const common = { revision, title, why, position: index + 1, total: saved.entries.length, prompt: check.prompt, options: check.options };
-  const step: FoundationStep = phase === 'probe' ? { ...common, phase } : { ...common, phase, explanation: summary };
-  return { step, entry, check, index };
+  const step: FoundationStep = phase === 'probe' ? { ...common, phase } : {
+    ...common, phase, explanation: summary, goDeeper: mastery[index] === 'shallower',
+  };
+  return { step, entry, check, index, entries: saved.entries };
 }
 
 export function readFoundation(db: Db, context: LessonContext, lessonId: number | null): FoundationStep | null {
   return lessonId === null ? null : nextFoundation(db, context, lessonId)?.step ?? null;
 }
 
-function advance(db: Db, lessonId: number, phase: SavedProgress['phase'], cursor: number): void {
-  assert.ok(db.isTransaction && Number.isInteger(cursor) && cursor >= 0 && cursor <= 4);
-  const result = db.prepare('UPDATE lesson_foundations SET phase = ?, cursor = ? WHERE lesson_id = ?').run(phase, cursor, lessonId);
+function advance(db: Db, lessonId: number, phase: SavedProgress['phase'], cursor: number, entries: Entry[]): void {
+  assert.ok(db.isTransaction);
+  assert.ok(Number.isInteger(cursor) && cursor >= 0 && cursor <= entries.length);
+  const result = db.prepare('UPDATE lesson_foundations SET phase = ?, cursor = ?, entries = ? WHERE lesson_id = ?')
+    .run(phase, cursor, JSON.stringify(entries), lessonId);
   assert.equal(result.changes, 1, 'only the active foundation plan advances');
+}
+
+export function foundationRecap(db: Db, context: FoundationScope, lessonId: number | null, graph?: WorkspaceGraph) {
+  const row = lessonId === null ? undefined : db.prepare('SELECT entries, phase, cursor FROM lesson_foundations WHERE lesson_id = ?').get(lessonId);
+  const known: string[] = [];
+  const reviewed: string[] = [];
+  if (!row && !graph) return { known, reviewed };
+  const entries = row ? progressSchema.parse(row).entries : [];
+  const workspace = graph ?? readWorkspaceGraph(db, context.workspaceId, true);
+  assert.equal(workspace.workspaceId, context.workspaceId);
+  const prerequisites = new Set(workspace.edges.filter(edge => edge.conceptId === context.canonicalConceptId)
+    .map(edge => edge.prerequisiteId));
+  const practised = new Set(entries.filter(entry => entry.practised).map(entry => entry.conceptId));
+  const covering = new Set(workspace.evidence.filter(row =>
+    row.status === 'demonstrated' && coversDepth(row.depth, context.depth)).map(row => row.conceptId));
+  for (const concept of workspace.concepts) {
+    if (!prerequisites.has(concept.id)) continue;
+    const title = context.depth === 'high' ? plainConceptTitle(concept.title) : concept.title;
+    if (practised.has(concept.id)) reviewed.push(title);
+    else if (covering.has(concept.id)) known.push(title);
+  }
+  assert.ok(known.length + reviewed.length <= prerequisites.size);
+  return { known, reviewed };
+}
+
+export function foundationIntroduction(db: Db, context: FoundationScope, lessonId: number | null): string | undefined {
+  const { known, reviewed } = foundationRecap(db, context, lessonId);
+  if (reviewed[0]) return `This builds on ${reviewed[0]}, which you just went through.`;
+  if (known[0]) return `This builds on ${known[0]}, which you already know.`;
+}
+
+function finishFoundations(db: Db, context: LessonContext, lessonId: number, entries: Entry[]): FoundationProgress {
+  advance(db, lessonId, 'done', 0, entries);
+  const introduction = foundationIntroduction(db, context, lessonId);
+  return introduction ? { step: null, foundationIntroduction: introduction } : { step: null };
 }
 
 function gradeFoundation(db: Db, context: LessonContext, current: NonNullable<ReturnType<typeof nextFoundation>>, answer: number) {
@@ -106,16 +151,12 @@ export function answerFoundation(db: Db, context: LessonContext, lessonId: numbe
       throw new DomainError('LESSON_CHANGED', 'The foundation question changed. Reopen the lesson to see the current question.');
     }
     const { phase } = current.step;
-    if (decision.answer === null) {
-      advance(db, lessonId, phase === 'probe' ? 'practice' : 'done', 0);
-      const step = readFoundation(db, context, lessonId);
-      if (!step && phase === 'probe') advance(db, lessonId, 'done', 0);
-      return { step };
-    }
+    const { index, entries, entry } = current;
+    if (decision.answer === null) return finishFoundations(db, context, lessonId, entries);
     const feedback = gradeFoundation(db, context, current, decision.answer);
-    advance(db, lessonId, phase, current.index + 1);
+    if (phase === 'practice') entries[index] = { ...entry, practised: true };
+    advance(db, lessonId, phase, index + 1, entries);
     const step = readFoundation(db, context, lessonId);
-    if (!step) advance(db, lessonId, 'done', 0);
-    return { step, feedback };
+    return step ? { step, feedback } : { ...finishFoundations(db, context, lessonId, entries), feedback };
   });
 }

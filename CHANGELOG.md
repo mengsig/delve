@@ -6,7 +6,11 @@
 - Topic and change lessons check unfamiliar foundations first and save what you demonstrate for later lessons.
 
 ### Changed
-- High-depth explanations use everyday language and concrete examples. Answer feedback opens with a short verdict and the key idea.
+- High-depth explanations and concept cards use everyday language. Lessons open with a connection to a known or practised foundation when available, and use an everyday analogy. Answer feedback opens with a short verdict and the key idea.
+- Skip foundation questions in one action and revisit foundations from the learning path. Deeper practice builds on the depth already demonstrated.
+
+### Fixed
+- Change briefs keep usable diff links when some suggested lines fall outside the approved diff. Sequential diagrams show each step once with arrows between steps.
 
 ## [0.1.1] - 2026-11-23
 

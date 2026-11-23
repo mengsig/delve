@@ -11,6 +11,7 @@ import { bindSnapshot, saveLessonInTransaction } from '../db/lessons';
 import { documentSchema } from '../reader/document';
 import type { HistoryNode } from '../../shared/explorer';
 import { bindConceptSpans } from './concept-spans';
+import { plainConceptTitle } from '../../shared/plain-language';
 import { cacheModel, selectModel } from '../providers/model';
 import { baselineReply, type ChangeReply, type GraphProposal } from './schemas';
 import { portableConceptLookup } from './portable-concepts';
@@ -268,12 +269,27 @@ function recommendation(proposal: GraphProposal, concepts: Map<string, Concept>)
   return { conceptId: target.id, title: target.title, reason: proposal.recommendation.reason };
 }
 
-function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: ChangeReply, concepts: Map<string, Concept>): ChangeBrief {
-  const { request, preview, cacheKey } = source;
+function saveChangeConcept(db: Db, source: ApprovedSource, reply: ChangeReply): Concept {
+  const { request, preview } = source;
+  assert.ok(db.isTransaction);
   assert.notEqual(request.selection.kind, 'baseline');
   const localKey = 'change/' + digest([source.revision, request.provider, preview.model]);
-  const change = upsertConceptInTransaction(db, { workspaceId: request.workspaceId, key: localKey, portable: false,
-    title: preview.title, summary: reply.summary }, false);
+  if (request.depth !== 'high') {
+    const existing = getConceptByKey(db, conceptStorageKey(localKey, false, request.workspaceId));
+    if (existing && db.prepare("SELECT 1 FROM lessons WHERE concept_id = ? AND depth = 'high' LIMIT 1").get(existing.id)) {
+      return existing;
+    }
+  }
+  const title = request.depth === 'high' ? reply.conceptTitle ?? plainConceptTitle(preview.title) : preview.title;
+  return upsertConceptInTransaction(db, { workspaceId: request.workspaceId, key: localKey, portable: false,
+    title, summary: reply.summary }, false);
+}
+
+function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: ChangeReply, concepts: Map<string, Concept>): ChangeBrief {
+  const { request, preview, cacheKey } = source;
+  assert.ok(db.isTransaction && snapshotId > 0);
+  assert.notEqual(request.selection.kind, 'baseline');
+  const change = saveChangeConcept(db, source, reply);
   db.prepare('INSERT OR IGNORE INTO snapshot_concepts (snapshot_id, concept_id) VALUES (?, ?)').run(snapshotId, change.id);
   const trace = request.depth === 'high' ? [] : reply.trace;
   const excerpt = request.depth === 'low' ? reply.excerpt : [];
@@ -286,7 +302,7 @@ function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: Ch
     ...(mechanics ? [{ type: 'prose', heading: 'How it works', text: mechanics }] : []),
     ...(boundary ? [{ type: 'prose', heading: 'Protocol edge', text: boundary }] : []),
     { type: 'comparison', heading: 'Before → after', before: reply.before, after: reply.after },
-    ...(example ? [{ type: 'analogy', heading: 'A simple example', text: example }] : []),
+    ...(example ? [{ type: 'analogy', heading: 'An everyday analogy', text: example }] : []),
     ...(trace.length ? [{ type: 'diagram', nodes: trace }] : []),
     ...(excerpt.length ? [{ type: 'code', source: 'Approved diff', lines: excerpt }] : []),
     ...(preview.partial && request.depth !== 'high' ? [{ type: 'callout', heading: 'Partial coverage', text: preview.coverageNote ?? 'This brief covers only the available excerpts.' }] : []),

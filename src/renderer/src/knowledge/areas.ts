@@ -51,9 +51,9 @@ export function mapPlaces(graph: GlobalKnowledgeGraph, areas: LearningArea[], pr
   return places;
 }
 
-function matches(concept: KnowledgeConcept, state: ProgressState | undefined, filters: Filters, query: string) {
+function matches(concept: KnowledgeConcept, state: ProgressState | undefined, filters: Filters, query: string, originalTitle = '') {
   if (filters.depth && filters.depth !== concept.masteredDepth) return false;
-  if (query && !(concept.title + ' ' + concept.summary).toLocaleLowerCase().includes(query)) return false;
+  if (query && ![concept.title, concept.summary, originalTitle].join(' ').toLocaleLowerCase().includes(query)) return false;
   if (filters.state === 'verified') return concept.masteredDepth !== null;
   if (filters.state === 'skipped' && concept.masteryState !== 'skipped') return false;
   if (filters.state === 'unstarted' && concept.masteryState !== 'not-started') return false;
@@ -61,9 +61,10 @@ function matches(concept: KnowledgeConcept, state: ProgressState | undefined, fi
   return true;
 }
 
-export function visibleConcepts(graph: GlobalKnowledgeGraph, places: ReadonlyMap<number, Place>, filters: Filters) {
+export function visibleConcepts(graph: GlobalKnowledgeGraph, places: ReadonlyMap<number, Place>, filters: Filters,
+  originalTitles?: ReadonlyMap<number, string>) {
   const query = filters.query.trim().toLocaleLowerCase();
-  return new Set(graph.concepts.filter(c => matches(c, places.get(c.id)?.state, filters, query)).map(c => c.id));
+  return new Set(graph.concepts.filter(c => matches(c, places.get(c.id)?.state, filters, query, originalTitles?.get(c.id))).map(c => c.id));
 }
 
 export function suggestedLesson(areas: LearningArea[], places: ReadonlyMap<number, Place>, visible: Set<number>, preferred?: string) {

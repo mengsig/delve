@@ -15,7 +15,7 @@ import { prepareSource } from './preview';
 import { baselineReply, changeReply, type ChangeReply } from './schemas';
 import { digest, useCachedGeneration, latestBrief, persistGeneration, savedChanges, savedHistory, type ApprovedSource } from './store';
 import { foundationLanguageIssue } from '../tutor/foundation-content';
-import { highDepthTextIssue, withPlainLanguageRetry } from '../tutor/language';
+import { highDepthAnalogyIssue, highDepthTextIssue, withPlainLanguageRetry } from '../tutor/language';
 
 function outputSchema(schema: typeof baselineReply | typeof changeReply) {
   return z.toJSONSchema(schema, { target: 'draft-7', unrepresentable: 'any', override: ({ jsonSchema }) => {
@@ -26,10 +26,11 @@ function outputSchema(schema: typeof baselineReply | typeof changeReply) {
 
 const formats = { baseline: outputSchema(baselineReply), change: outputSchema(changeReply) };
 
-function changeLanguageIssue({ summary, what, why, before, after, example, recommendation, foundations }: ChangeReply) {
-  if (!example) return 'The change explanation needs a concrete example.';
-  const text = [summary, what, why, before, after, example, recommendation.reason];
-  return highDepthTextIssue(text) ?? foundationLanguageIssue(foundations ?? []);
+function changeLanguageIssue({ summary, what, why, before, after, conceptTitle, concepts, example, recommendation, foundations }: ChangeReply) {
+  const text = [summary, what, why, before, after, example ?? '', recommendation.reason];
+  return highDepthAnalogyIssue(example) ?? highDepthTextIssue(text)
+    ?? highDepthTextIssue([...(conceptTitle ? [conceptTitle] : []), ...concepts.map(concept => concept.title)])
+    ?? foundationLanguageIssue(foundations ?? []);
 }
 
 export class RepositoryLearning {
@@ -187,10 +188,12 @@ export class RepositoryLearning {
       const base = { provider: source.request.provider, model: source.preview.model ?? undefined, prompt: source.preview.prompt,
         cacheKey: digest([source.cacheKey, source.preview.prompt]), signal: controller.signal };
       const runChange = () => this.runner.run({ ...base, schema: changeReply, jsonSchema: formats.change });
+      const runBaseline = () => this.runner.run({ ...base, schema: baselineReply, jsonSchema: formats.baseline });
+      const high = source.request.depth === 'high';
       const reply = source.request.selection.kind === 'baseline'
-        ? await this.runner.run({ ...base, schema: baselineReply, jsonSchema: formats.baseline })
-        : source.request.depth === 'high' ? await withPlainLanguageRetry(runChange, result => changeLanguageIssue(result.value))
-          : await runChange();
+        ? high ? await withPlainLanguageRetry(runBaseline, ({ value }) => highDepthTextIssue(value.concepts.map(concept => concept.title)))
+          : await runBaseline()
+        : high ? await withPlainLanguageRetry(runChange, result => changeLanguageIssue(result.value)) : await runChange();
       if (controller.signal.aborted) throw new DomainError('PROVIDER_CANCELLED', 'The repository request was cancelled.');
       return persistGeneration(this.db, source, reply.value);
     } finally { this.runs.delete(requestId); }

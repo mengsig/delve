@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Depth } from '../../../shared/domain';
 import type { GlobalKnowledgeGraph, KnowledgeConcept } from '../../../shared/knowledge';
+import { containsTechnicalText, plainConceptTitle } from '../../../shared/plain-language';
 import { call } from '../api';
 import { Meter } from '../design/Meter';
 import { Icon } from '../Icon';
@@ -17,6 +18,7 @@ interface Props {
   concept: KnowledgeConcept;
   place: Place;
   depth: Depth;
+  technicalTitle?: string;
   suggested: boolean;
   demo: boolean;
   detection: ReturnType<typeof useProviderDetection>;
@@ -41,14 +43,24 @@ export function Inspector(props: Props) {
   const { concept, graph, place, depth, suggested, details, setDetails, select, onOpen } = props;
   const { area, progress, state } = place;
   const open = (target: 'lesson' | 'review' | 'atlas') => onOpen(area.workspaceId, concept.id, target, depth);
-  const learned = progress.prerequisites.map(id => area.progress.byId.get(id)?.title).filter(name => name !== undefined);
-  const reason = progress.unmet.length ? 'Learn ' + progress.unmet.map(prior => prior.title).join(' and ') + ' first.'
+  const titleAtDepth = (title: string) => depth === 'high' ? plainConceptTitle(title) : title;
+  const learned = progress.prerequisites.flatMap(id => {
+    const prior = area.progress.byId.get(id);
+    return prior ? [titleAtDepth(prior.title)] : [];
+  });
+  const reason = progress.unmet.length ? 'Learn ' + progress.unmet.map(prior => titleAtDepth(prior.title)).join(' and ') + ' first.'
     : learned.length ? 'You already understand ' + learned.join(' and ') + '.' : 'You can begin here without a previous lesson.';
+  const technicalSummary = depth === 'high' && containsTechnicalText(concept.summary);
   return <>
     <div className="knowledge-inspector-scroll">
       <div className="knowledge-status"><Icon name={state === 'mastered' ? 'check' : state === 'locked' ? 'lock' : 'route'} />
         {suggested ? 'Suggested next' : stateLabels[state]}</div>
-      <h3>{concept.title}</h3><SharedMarker concept={concept} />{concept.summary && <p>{concept.summary}</p>}
+      <h3>{concept.title}</h3><SharedMarker concept={concept} />{concept.summary && !technicalSummary && <p>{concept.summary}</p>}
+      {(props.technicalTitle || technicalSummary) && <details>
+        <summary>Technical details</summary>
+        {props.technicalTitle && <p>{props.technicalTitle}</p>}
+        {technicalSummary && <p>{concept.summary}</p>}
+      </details>}
       <div className="knowledge-reason"><h4>{state === 'mastered' ? 'What you know' : state === 'locked' ? 'What comes first?' : 'Why learn this now?'}</h4>
         <p>{state === 'mastered' ? 'You demonstrated this concept at ' + (concept.portable ? concept.masteredDepth ?? depth : depth) + ' depth.' : reason}</p></div>
       <button className="knowledge-disclosure" aria-expanded={details} onClick={() => setDetails(!details)}>

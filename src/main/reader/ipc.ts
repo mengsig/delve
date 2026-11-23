@@ -10,7 +10,7 @@ import { addMessage, readHistory } from './conversation';
 import { publicBlocks } from './document';
 import { lessonContext, selectLesson } from './stored-lesson';
 import { canRecommend, hasVerifiedMastery, loadMastery, publicMastery, requireMasteryRevision, saveMastery } from '../tutor/mastery';
-import { answerFoundation, readFoundation } from '../tutor/foundation-progress';
+import { answerFoundation, foundationIntroduction, readFoundation } from '../tutor/foundation-progress';
 
 export const address = z.strictObject({ workspaceId: z.uuid(), conceptId: z.int().positive(), depth: z.enum(DEPTHS) });
 export const readerSchemas = {
@@ -43,10 +43,12 @@ function foundationLessonId(db: Db, context: ReturnType<typeof lessonContext>, l
 export function readLesson(db: Db, address: LessonAddress): ReaderLesson {
   const { context, selected, mastery } = lessonState(db, address, true);
   const foundation = readFoundation(db, context, selected.id);
+  const introduction = foundation ? undefined : foundationIntroduction(db, context, selected.id);
   const { messages, earlierMessages } = readHistory(db, context);
   return { reused: mastery.stage === 'understood', blocks: !foundation && selected.document ? publicBlocks(selected.document) : [],
     revision: selected.revision, invalidLatest: selected.invalidLatest, source: selected.source, mastery: publicMastery(mastery),
     ...(foundation ? { foundation } : {}),
+    ...(introduction ? { foundationIntroduction: introduction } : {}),
     messages: canRecommend(mastery) ? messages : messages.map(({ recommendation: _recommendation, ...message }) => message),
     earlierMessages };
 }
@@ -82,8 +84,10 @@ export function readerHandlers(db: Db): Handlers {
     'reader:foundation': request => {
       const { context, selected } = lessonState(db, request, false);
       const lessonId = foundationLessonId(db, context, selected.id, request.lessonId);
-      return request.decision ? answerFoundation(db, context, lessonId, request.decision)
-        : { step: readFoundation(db, context, lessonId) };
+      if (request.decision) return answerFoundation(db, context, lessonId, request.decision);
+      const step = readFoundation(db, context, lessonId);
+      const introduction = step ? undefined : foundationIntroduction(db, context, lessonId);
+      return introduction ? { step, foundationIntroduction: introduction } : { step };
     },
     'reader:skip': request => skipLesson(db, request),
     'reader:message': request => {

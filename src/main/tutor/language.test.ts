@@ -1,15 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
 import { documentSchema } from '../reader/document';
-import { depthGuide, formatAnswerFeedback, highDepthIssue, withPlainLanguageRetry } from './language';
+import { depthGuide, formatAnswerFeedback, highDepthIssue, highDepthTextIssue, withPlainLanguageRetry } from './language';
+import { plainConceptTitle } from '../../shared/plain-language';
 
 const lesson = (blocks: unknown[], source?: string) => documentSchema.parse({ schema: 'delve.lesson/1', blocks, source });
 
 describe('high depth language', () => {
   it('gives distinct guidance for the three levels', () => {
     expect(depthGuide.high).toMatch(/everyday words/i);
-    expect(depthGuide.high).toMatch(/analogy or worked example/i);
+    expect(depthGuide.high).toMatch(/everyday analogy.*before any optional worked example/i);
     expect(depthGuide.medium).toMatch(/module or technique/i);
     expect(depthGuide.low).toMatch(/excerpts.*files and functions/i);
+  });
+
+  it('requires an analogy before a numeric example in an analogy block', () => {
+    const analogy = { type: 'analogy', heading: 'An everyday analogy' };
+    expect(highDepthIssue(lesson([{ ...analogy, text: 'Bytes 100–103 arrive. The reply names byte 104.' }]))).toMatch(/everyday analogy/);
+    expect(highDepthIssue(lesson([{ ...analogy, text: 'Think of setting aside parcels until a receipt comes back. Bytes 100–103 work that way.' }]))).toBeNull();
+  });
+
+  it('flags technical concept names and derives a plain label for saved names', () => {
+    expect(highDepthTextIssue(['Sequence state in transport.ts'])).toMatch(/identifier or a file name/);
+    expect(plainConceptTitle('Sequence state in transport.ts')).toBe('Sequence state');
+    expect(plainConceptTitle('Sequence state in src/transport.ts')).toBe('Sequence state');
+    expect(plainConceptTitle('TcpState.pending')).toBe('Code details');
+    expect(plainConceptTitle('Cumulative TCP acknowledgments')).toBe('Cumulative TCP acknowledgments');
   });
 
   it('accepts readable blocks without treating structured metadata as prose', () => {

@@ -109,7 +109,8 @@ function WorkspaceAtlas({ model, ...props }: AtlasProps & { model: AtlasModel })
         : <Folio model={model} selected={selected} recommendedId={recommendedId} workspaceId={workspace.id} changedId={demo?.changed?.id} onSelect={setSelection} />}
       <Inspector selected={selected} status={statusText(selected, workspace.id, selected.id === demo?.changed?.id)}
         onSelect={setSelection} onLesson={onLesson} />
-    </div><FieldGuide suggestedChange={graph.changeSuggestions?.[depth]} model={model} target={target} reason={adaptive && suggestion?.reason} workspace={workspace} demo={demo} onLesson={onLesson} onChanges={onChanges} /></div>
+    </div><FieldGuide suggestedChange={graph.changeSuggestions?.[depth]} model={model} target={target} reason={adaptive && suggestion?.reason}
+      depth={depth} workspace={workspace} demo={demo} onLesson={onLesson} onChanges={onChanges} /></div>
       : <EmptyAtlas {...props} />}
     {selected && <AtlasFooter model={model} depth={depth} onProgress={props.onProgress} view={view} onView={props.onView} />}
   </div>;

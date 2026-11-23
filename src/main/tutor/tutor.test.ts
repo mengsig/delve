@@ -117,6 +117,7 @@ it('previews the exact UTF-8 prompt, chosen depth, known prerequisites and most 
   session = new TutorSession(db, generate);
   const preview = prepareTurn(db, request).preview;
   expect(preview.prompt).toContain('IP addresses');
+  expect(preview.prompt).toMatch(/"foundationRecap":\s*\{\s*"known":\s*\[\s*"IP addresses"\s*\]/);
   expect(preview.prompt).toContain('"depth": "medium"');
   expect(preview.files).toEqual([]);
   expect(preview.prompt).toContain('Chose the default route despite a subnet match.');

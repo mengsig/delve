@@ -9,10 +9,11 @@ import { upsertConcept } from '../db/concepts';
 import { recordEvidence } from '../db/evidence';
 import { ProviderRunner } from '../providers/runner';
 import { makeShimDir, makeTempDir, setupRunner } from '../providers/test-helpers';
+import { changeReply } from './schemas';
 import { RepositoryLearning } from './service';
-import { listFiles, readFiles, repositoryPath } from './source';
+import { listFiles, readChangeWithPatches, readFiles, repositoryPath } from './source';
 
-vi.mock('./source', () => ({ listFiles: vi.fn(), readFiles: vi.fn(), repositoryPath: vi.fn() }));
+vi.mock('./source', () => ({ listFiles: vi.fn(), readChangeWithPatches: vi.fn(), readFiles: vi.fn(), repositoryPath: vi.fn() }));
 const commit = 'f'.repeat(40);
 let db: Db;
 let learning: RepositoryLearning;
@@ -67,6 +68,30 @@ it('includes global verified depths before a repository is attached', async () =
   const vocabulary = '"key":"tcp","title":"TCP","summary":"An ordered, reliable byte stream.","demonstratedDepth":"medium"';
   expect(preview.prompt).toContain(vocabulary + ',"known":true');
   expect(topUp.prompt).toContain(vocabulary + ',"known":false');
+});
+
+it.each([
+  { conceptTitle: 'Sequence state in main.rs' },
+  { example: 'Bytes 100–103 arrive. The reply names byte 104.' },
+])('retries a high-depth change using the exact approved prompt after rejecting %j', async invalid => {
+  const workspace = addWorkspace(db, { kind: 'github', owner: 'example', repo: 'test' });
+  vi.mocked(readChangeWithPatches).mockResolvedValue({ commit, title: 'Keep messages for another try',
+    diff: '+Keep the message', patches: [], files: [], partial: false });
+  const plain = changeReply.parse({ schema: 'delve.change/1', conceptTitle: 'Keep sent messages',
+    summary: 'The sender keeps a copy.', what: 'Messages are kept until a reply comes back.', why: 'That way they can be sent again.',
+    before: 'Copies were discarded immediately.', after: 'Copies stay until the reply.', mechanics: null, boundary: null,
+    example: 'Think of keeping a parcel receipt until the delivery arrives.', trace: [], excerpt: [], concepts: [], touched: [],
+    edges: [], recommendation: { key: null, reason: 'See how keeping a copy helps.' } });
+  const result = { value: plain, provider: 'codex' as const, model: null, attempts: 1 };
+  const run = vi.spyOn(runner, 'run').mockResolvedValueOnce({ ...result, value: { ...plain, ...invalid } }).mockResolvedValueOnce(result);
+  try {
+    const preview = await learning.preview({ workspaceId: workspace.id, depth: 'high', provider: 'codex', selection: { kind: 'pr', ref: '42' } });
+    const generated = await learning.generate(preview.token, randomUUID());
+    expect(generated).toMatchObject({ kind: 'change', brief: { example: plain.example } });
+    expect(run.mock.calls.map(([request]) => request.prompt)).toEqual([preview.prompt, preview.prompt]);
+  } finally {
+    run.mockRestore();
+  }
 });
 
 it('uses the Codex config model for repository generation and reports account rejection', async () => {

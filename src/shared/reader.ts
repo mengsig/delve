@@ -48,11 +48,12 @@ export type FoundationStep = {
   why: string;
   prompt: string;
   options: string[];
-} & ({ phase: 'probe' } | { phase: 'practice'; explanation: string });
+} & ({ phase: 'probe' } | { phase: 'practice'; explanation: string; goDeeper: boolean });
 
 export interface FoundationProgress {
   step: FoundationStep | null;
   feedback?: string;
+  foundationIntroduction?: string;
 }
 
 export interface ReaderLesson {
@@ -65,6 +66,7 @@ export interface ReaderLesson {
   earlierMessages: boolean;
   mastery: ReaderMastery;
   foundation?: FoundationStep;
+  foundationIntroduction?: string;
 }
 
 export interface ReaderContract {

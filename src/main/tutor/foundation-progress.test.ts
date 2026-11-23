@@ -79,12 +79,17 @@ it('derives and saves foundation links, skips covering proof and unlocks the exp
   expect(read()?.revision).toBe(wrong.step?.revision);
   expect(() => respond(foundation.revision, 0)).toThrow(/question changed/);
   expect(respond(wrong.step!.revision, 1)).toMatchObject({ step: null, feedback: expect.stringMatching(/^Right —/) });
-  expect(readLesson(db, request)).toMatchObject({ blocks: [opening.lesson.blocks[0], expect.any(Object)] });
+  expect(readLesson(db, request)).toMatchObject({ blocks: [opening.lesson.blocks[0], expect.any(Object)],
+    foundationIntroduction: 'This builds on Delivery receipts, which you just went through.' });
+  const prompt = prepareTurn(db, { ...request, intent: { kind: 'ask', text: 'How do these ideas fit together?' } }).preview.prompt;
+  expect(prompt).toContain('Use foundationRecap to connect');
+  expect(prompt).toMatch(/"foundationRecap":\s*\{\s*"known":\s*\[\s*"Wait limits"\s*\],\s*"reviewed":\s*\[\s*"Delivery receipts"\s*\]/);
   expect(listEvidence(db, learned.id)).toMatchObject([{ depth: 'high', status: 'demonstrated', masteryVerified: true }]);
   expect(generate).toHaveBeenCalledTimes(1);
 
   const nextLesson = await run(topic('Acknowledging messages'));
   expect(nextLesson.foundation).toBeUndefined();
+  expect(nextLesson.foundationIntroduction).toMatch(/which you already know\.$/);
   expect(getGlobalKnowledgeGraph(db).concepts.filter(c => c.key === receipt.key)).toHaveLength(1);
 });
 
@@ -104,25 +109,40 @@ it('orders questions bottom-up, infers evidence from the answer, and never repea
   const laterRequest = topic('Retrying messages', 'medium');
   const next = (await run(laterRequest)).foundation!;
   expect(next).toMatchObject({ phase: 'practice', title: receipt.title });
-  expect(respond(next.revision, 1, laterRequest).step).toMatchObject({ phase: 'practice', title: timeout.title });
+  expect(respond(next.revision, 1, laterRequest).step).toMatchObject({ phase: 'practice', title: timeout.title, goDeeper: true });
   expect(listEvidence(db, basic.id)).toEqual(expect.arrayContaining([
     expect.objectContaining({ depth: 'medium', status: 'demonstrated', masteryVerified: true }),
   ]));
 });
 
-it('lets the learner skip the probe and then view the short practice or go straight to the lesson', async () => {
+it('skips directly to the lesson and keeps the untested foundation on the learning path', async () => {
   session = new TutorSession(db, async () => ({ ...opening, foundations: [receipt] }));
   const first = (await run()).foundation!;
-  const review = respond(first.revision, null).step!;
-  expect(review).toMatchObject({ phase: 'practice', title: receipt.title });
-  expect(respond(review.revision, null).step).toBeNull();
+  expect(respond(first.revision, null)).toEqual({ step: null });
+  const graph = getGlobalKnowledgeGraph(db);
+  const foundation = graph.concepts.find(concept => concept.key === receipt.key)!;
+  expect(graph.edges).toContainEqual({ conceptId: request.conceptId, prerequisiteId: foundation.id });
+  expect(listEvidence(db, foundation.id)).toEqual([]);
+  expect(readLesson(db, request).foundationIntroduction).toBeUndefined();
   const next = await run(topic('Sending a second message'));
   expect(next.foundation).toMatchObject({ phase: 'probe', title: receipt.title });
 });
 
+it('offers verified shallower foundations as deeper practice without a new probe or deeper mastery', async () => {
+  const foundation = linked(receipt);
+  recordEvidence(db, { conceptId: foundation.id, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+  session = new TutorSession(db, async () => ({ ...opening, foundations: [receipt] }));
+  const deepRequest = topic('Retrying a delivery', 'low');
+  const first = (await run(deepRequest)).foundation!;
+  expect(first).toMatchObject({ phase: 'practice', title: receipt.title, goDeeper: true });
+  expect(respond(first.revision, null, deepRequest)).toEqual({ step: null });
+  expect(listEvidence(db, foundation.id)).toMatchObject([{ depth: 'high', masteryVerified: true }]);
+});
+
 it('regenerates a high-depth opening using the same exact approved prompt', async () => {
   const clunky: TutorReply = { ...opening, lesson: { ...opening.lesson, blocks: [
-    { type: 'prose', heading: 'The new setting', text: 'The currentAttempt field changes. The supplied diff is partial.' }, probe,
+    { type: 'prose', heading: 'The new setting', text: 'The currentAttempt field changes. The supplied diff is partial.' },
+    opening.lesson.blocks[0]!, probe,
   ] } };
   const generate = vi.fn().mockResolvedValueOnce(clunky).mockResolvedValueOnce(opening);
   session = new TutorSession(db, generate);

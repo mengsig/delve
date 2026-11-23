@@ -46,7 +46,7 @@ test('opens the first block from home in two actions, including first-use consen
   await expect(page.getByRole('dialog', { name: 'Review what will be sent' })).toHaveCount(0);
 });
 
-test('can skip the topic questions, then read or skip the foundation before the main lesson', async ({ desktop: { page, directory } }) => {
+test('skips the topic questions in one action and opens the foundation from the learning path', async ({ desktop: { page, directory } }, info) => {
   const receipt = join(directory, 'request.json');
   const reply = { ...envelope, lesson: { schema: 'delve.lesson/1', source: null, blocks: [explanation, check] },
     foundations: [{
@@ -65,11 +65,16 @@ test('can skip the topic questions, then read or skip the foundation before the 
   await expect(probe).toBeVisible();
   const request = readFileSync(receipt, 'utf8');
   await probe.getByRole('button', { name: 'Skip questions' }).click();
-  const practice = page.getByRole('region', { name: 'A quick look at Address ranges' });
-  await expect(practice).toContainText('like houses on one block');
-  await practice.getByRole('button', { name: 'Skip to lesson' }).click();
   await expect(page.getByRole('heading', { name: explanation.heading })).toBeVisible();
+  await expect(page.getByText(/Foundation lesson/)).toHaveCount(0);
   expect(readFileSync(receipt, 'utf8')).toBe(request);
+  const path = page.getByLabel('Concept mastery');
+  const link = path.getByRole('button', { name: 'Open Address ranges' });
+  await expect(link).toBeVisible();
+  await expect(link.locator('..').getByRole('meter')).toHaveAttribute('aria-valuetext', 'Ready');
+  await page.screenshot({ path: info.outputPath('after-skip.png') });
+  await link.click();
+  await expect(page.getByRole('heading', { name: 'Address ranges', exact: true }).first()).toBeVisible();
 });
 
 test.describe('first run', () => {

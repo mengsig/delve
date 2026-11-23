@@ -30,7 +30,7 @@ export const foundationInstructions = [
   'Each foundation needs a stable transferable key, a plain title, a short standalone explanation with a concrete example in summary, and one sentence in why explaining how it helps with the main subject. The why sentence must not give away the answer to the probe.',
   'Reuse a matching key or title from the learner context. Include already known essentials so their graph links stay visible. Order the most basic ideas first.',
   'For probe and practice, write separate short prediction checks at the chosen depth. Use type check, kind prediction, four distinct choices and a zero-based expected index. Give no hints in the probe. In practice, apply the explanation to a new situation.',
-  'Delve asks the probe before showing the explanation, and skips checks the learner has already covered. Build the main explanation on the foundations explicitly with brief reminders of the ideas you use, so it also works if the learner skips practice.',
+  'Delve asks the probe before showing the explanation, skips checks the learner has already covered, and names a known or practised foundation near the start of the lesson. Build the opening on those ideas and briefly explain how they apply, so it also works if the learner skips practice.',
 ].join('\n');
 
 export function foundationLanguageIssue(foundations: readonly Foundation[]): string | null {

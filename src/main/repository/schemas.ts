@@ -50,7 +50,7 @@ const graph = z.strictObject({
 export const baselineReply = graph.extend({ schema: z.literal('delve.map/1') });
 export const changeReply = graph.extend({ schema: z.literal('delve.change/1'), concepts: z.array(concept).max(60),
   recommendation: z.strictObject({ key: key.nullable(), reason: text }), summary: text, what: text, why: text, before: text, after: text,
-  example: text.nullable().optional(), foundations: foundationsSchema.optional(),
+  conceptTitle: concept.shape.title.nullable().optional(), example: text.nullable().optional(), foundations: foundationsSchema.optional(),
   spans: z.array(span).max(128).default([]), touched: z.array(key).max(60), mechanics: text.nullable(), boundary: text.nullable(), trace: z.array(z.string().trim().min(1).max(160)).max(8),
   excerpt: z.array(z.string().max(2000)).max(16) });
 export type GraphProposal = z.infer<typeof baselineReply> | z.infer<typeof changeReply>;

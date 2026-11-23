@@ -8,7 +8,7 @@ import { resolveScope } from './scope';
 
 const SCHEMA_VERSION = /^delve\.lesson\/\d+$/;
 const COMMIT_SHA = /^[0-9a-f]{7,64}$/i;
-export const TUTOR_GENERATION = 'foundations/1';
+export const TUTOR_GENERATION = 'foundations/2';
 
 export interface CacheKeyParts {
   schemaVersion: string;

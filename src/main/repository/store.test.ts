@@ -37,6 +37,20 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
+it('keeps the high-depth change concept name and summary after generating a detailed brief', () => {
+  const approved = source({ kind: 'pr', ref: '42' }, baseline);
+  const high = { ...approved, cacheKey: 'high', request: { ...approved.request, depth: 'high' as const } };
+  const plain = { ...change, conceptTitle: 'Checking routes before using them', summary: 'The service removes outdated routes.' };
+  const first = persistGeneration(db, high, plain);
+  const technical = 'The new check in src/routes.ts removes expired routes.';
+  const low = { ...approved, cacheKey: 'low', request: { ...approved.request, depth: 'low' as const } };
+  const detailed = persistGeneration(db, low, { ...change, summary: technical });
+  if (first.kind !== 'change' || detailed.kind !== 'change') throw new Error('Expected change briefs.');
+  expect(detailed.brief).toMatchObject({ conceptId: first.brief.conceptId, summary: technical });
+  expect(readWorkspaceGraph(db, workspaceId, true).concepts.find(concept => concept.id === first.brief.conceptId))
+    .toMatchObject({ title: plain.conceptTitle, summary: plain.summary });
+});
+
 it('plans local usage in a new repository and only tops up the missing portable depth', () => {
   const first = workspaceId;
   const map = (key: string, title: string, usage: string) => baselineReply.parse({

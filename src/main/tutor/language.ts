@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { DomainError } from '../../shared/errors';
+import { containsTechnicalText } from '../../shared/plain-language';
 import type { Document } from '../reader/document';
 
 export const depthGuide = {
-  high: 'Write like a colleague explaining this to a non-specialist. Use short sentences and everyday words. Say what changed and why it matters to a person, with one concrete analogy or worked example. If a technical term is necessary, define it in one short plain sentence when it first appears. Keep code, identifiers, file names, internal fields, and source or CI caveats out of the teaching and feedback.',
+  high: 'Write like a colleague explaining this to a non-specialist. Use short sentences and everyday words. Say what changed and why it matters to a person. For an opening lesson, start its example with an everyday analogy. Compare the idea to a familiar situation outside the subject, such as keeping a parcel receipt, and say how they are alike. Give the analogy before any optional worked example. A calculation or trace alone is not an analogy. If a technical term is necessary, define it in one short plain sentence when it first appears. Keep code, identifiers, file names, internal fields, and source or CI caveats out of the teaching and feedback.',
   medium: 'Explain how the parts interact at the module or technique level.',
   low: 'Walk through the important code changes and boundary conditions. When a diff is supplied, quote short relevant excerpts from it and name the affected files and functions. Connect the code to what it does. For non-code topics, work through the exact technique.',
 } as const;
@@ -26,12 +27,11 @@ function visibleText(block: Block): string[] {
   }
 }
 
-const technicalText = /(?:`[^`]+`|\b[a-z_$][\w$]*[A-Z][\w$]*\b|\b[a-z][a-z0-9]*_[a-z0-9_]+\b|\b[\w-]+\.(?:ts|tsx|js|jsx|py|rs|json|ya?ml|md|toml|go|java|css|html)\b|\b(?:function|class|const|let|var)\s+[\w$]+\s*[=(]|(?:=>|\b\w+\([^)]*\)))/;
 const metaCaveat = /\b(?:i|we) (?:cannot|can't|could not|couldn't|did not|didn't|haven't|have not|unable to) (?:access|inspect|read|see|verify|check|run|view)\b|\b(?:source (?:code|files?)|repository|repo|files?|ci|tests?) (?:was|were|is|are) not (?:available|provided|accessible|run|checked|inspected|verified)\b|\b(?:(?:supplied|provided|available) diff|partial (?:diff|coverage)|benchmark (?:harness|verdict)|ci retr(?:y|ies))\b/i;
 
 function textIssue(text: string): string | null {
   assert.equal(typeof text, 'string', 'learner-facing text must be a string');
-  if (technicalText.test(text)) return 'Learner-facing text contains code, an identifier or a file name.';
+  if (containsTechnicalText(text)) return 'Learner-facing text contains code, an identifier or a file name.';
   if (metaCaveat.test(text)) return 'Learner-facing text contains a source or CI caveat.';
   const sentences = text.split(/(?<=[.!?])\s+/u);
   assert.ok(sentences.length > 0, 'splitting text preserves at least one sentence');
@@ -45,7 +45,8 @@ export function highDepthIssue(lesson: Document, feedback: readonly string[] = [
   assert.ok(Array.isArray(lesson.blocks), 'a lesson must contain blocks');
   for (const block of lesson.blocks) {
     if (block.type === 'code') return 'A high-depth lesson contains a code block.';
-    const issue = highDepthTextIssue(visibleText(block));
+    const issue = (block.type === 'analogy' ? highDepthAnalogyIssue(block.text) : null)
+      ?? highDepthTextIssue(visibleText(block));
     if (issue) return issue;
   }
   return highDepthTextIssue(feedback);
@@ -56,6 +57,16 @@ export function highDepthTextIssue(texts: readonly string[]): string | null {
   for (const text of texts) {
     const issue = textIssue(text);
     if (issue) return issue;
+  }
+  return null;
+}
+
+export function highDepthAnalogyIssue(text: string | null | undefined): string | null {
+  if (!text?.trim()) return 'The explanation needs an everyday analogy.';
+  const opening = text.split(/[.!?](?=\s|$)/u, 1)[0];
+  assert.ok(opening !== undefined, 'splitting an analogy yields an opening');
+  if (/\d/.test(opening) && !/\b(?:like|imagine|picture|think of|as if)\b/i.test(opening)) {
+    return 'Start with an everyday analogy before giving a worked example.';
   }
   return null;
 }

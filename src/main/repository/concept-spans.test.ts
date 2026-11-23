@@ -21,10 +21,15 @@ describe('source-linked concepts', () => {
     expect(patchLines(patch)).toContainEqual({ kind: 'context', oldLine: 3, newLine: 7, text: ' context' });
   });
 
-  it('rejects invented files, concepts, ranges, unchanged context and gaps between hunks', () => {
-    for (const invalid of [{ key: 'other' }, { path: 'other.ts' }, { side: 'old' as const },
-      { start: 0 }, { end: 7 }, { start: 7 }, { end: 42 }, { start: 21, end: 21 }]) {
-      expect(() => bindConceptSpans([{ ...span, ...invalid }], files, concepts)).toThrow();
-    }
+  it('drops unapproved spans while preserving the valid links from the same reply', () => {
+    const invalid = [{ path: 'other.ts' }, { side: 'old' as const }, { start: 0 }, { end: 7 },
+      { start: 7 }, { end: 42 }, { start: 21, end: 21 }].map(range => ({ ...span, ...range }));
+    expect(bindConceptSpans([...invalid, span], files, concepts)).toEqual([
+      { path, side: 'new', start: 8, end: 9, conceptId: 12 },
+    ]);
+  });
+
+  it('rejects links to concepts outside the change footprint', () => {
+    expect(() => bindConceptSpans([{ ...span, key: 'other' }], files, concepts)).toThrow(/outside the change footprint/);
   });
 });

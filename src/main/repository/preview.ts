@@ -83,7 +83,7 @@ function learningContext(db: Db, request: RepoRequest) {
 
 const mapTask = 'Map the approved files into concepts and prerequisite edges. Recommend one first step whose prerequisites the learner knows. Give a specific reason.';
 const changeTask = [
-  'Teach what changed, why it matters, and the before and after. At High include one concrete analogy or worked example in example. Keep coverage notes out of the teaching because Delve shows them separately. Describe only behavior supported by the available material.',
+  'Teach what changed, why it matters, and the before and after. At High, set conceptTitle to a plain name for the change and put an everyday analogy in example, before any optional worked example. Otherwise set conceptTitle to null. Keep coverage notes out of the teaching because Delve shows them separately. Describe only behavior supported by the available material.',
   'At Medium and Low explain how the parts interact in mechanics and include a short ordered trace when supported. At Low name important changed files and functions and explain the boundary condition in boundary. Return a short contiguous excerpt copied verbatim from the diff, including patch prefixes. Use null or empty arrays where unavailable or outside the chosen depth.',
   'List the affected concepts and prerequisite edges. Reuse the same keys for concepts that also belong in foundations. List only directly affected keys in touched. Link those keys to concrete diff spans using the exact file path, side old for removed lines or new for added lines, and inclusive source line numbers. Each span must contain only consecutive changed lines on that side. Return empty spans if unavailable.',
   'Recommend studying a feature, a prerequisite, or this change brief itself (key null). Give a specific reason.',
@@ -94,6 +94,7 @@ export async function prepareSource(db: Db, path: string | null, workspace: Work
   const baseline = request.selection.kind === 'baseline';
   const schema = baseline ? 'delve.map/1' : 'delve.change/1';
   const instructions = [baseline ? mapTask : changeTask, depthGuide[request.depth],
+    ...(request.depth === 'high' ? ['Use plain names for all concept titles, including reused concepts and foundations. Name the idea or behavior without file names, code, or identifiers.'] : []),
     ...(baseline ? [] : [foundationInstructions]),
     'Classify transferable ideas as portable. Describe each in general terms and give it a stable key independent of the repository. When a portableVocabulary key and summary describe the same idea, reuse both verbatim. Use a different key and your own summary for a different idea with a similar name.',
     portableKeyGuide,
@@ -106,8 +107,9 @@ export async function prepareSource(db: Db, path: string | null, workspace: Work
   const { model, modelSource } = selectModel(request.provider);
   const ref = request.selection.kind === 'pr' ? request.selection.ref : commit;
   const revision = digest([request.selection.kind, ref, repository, base, commit, title, description, partial, coverageNote, files, data]);
+  const generation = !baseline || request.depth === 'high' ? [TUTOR_GENERATION] : [];
   const cacheKey = digest([workspace.id, revision, schema, 'delve.lesson/1', request.depth, request.provider, cacheModel(model), 'portable-concepts/1',
-    ...(baseline ? [] : ['concept-spans/1', TUTOR_GENERATION])]);
+    ...(baseline ? [] : ['concept-spans/1']), ...generation]);
   const preview = { token: randomUUID(), model, modelSource, prompt, bytes: Buffer.byteLength(prompt), files, commit, base, title, partial, coverageNote };
   assert.ok(preview.bytes >= prompt.length && preview.bytes > 0);
   return { preview, request, revision, cacheKey, patches, diff: !baseline && typeof data === 'string' ? data : undefined };

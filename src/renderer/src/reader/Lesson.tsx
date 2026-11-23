@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { LessonAddress, ReaderLesson } from '../../../shared/reader';
+import { plainConceptTitle } from '../../../shared/plain-language';
 import { EnvironmentActivity } from '../lab/EnvironmentActivity';
 import { LatestInstrumentLink, LessonInstruments } from '../lab/Environment';
 import { call } from '../api';
@@ -45,6 +46,7 @@ function Thread({ body, tutor, scope, foundation }: { body: ReaderLesson; tutor:
       {foundation?.feedback && <p role="status" className="reader-observation">{foundation.feedback}</p>}
       <LessonRecovery body={body} tutor={tutor} />
       {body.blocks.length > 0 && <section id="opening-lesson" tabIndex={-1} ref={openingLesson}><span className="message-author">Delve tutor</span>
+        {body.foundationIntroduction && <p>{body.foundationIntroduction}</p>}
         <LessonBlocks blocks={body.blocks} /></section>}
       {body.mastery.needsAdaptation && <section><strong>Saved question</strong><p>{body.mastery.activeCheck?.prompt}</p>
         {body.mastery.activeCheck?.options && <ol>{body.mastery.activeCheck.options.map((choice, i) => <li key={i}>{choice}</li>)}</ol>}</section>}
@@ -100,9 +102,9 @@ function Session({ props, initial, title, address, reload }: {
   } };
   if (body.foundation) return <div className="field-lesson">
     <LessonHeading props={props} title={title} />
-    <FoundationActivity address={address} initial={body.foundation} onComplete={async feedback => {
+    <FoundationActivity address={address} initial={body.foundation} onComplete={async completion => {
       commit(await call('reader:lesson', address));
-      completeFoundation({ feedback });
+      completeFoundation(completion);
     }} />
   </div>;
   return <div className="field-lesson"><EnvironmentActivity.Provider value={lessonActivity}>
@@ -136,5 +138,6 @@ export function Lesson(props: LessonProps) {
   if (!concept || props.graph.workspaceId !== props.workspace.id) return <>
     <button className="back" onClick={props.onBack}>{props.backLabel ?? '← Back to atlas'}</button><p role="alert">This workspace does not contain the selected concept.</p>
   </>;
-  return <Reader key={[props.workspace.id, props.conceptId, props.depth, props.graph.snapshot, version].join('/')} props={props} title={concept.title} reload={() => update(value => value + 1)} />;
+  const title = props.depth === 'high' ? plainConceptTitle(concept.title) : concept.title;
+  return <Reader key={[props.workspace.id, props.conceptId, props.depth, props.graph.snapshot, version].join('/')} props={props} title={title} reload={() => update(value => value + 1)} />;
 }

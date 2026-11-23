@@ -12,7 +12,7 @@ import { resolveWorkspaceSource } from '../db/workspaces';
 import { lessonContext, storedLesson } from '../reader/stored-lesson';
 import { checkResponse, type ResponseToCheck } from './assessment';
 import { foundationInstructions } from './foundation-content';
-import { readFoundation } from './foundation-progress';
+import { foundationRecap, readFoundation } from './foundation-progress';
 import { depthGuide } from './language';
 import {
   canRecommend, hasVerifiedMastery, loadMastery, masteryLimits, needsCheckAdaptation, nextGrade, requireMasteryRevision, type Mastery,
@@ -20,7 +20,7 @@ import {
 
 const instructions = [
   'You are Delve, a conversational tutor. Return a delve.lesson/1 document inside the requested response.',
-  'Use only the chosen depth. For teach, explain the concept with one concrete analogy or worked example, then end with exactly one check.',
+  'Use only the chosen depth. For teach, explain the concept with a concrete example, then end with exactly one check. At high depth, use an analogy block before any optional worked example.',
   foundationInstructions,
   'Supply foundations only for teach. For every other intent return an empty foundations list.',
   'For ask, answer directly with teaching blocks and leave the active check unchanged. Do not append a check.',
@@ -33,6 +33,7 @@ const instructions = [
   'Every new check must be kind prediction with exactly four distinct plausible options and a zero-based integer expected index. Ask the learner to predict an outcome or choose an action in a concrete situation. Vary the task, conditions and phrasing compared with mastery.previousQuestions. Do not give away the new answer in preceding teaching.',
   'Keep recommendation null until the learner reaches understood or skipped. Then you may give a specific next step with a reason, choosing a targetId from nextConcepts or null for practice within this concept.',
   'Use the recent turns and prerequisites to adjust your approach and reuse demonstrated concepts as building blocks.',
+  'Use foundationRecap to connect to ideas the learner already knows or reviewed. Delve names a foundation at the start of the saved opening, so focus the teaching on how the main idea depends on it.',
   'Follow repositoryUsage, prerequisiteTopUps, and depthTopUp when supplied. Teach and assess repository application and the missing detail. Every check, including an adapted check, must test that application or new detail.',
   'When hands-on practice helps, add an environment block with a readable fallback. Use a built-in config where appropriate: lease-handoff@1 parameters {taskId, initialGeneration, deadlineTicks}, camera-exposure@1 parameters {initialShutter, initialIso}, or network-builder@1 parameters {clientPort, proxyInputPort, proxyOutputPort, servicePort, initialLinks}.',
   'Set the environment block pack field to null when providing config. For example, lease parameters can be {"taskId":"042","initialGeneration":7,"deadlineTicks":3}; camera parameters can be {"initialShutter":125,"initialIso":200}; network parameters can be {"clientPort":"client.out","proxyInputPort":"proxy.in","proxyOutputPort":"proxy.out","servicePort":"service.in","initialLinks":[]}.',
@@ -54,7 +55,8 @@ export function previewNewTopic(request: TopicPreviewRequest) {
   const [requiredCorrect, maxAttempts] = masteryLimits[request.depth];
   return formatPreview(request, {
     concept: name, summary: '', depth: request.depth, snapshot: null, knownConcepts: [], prerequisites: [],
-    repositoryUsage: [], prerequisiteTopUps: [], depthTopUp: null, lesson: null, recentTurns: [], nextConcepts: [],
+    repositoryUsage: [], prerequisiteTopUps: [], depthTopUp: null, foundationRecap: { known: [], reviewed: [] },
+    lesson: null, recentTurns: [], nextConcepts: [],
     mastery: { stage: 'teaching', attempts: 0, maxAttempts, consecutiveCorrect: 0, requiredCorrect,
       appliedPassInStreak: false, previousQuestions: [] },
     intent: 'teach', visualRequired: false, check: null,
@@ -134,6 +136,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
     concept: context.title.slice(0, 1024), summary: context.summary.slice(0, 8000), depth: context.depth, snapshot: context.snapshot,
     knownConcepts: graph.concepts.filter(c => demonstrated.has(c.id)).slice(0, 100).map(c => c.title.slice(0, 300)),
     prerequisites, repositoryUsage, prerequisiteTopUps, depthTopUp,
+    foundationRecap: foundationRecap(db, context, selected.id, graph),
     evidence: evidence && { status: evidence.status, source: evidence.source, note: evidence.note.slice(0, 2000) },
     lesson: selected.document ? JSON.stringify(teachingBlocks(selected.document)).slice(0, 20000) : null,
     recentTurns: history.map(m => ({ role: m.role, text: m.text.slice(0, 1000), observation: m.observation, reasoningFeedback: m.reasoningFeedback,

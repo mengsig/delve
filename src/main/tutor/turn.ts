@@ -99,9 +99,15 @@ async function generateReply(generate: Generate, turn: PreparedTurn, signal: Abo
     return validateTurn(turn, output);
   };
   if (turn.context.demo || turn.request.depth !== 'high') return run();
-  return withPlainLanguageRetry(run, reply => highDepthIssue(reply.lesson, [
-    reply.observation, reply.reasoningFeedback, reply.recommendation?.action, reply.recommendation?.reason,
-  ].filter((text): text is string => Boolean(text))) ?? foundationLanguageIssue(reply.foundations ?? []));
+  return withPlainLanguageRetry(run, reply => {
+    if (turn.request.intent.kind === 'teach') {
+      const firstExample = reply.lesson.blocks.find(block => block.type === 'analogy' || block.type === 'example');
+      if (firstExample?.type !== 'analogy') return 'The opening lesson needs an everyday analogy before any worked example.';
+    }
+    return highDepthIssue(reply.lesson, [
+      reply.observation, reply.reasoningFeedback, reply.recommendation?.action, reply.recommendation?.reason,
+    ].filter((text): text is string => Boolean(text))) ?? foundationLanguageIssue(reply.foundations ?? []);
+  });
 }
 
 export async function executeTurn(db: Db, generate: Generate, turn: PreparedTurn, signal: AbortSignal, onCommit?: () => void) {

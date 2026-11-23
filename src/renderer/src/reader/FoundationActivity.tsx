@@ -1,14 +1,15 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { FoundationStep, LessonAddress, ReaderContract } from '../../../shared/reader';
+import type { FoundationProgress, FoundationStep, LessonAddress, ReaderContract } from '../../../shared/reader';
 import { call } from '../api';
 import { errorMessage } from '../useRead';
 
 type Decision = NonNullable<ReaderContract['reader:foundation']['request']['decision']>;
+type Completion = Omit<FoundationProgress, 'step'>;
 
 export function FoundationActivity({ address, initial, onComplete }: {
   address: LessonAddress & { lessonId?: number };
   initial: FoundationStep;
-  onComplete: (feedback?: string) => Promise<void> | void;
+  onComplete: (completion: Completion) => Promise<void> | void;
 }) {
   const [step, setStep] = useState(initial);
   const [feedback, setFeedback] = useState('');
@@ -16,7 +17,7 @@ export function FoundationActivity({ address, initial, onComplete }: {
   const [busy, setBusy] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const lock = useRef(false);
-  const [finished, setFinished] = useState(false);
+  const [completion, setCompletion] = useState<Completion>();
   const titleId = useId();
   const probing = step.phase === 'probe';
   useEffect(() => { heading.current?.focus(); }, [step.revision]);
@@ -27,11 +28,15 @@ export function FoundationActivity({ address, initial, onComplete }: {
     setBusy(true);
     setError('');
     try {
-      if (finished) { await onComplete(feedback); return; }
+      if (completion) { await onComplete(completion); return; }
       const next = await call('reader:foundation', { ...address, decision: { answer, revision: step.revision } });
       setFeedback(next.feedback ?? '');
       if (next.step) setStep(next.step);
-      else { setFinished(true); await onComplete(next.feedback); }
+      else {
+        const completed = { feedback: next.feedback, foundationIntroduction: next.foundationIntroduction };
+        setCompletion(completed);
+        await onComplete(completed);
+      }
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -42,18 +47,19 @@ export function FoundationActivity({ address, initial, onComplete }: {
 
   return <section className="foundation-activity" aria-labelledby={titleId} aria-busy={busy}>
     <p className="smallprint">{probing ? 'Quick questions' : 'Foundation lesson'} · {step.position} of {step.total}</p>
-    <h2 id={titleId} tabIndex={-1} ref={heading}>{probing ? 'What do you know about ' + step.title + '?' : 'A quick look at ' + step.title}</h2>
+    <h2 id={titleId} tabIndex={-1} ref={heading}>{probing ? 'What do you know about ' + step.title + '?'
+      : (step.goDeeper ? 'Go deeper on ' : 'A quick look at ') + step.title}</h2>
     {feedback && <p role="status" className="reader-observation">{feedback}</p>}
     <p>{step.why}</p>
     {step.phase === 'practice' && <p>{step.explanation}</p>}
-    <fieldset disabled={busy || finished}>
+    <fieldset disabled={busy || !!completion}>
       <legend>{step.prompt}</legend>
       <div className="foundation-options">{step.options.map((option, index) =>
         <button key={index} onClick={() => void respond(index)}>{option}</button>)}</div>
     </fieldset>
     {error && <p role="alert">{error}</p>}
     <button className="back" disabled={busy} onClick={() => void respond(null)}>
-      {finished ? 'Continue to lesson' : probing ? 'Skip questions' : 'Skip to lesson'}
+      {completion ? 'Continue to lesson' : probing ? 'Skip questions' : 'Skip to lesson'}
     </button>
   </section>;
 }

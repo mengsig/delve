@@ -1,6 +1,7 @@
 import type { ChangeRef } from '../../../shared/repository';
 import type { ComponentProps } from 'react';
-import type { Workspace } from '../../../shared/domain';
+import type { Depth, Workspace } from '../../../shared/domain';
+import { containsTechnicalText } from '../../../shared/plain-language';
 import { Icon } from '../Icon';
 import type { DemoPlate } from './demoAtlas';
 import { isLearned, type AtlasConcept, type AtlasModel } from './model';
@@ -22,12 +23,12 @@ function Suggestion({ label, title, reason, icon, primary, onClick }: CardProps)
   </button>;
 }
 
-function reasonFor(target: AtlasConcept, workspaceId: string): string {
+function reasonFor(target: AtlasConcept, workspaceId: string, includeNote = true): string {
   if (isLearned(target)) return 'This depth is covered. Revisit only if you want to.';
   const evidence = target.evidence;
   if (evidence) {
     const why = evidence.status === 'partial' ? 'You have started practising this concept at this depth.' : 'You marked this concept for another look.';
-    return evidence.note ? why + ' ' + evidence.note : why;
+    return includeNote && evidence.note ? why + ' ' + evidence.note : why;
   }
   const missing = target.prerequisites.filter(concept => !isLearned(concept));
   if (missing.length) return 'This concept builds on ' + missing.map(concept => concept.title).join(' and ') + '.';
@@ -41,6 +42,7 @@ function reasonFor(target: AtlasConcept, workspaceId: string): string {
 }
 
 interface Props {
+  depth: Depth;
   workspace: Workspace;
   model: AtlasModel;
   target: AtlasConcept;
@@ -51,16 +53,18 @@ interface Props {
   onChanges: (change?: ChangeRef) => void;
 }
 
-export function FieldGuide({ workspace, model, target, reason, demo, suggestedChange, onLesson, onChanges }: Props) {
+export function FieldGuide({ workspace, model, target, reason, demo, depth, suggestedChange, onLesson, onChanges }: Props) {
   const missing = Array.from(model.byId.values()).filter(concept => !isLearned(concept) && concept.id !== target.id);
   const feature = demo?.feature && missing.includes(demo.feature) ? demo.feature : missing.find(concept => concept.prerequisites.length);
   const follow = demo && !demo.changed && missing.find(concept => concept !== feature && concept.prerequisites.includes(target));
   const revisit = isLearned(target);
   const label = revisit ? 'Optional revisit' : reason || target.evidence ? 'Adaptive follow-up' : 'Learn the base';
+  const explanation = reason ?? reasonFor(target, workspace.id);
+  const showExplanation = (text: string) => depth !== 'high' || !containsTechnicalText(text);
   return <aside className="recs" aria-label="Field guide">
     <header><span className="eyebrow">Field guide / Suggested for you</span><h3>Your next move</h3></header>
     <Suggestion primary icon="route" label={label} title={target.title}
-      reason={reason ?? reasonFor(target, workspace.id)} onClick={() => onLesson(target.id)} />
+      reason={showExplanation(explanation) ? explanation : reasonFor(target, workspace.id, false)} onClick={() => onLesson(target.id)} />
     {demo?.changed ? <Suggestion icon="pr" label="Change brief · PR #184" title="Why late writes are rejected"
       reason="One changed boundary. Skip the queue recap." onClick={() => onChanges()} />
       : suggestedChange ? <Suggestion icon="pr" label="What changed and why" title={suggestedChange.title}
@@ -70,7 +74,7 @@ export function FieldGuide({ workspace, model, target, reason, demo, suggestedCh
     {follow && <Suggestion icon={workspace.kind === 'topic' ? 'frame' : 'book'} label="Follow a connection"
       title={follow.title} reason={follow.title + ' builds on ' + target.title.toLowerCase() + '.'} onClick={() => onLesson(follow.id)} />}
     {feature && <Suggestion icon="layer" label={workspace.kind === 'topic' ? 'Explore an application' : 'Explain a feature'}
-      title={feature.title} reason={feature.summary || 'Connect ' + feature.title + ' to its prerequisites.'}
+      title={feature.title} reason={(showExplanation(feature.summary) && feature.summary) || 'Connect ' + feature.title + ' to its prerequisites.'}
       onClick={() => onLesson(feature.id)} />}
   </aside>;
 }
