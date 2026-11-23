@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import type { ChangeDetail } from '../../shared/explorer';
+import { commitParentHeaders } from './git-commit-headers';
 import { gitOutput } from './git-diagnostics';
 import { gitHistoryNode, readCommitLog, requireReachableChange } from './git-history';
 import { DomainError } from '../../shared/errors';
@@ -25,12 +26,14 @@ async function commitInfo(reader: GitReader, commit: string): Promise<{ title: s
   const raw = await reader.run(['cat-file', 'commit', commit], COMMIT_LIMIT);
   const content = gitOutput(raw, 'Could not read the Git commit.', COMMIT_LIMIT);
   const headers = content.indexOf('\n\n');
-  if (headers < 0) throw new DomainError('SOURCE_READ_FAILED', 'Git did not return the commit headers.');
-  const parents = [...content.subarray(0, headers).toString('utf8').matchAll(/^parent ([a-f0-9]+)$/gm)].map(match => match[1] ?? '');
-  assert.ok(parents.every(parent => OBJECT_ID.test(parent)));
+  const parsed = commitParentHeaders(content, commit, raw.truncated);
+  if (!parsed || (raw.truncated && headers < 0)) {
+    throw new DomainError('SOURCE_READ_FAILED', 'Git did not return the commit headers.');
+  }
+  const { parents } = parsed;
   const metadata = await readCommitLog(reader, commit, parents, '%s', COMMIT_LIMIT);
   const title = gitOutput(metadata, 'Could not read the Git commit title.', COMMIT_LIMIT).toString('utf8');
-  const message = sourceText(content.subarray(headers + 2));
+  const message = headers < 0 ? undefined : sourceText(content.subarray(headers + 2));
   const body = message?.split(/\n\s*\n/).slice(1).join('\n\n').trim().slice(0, 4000);
   return { parents, title: changeTitle(title), description: body || undefined };
 }

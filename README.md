@@ -53,9 +53,9 @@ tutor explains its next suggestion. Reset a check in **Progress** at its recorde
 Paste a Git folder path, GitHub URL or `owner/name` into the repository field, or drop the folder
 or URL there. With a signed-in CLI, the form prepares the file list and request automatically.
 Delve reads the selected
-commit from the object database. GitHub workspaces use a shallow bare clone of the default branch
-in Delve’s user data directory. Install Git and use `gh auth login` for private repositories and
-pull requests. Delve uses read-only operations with that login.
+commit from the object database. Use Git 2.30 or later. GitHub workspaces use a shallow bare clone
+of the default branch in Delve’s user data directory. Use `gh auth login` for private GitHub
+repositories and pull requests. Delve uses read-only operations with that login.
 
 Select the files to include and review their names, sizes, revision and exact provider request.
 **Add and build map** attaches the repository and starts generation with one confirmation.

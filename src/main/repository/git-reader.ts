@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import type { Readable } from 'node:stream';
 import { DomainError } from '../../shared/errors';
 import { gitOutput, gitReadFailed } from './git-diagnostics';
-import { gitSource, completedOutput, type CommandResult } from './source-process';
+import { gitSource, streamGitSource, completedOutput, type CommandResult } from './source-process';
 import { isSourcePath, MAX_BLOB_BYTES, MAX_READ_BYTES, MAX_READ_FILES, OBJECT_ID, sourceText } from './source-policy';
 
 const MAX_TREE_BYTES = 2 * 1024 * 1024;
@@ -50,7 +51,8 @@ interface TreeFile extends SourceFile {
 }
 
 export interface GitReader {
-  run: (args: string[], maxBytes?: number, graftFile?: string) => ReturnType<typeof gitSource>;
+  run: (args: string[], maxBytes?: number) => ReturnType<typeof gitSource>;
+  stream: (args: string[], write: (stream: Readable) => Promise<void>) => ReturnType<typeof streamGitSource>;
 }
 
 export async function gitReader(path: string): Promise<GitReader> {
@@ -66,8 +68,10 @@ export async function gitReader(path: string): Promise<GitReader> {
   }
   assert.ok(isAbsolute(directory));
   assert.ok(directory === path || directory === marker);
+  const args = ['--bare', `--git-dir=${directory}`, '--literal-pathspecs'];
   return {
-    run: (args, maxBytes, graftFile) => gitSource(['--bare', `--git-dir=${directory}`, '--literal-pathspecs', ...args], { maxBytes, graftFile }),
+    run: (command, maxBytes) => gitSource([...args, ...command], { maxBytes }),
+    stream: (command, write) => streamGitSource([...args, ...command], write),
   };
 }
 
@@ -96,7 +100,17 @@ export async function resolveCommit(reader: GitReader, ref: string): Promise<str
 }
 
 export const REACHABILITY_REVISIONS = ['--branches', '--remotes', '--tags'];
-const QUIET_GRAFT_ADVICE = ['-c', 'advice.graftFileDeprecated=false'];
+export const REACHABILITY_REFS = ['refs/heads', 'refs/remotes', 'refs/tags'];
+
+export async function headTip(reader: GitReader): Promise<string | null> {
+  const result = await reader.run(['rev-parse', '--verify', '--quiet', '--end-of-options', 'HEAD'], 1024);
+  if (!result.truncated && result.status === 1 && !reachabilityDiagnostics(result).length && !result.output.length) return null;
+  if (result.truncated) gitReadFailed(result, 'Git history output exceeded the read limit.');
+  const head = gitOutput(result, 'Could not read Git history.').toString('utf8').trim();
+  assert.ok(OBJECT_ID.test(head));
+  assert.equal(head, head.toLowerCase());
+  return head;
+}
 
 export function reachabilityDiagnostics(result: CommandResult): string[] {
   return result.diagnostic.split(/\r?\n/).filter(line => line && !/^warning: ignoring unknown core\.fsync(?:Method value| component) /.test(line));
@@ -114,14 +128,14 @@ export async function isMissingCommit(reader: GitReader, commit: string): Promis
 
 export async function checkReachability(reader: GitReader, commit: string): Promise<CommandResult | null> {
   assert.ok(OBJECT_ID.test(commit));
-  const result = await reader.run([...QUIET_GRAFT_ADVICE, 'for-each-ref', '--count=1', `--contains=${commit}`, '--format=%(objectname)',
-    'refs/heads', 'refs/remotes', 'refs/tags'], 1024);
+  const result = await reader.run(['for-each-ref', '--count=1', `--contains=${commit}`, '--format=%(objectname)',
+    ...REACHABILITY_REFS], 1024);
   // Git can return a false match with exit status 0 after a traversal error.
   if (result.truncated || result.status !== 0 || reachabilityDiagnostics(result).length) return result;
   const ref = result.output.toString('utf8').trim();
   if (OBJECT_ID.test(ref)) return null;
   assert.equal(ref, '', 'for-each-ref must return an object ID or no matches');
-  const ancestor = await reader.run([...QUIET_GRAFT_ADVICE, 'merge-base', '--is-ancestor', commit, 'HEAD'], 1024);
+  const ancestor = await reader.run(['merge-base', '--is-ancestor', commit, 'HEAD'], 1024);
   if (ancestor.truncated || (ancestor.status !== 0 && ancestor.status !== 1) || reachabilityDiagnostics(ancestor).length) return ancestor;
   assert.equal(ancestor.output.length, 0, 'merge-base --is-ancestor does not produce stdout');
   if (ancestor.status === 1) throw new MissingSnapshotCommit('INVALID_COMMIT', 'That commit is outside the available repository history.');

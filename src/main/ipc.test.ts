@@ -8,6 +8,8 @@ import { recordEvidence } from './db/evidence';
 import { addWorkspace } from './db/workspaces';
 import { graphHandlers } from './graph-ipc';
 import { dispatch, registerIpc, type IpcHandlers, type IpcRegistrar } from './ipc';
+import { tutorHandlers } from './tutor/ipc';
+import { TutorSession } from './tutor/session';
 
 const workspace = { id: '0b0f5f56-1d3c-4a5e-9a51-3c8f4c2f3e10', kind: 'topic', name: 'Chess', source: 'chess', createdAt: 'now', lastOpenedAt: null } as const;
 
@@ -49,7 +51,7 @@ function handlers(overrides: Partial<IpcHandlers> = {}): IpcHandlers {
   };
 }
 
-describe('dispatch', () => {
+describe('tutor IPC', () => {
   it('validates unreadable tutor job identity before dismissing', async () => {
     const dismiss = vi.fn(() => 'changed' as const);
     const h = handlers({ 'tutor:dismiss-unreadable': dismiss });
@@ -67,6 +69,44 @@ describe('dispatch', () => {
     expect(dismiss).toHaveBeenCalledExactlyOnceWith(identity);
   });
 
+  it('dismisses an oversized saved tutor key through the IPC dispatcher', async () => {
+    const db = openDatabase(':memory:');
+    const session = new TutorSession(db, async () => unexpected());
+    try {
+      const { id: workspaceId } = addWorkspace(db, { kind: 'topic', title: 'Routing' });
+      const { id: conceptId } = upsertConcept(db, { key: 'routing', title: 'Routing', workspaceId, portable: true });
+      const id = 'é'.repeat(257);
+      db.prepare(`INSERT INTO tutor_jobs (id, workspace_id, concept_id, depth, token, detail, phase)
+        VALUES (?, ?, ?, 'low', ?, '{}', 'running')`).run(id, workspaceId, conceptId, 'a'.repeat(64));
+      const h = handlers(tutorHandlers(db, session));
+      const listing = await dispatch(h, 'tutor:jobs', null);
+      if (!listing.ok) throw new Error(listing.error.message);
+      expect(listing.value).toHaveLength(1);
+      const [job] = listing.value;
+      if (job?.phase !== 'unreadable') throw new Error('Expected an unreadable tutor job.');
+      const { jobKey, version } = job;
+      expect(jobKey.length).toBeGreaterThan(1024);
+      expect(await dispatch(h, 'tutor:dismiss-unreadable', { jobKey, version })).toEqual({ ok: true, value: 'dismissed' });
+      expect(await dispatch(h, 'tutor:jobs', null)).toEqual({ ok: true, value: [] });
+    } finally {
+      session.close();
+      db.close();
+    }
+  });
+
+  it.each([
+    { kind: 'empty', jobKey: '' },
+    { kind: 'blob', jobKey: '00FF80' },
+  ])('accepts a $kind dismissal key', async ({ jobKey }) => {
+    const dismiss = vi.fn(() => 'dismissed' as const);
+    const h = handlers({ 'tutor:dismiss-unreadable': dismiss });
+    const identity = { jobKey, version: 'a'.repeat(32) };
+    expect(await dispatch(h, 'tutor:dismiss-unreadable', identity)).toEqual({ ok: true, value: 'dismissed' });
+    expect(dismiss).toHaveBeenCalledExactlyOnceWith(identity);
+  });
+});
+
+describe('dispatch', () => {
   it('validates requests before reaching the handler', async () => {
     const add = vi.fn(() => workspace);
     const h = handlers({ 'workspaces:add': add });

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { devNull } from 'node:os';
 import { delimiter, dirname, isAbsolute } from 'node:path';
+import type { Readable } from 'node:stream';
 import { DomainError } from '../../shared/errors';
 import { findExecutable } from '../providers/which';
 
@@ -9,6 +10,9 @@ const PROCESS_ENV = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONF
   'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR'];
 const GITHUB_ENV = ['GH_CONFIG_DIR', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy'];
 export const GIT_NULL_FILE = '/dev/null';
+export const SOURCE_CWD = dirname(process.execPath);
+const SOURCE_TIMEOUT_MS = 8_000;
+const STREAM_DIAGNOSTIC_LIMIT = 4096;
 
 function commandEnv(authenticated: boolean): NodeJS.ProcessEnv {
   const { PATH, Path } = process.env;
@@ -20,6 +24,7 @@ function commandEnv(authenticated: boolean): NodeJS.ProcessEnv {
     GIT_CONFIG_SYSTEM: GIT_NULL_FILE,
     GIT_CONFIG_GLOBAL: GIT_NULL_FILE,
     GIT_NO_REPLACE_OBJECTS: '1',
+    // Use Git's null device alias so Git never tries to open an empty graft path.
     GIT_GRAFT_FILE: GIT_NULL_FILE,
     GIT_NO_LAZY_FETCH: '1',
     GIT_ALLOW_PROTOCOL: authenticated ? 'https' : '',
@@ -40,7 +45,7 @@ interface CommandOptions {
   timeoutMs?: number;
   authenticated?: boolean;
   cwd?: string;
-  graftFile?: string;
+  isolatedGit?: { directory: string; alternate?: Buffer };
 }
 
 export interface CommandResult {
@@ -50,14 +55,29 @@ export interface CommandResult {
   diagnostic: string;
 }
 
+function quoteAlternate(path: Buffer): string {
+  assert.ok(isAbsolute(path.toString('latin1')));
+  assert.ok(!path.includes(0));
+  const quoted = Array.from(path, byte => byte >= 32 && byte <= 126 && byte !== 34 && byte !== 92
+    ? String.fromCharCode(byte)
+    : '\\' + byte.toString(8).padStart(3, '0')).join('');
+  return '"' + quoted + '"';
+}
+
 export async function sourceCommand(bin: 'git' | 'gh', args: string[], options: CommandOptions = {}): Promise<CommandResult> {
-  const { maxBytes = 1024 * 1024, timeoutMs = 8_000, authenticated = false, cwd = dirname(process.execPath), graftFile } = options;
+  const { maxBytes = 1024 * 1024, timeoutMs = SOURCE_TIMEOUT_MS, authenticated = false, cwd = SOURCE_CWD, isolatedGit } = options;
   assert.ok(maxBytes > 0 && timeoutMs > 0);
   assert.ok(isAbsolute(cwd));
   const env = commandEnv(authenticated);
-  if (graftFile) {
-    assert.ok(bin === 'git' && !authenticated && isAbsolute(graftFile));
-    env.GIT_GRAFT_FILE = graftFile;
+  if (isolatedGit) {
+    assert.equal(bin, 'git');
+    assert.ok(!authenticated && isAbsolute(isolatedGit.directory));
+    // Git 2.30 still looks under HOME and XDG_CONFIG_HOME despite GIT_CONFIG_GLOBAL.
+    env.HOME = env.XDG_CONFIG_HOME = isolatedGit.directory;
+    if (isolatedGit.alternate !== undefined) {
+      delete env.GIT_NO_REPLACE_OBJECTS;
+      env.GIT_ALTERNATE_OBJECT_DIRECTORIES = quoteAlternate(isolatedGit.alternate);
+    }
   }
   const executable = await findExecutable(bin, env);
   if (!executable) {
@@ -88,10 +108,53 @@ export async function sourceCommand(bin: 'git' | 'gh', args: string[], options: 
 // hooksPath is a directory lookup and must use the OS device path, not Git's file alias.
 const GIT_SAFETY = ['--no-pager', '-c', `core.hooksPath=${devNull}`, '-c', 'core.fsmonitor=false',
   '-c', `core.attributesFile=${GIT_NULL_FILE}`, '-c', 'maintenance.auto=false', '-c', 'gc.auto=0',
+  '-c', 'advice.graftFileDeprecated=false',
   '-c', 'diff.suppressBlankEmpty=false', '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=never'];
 
 export function gitSource(args: string[], options: CommandOptions = {}): Promise<CommandResult> {
   return sourceCommand('git', [...GIT_SAFETY, ...args], options);
+}
+
+export async function streamGitSource(args: string[], write: (stream: Readable) => Promise<void>): Promise<CommandResult> {
+  assert.ok(args.length > 0);
+  assert.equal(typeof write, 'function');
+  const env = commandEnv(false);
+  const executable = await findExecutable('git', env);
+  if (!executable) throw new DomainError('GIT_REQUIRED', 'Install Git to read repository snapshots.');
+  const child = spawn(executable, [...GIT_SAFETY, ...args], {
+    cwd: SOURCE_CWD, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS), killSignal: 'SIGKILL',
+  });
+  const diagnostic = Buffer.alloc(STREAM_DIAGNOSTIC_LIMIT);
+  let diagnosticBytes = 0;
+  let truncated = false;
+  child.stderr.on('data', (chunk: Buffer) => {
+    const copied = chunk.copy(diagnostic, diagnosticBytes);
+    diagnosticBytes += copied;
+    truncated ||= copied < chunk.length;
+  });
+  const exit = new Promise<number | null>((resolve, reject) => {
+    let failure: Error | undefined;
+    child.once('error', error => { failure = error; });
+    child.once('close', status => {
+      if (failure) reject(failure);
+      else resolve(status);
+    });
+  });
+  const [processResult, destination] = await Promise.allSettled([
+    exit,
+    Promise.resolve().then(() => write(child.stdout)).catch((cause: unknown) => {
+      child.kill('SIGKILL');
+      throw cause;
+    }),
+  ]);
+  if (processResult.status === 'rejected') {
+    throw new DomainError('SOURCE_COMMAND_FAILED', 'Git stopped before completing the repository read.', { cause: processResult.reason });
+  }
+  if (destination.status === 'rejected') throw destination.reason;
+  const status = processResult.value;
+  if (status === null) throw new DomainError('SOURCE_COMMAND_FAILED', 'Git stopped before completing the repository read.');
+  return { output: Buffer.alloc(0), diagnostic: diagnostic.toString('utf8', 0, diagnosticBytes), truncated, status };
 }
 
 export function completedOutput(result: CommandResult, message: string): Buffer {

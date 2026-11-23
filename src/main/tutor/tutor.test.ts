@@ -312,7 +312,7 @@ it.each([
   expect(await session.wait(id)).toMatchObject({ blocks: expect.arrayContaining([explanation]) });
 });
 
-function saveUnreadableJob(id: string = randomUUID()): void {
+function saveUnreadableJob(id: string | Uint8Array = randomUUID()): void {
   const { workspaceId, conceptId, depth } = request;
   const result = db.prepare(`INSERT INTO tutor_jobs (id, workspace_id, concept_id, depth, token, detail, phase)
     VALUES (?, ?, ?, ?, ?, '{}', 'running')`).run(id, workspaceId, conceptId, depth, 'a'.repeat(64));
@@ -333,6 +333,17 @@ it('dismisses an unreadable interrupted job without requiring a valid UUID', () 
   expect(tutorHandlers(db, session)['tutor:dismiss-unreadable'](identity)).toBe('dismissed');
   expect(session.jobs()).toEqual([]);
   expect(session.dismissUnreadable(identity)).toBe('changed');
+});
+
+it.each([
+  { name: 'blob', id: Uint8Array.of(0, 255, 128), jobKey: '00FF80' },
+  { name: 'empty text', id: '', jobKey: '' },
+])('dismisses an unreadable job with a $name primary key', ({ id, jobKey }) => {
+  saveUnreadableJob(id);
+  const identity = unreadableIdentity();
+  expect(identity.jobKey).toBe(jobKey);
+  expect(tutorHandlers(db, session)['tutor:dismiss-unreadable'](identity)).toBe('dismissed');
+  expect(session.jobs()).toEqual([]);
 });
 
 it('preserves a job that replaced an unreadable row through a new turn', async () => {
