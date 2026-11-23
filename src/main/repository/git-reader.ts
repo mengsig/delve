@@ -104,7 +104,7 @@ export const REACHABILITY_REFS = ['refs/heads', 'refs/remotes', 'refs/tags'];
 
 export async function headTip(reader: GitReader): Promise<string | null> {
   const result = await reader.run(['rev-parse', '--verify', '--quiet', '--end-of-options', 'HEAD'], 1024);
-  if (!result.truncated && result.status === 1 && !result.diagnostic && !result.output.length) return null;
+  if (!result.truncated && result.status === 1 && !reachabilityDiagnostics(result).length && !result.output.length) return null;
   if (result.truncated) gitReadFailed(result, 'Git history output exceeded the read limit.');
   const head = gitOutput(result, 'Could not read Git history.').toString('utf8').trim();
   assert.ok(OBJECT_ID.test(head));

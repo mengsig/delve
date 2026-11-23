@@ -9,6 +9,8 @@ import { addWorkspace } from '../db/workspaces';
 import { ProviderRunner } from '../providers/runner';
 import { RepositoryLearning } from './service';
 import type { Workspace } from '../../shared/domain';
+import { withBoundaries } from './git-boundaries';
+import { gitReader } from './git-reader';
 import { openRepositoryHistory } from './history';
 import { listChanges, listFiles, readChange, readChangeDetail, readChangeWithPatches, readFiles, repositoryPath } from './source';
 import * as sourceProcess from './source-process';
@@ -269,6 +271,20 @@ describe('Git changes with missing parents', () => {
 });
 
 describe('Git change reachability with missing parents', () => {
+  it.each(['branch', 'tag'])('opens a damaged commit reachable from a %s with an unborn HEAD and a Git warning', async ref => {
+    const tree = git('rev-parse', `${commit('Base', '--allow-empty')}^{tree}`);
+    const missing = 'a'.repeat(tree.length);
+    const boundary = writeCommitObject(tree, [missing], 'Reachable boundary');
+    git('symbolic-ref', 'HEAD', 'refs/heads/unborn');
+    git('update-ref', '-d', 'refs/heads/main');
+    git('update-ref', ref === 'branch' ? 'refs/heads/boundary' : 'refs/tags/boundary', boundary);
+    git('config', 'core.fsyncMethod', 'unknown-fsync-mode');
+
+    await expect(readChange(repo, workspace, 'commit', boundary)).resolves.toMatchObject({
+      commit: boundary, base: missing, title: 'Reachable boundary', partial: true,
+    });
+  });
+
   it('rejects an unreachable commit even when its parent is missing', async () => {
     const parent = commit('Missing parent', '--allow-empty');
     const boundary = commit('Unreachable boundary', '--allow-empty');
@@ -313,6 +329,46 @@ describe('Git change reachability with missing parents', () => {
       spy.mockRestore();
     }
   });
+});
+
+it.each(['an uppercase tree ID', 'a negative author timestamp'])('preserves a Git-readable commit with %s during repair', async variant => {
+  const base = commit('Base', '--allow-empty');
+  const tree = git('rev-parse', `${base}^{tree}`);
+  const missing = 'a'.repeat(tree.length);
+  const treeField = variant === 'an uppercase tree ID' ? tree.toUpperCase() : tree;
+  const authorDate = variant === 'a negative author timestamp' ? -1 : 1700000000;
+  const missingLine = `parent ${missing}\n`;
+  const raw = `tree ${treeField}\n${missingLine}parent ${base}\n`
+    + `author Fixture User <fixture@example.invalid> ${authorDate} +0000\n`
+    + 'committer Fixture User <fixture@example.invalid> 1700000000 +0000\n\nBoundary\n\nOriginal body.\n';
+  const boundary = execFileSync('git', ['-C', repo, 'hash-object', '-w', '-t', 'commit', '--literally', '--stdin'],
+    { input: raw, encoding: 'utf8' }).trim();
+  git('update-ref', 'refs/heads/main', boundary);
+  expect(git('rev-list', '--no-walk', '--parents', boundary, '--')).toBe(`${boundary} ${missing} ${base}`);
+
+  const { gitSource } = sourceProcess;
+  const staged: string[] = [];
+  const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation(async (args, options) => {
+    if (args.includes('hash-object') && args.includes('-w')) staged.push(await readFile(args.at(-1)!, 'utf8'));
+    return gitSource(args, options);
+  });
+  try {
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const page = await history.advance(() => 1);
+    expect(page.nodes.map(node => node.ref)).toEqual([boundary, base]);
+    expect(page.nodes[0]).toMatchObject({ title: 'Boundary', author: 'Fixture User', parents: [missing, base] });
+    expect(page.warning).toContain(missing);
+    await expect(readChangeDetail(repo, workspace, 'commit', boundary)).resolves.toMatchObject({
+      node: { ref: boundary, title: 'Boundary', parents: [missing, base] }, description: 'Original body.', partial: true,
+    });
+    expect(staged.length).toBeGreaterThan(0);
+    for (const replacement of staged) {
+      expect(replacement).toMatch(/^delve-replacement [a-f0-9]{64}$/m);
+      expect(replacement.replace(/^delve-replacement [a-f0-9]{64}\n/m, '')).toBe(raw.replace(missingLine, ''));
+    }
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 describe('Git changes in detached or shallow history', () => {
@@ -735,6 +791,91 @@ it('continues after a batch of large readable commits on a repaired missing-pare
   expect(second.nodes.map(node => node.ref)).toEqual(refs.slice(3));
   expect(second.next).toBeNull();
 }, 30_000);
+
+it('validates the source log configuration on a repaired continuation and allows a retry', async () => {
+  const oldest = commit('Oldest', '--allow-empty');
+  const tree = git('rev-parse', `${oldest}^{tree}`);
+  const refs = [oldest];
+  for (let i = 0; i < 35; i++) refs.unshift(writeCommitObject(tree, [refs[0]!], `Step ${i}`));
+  const missing = 'a'.repeat(tree.length);
+  const boundary = writeCommitObject(tree, [missing, refs[0]!], 'Boundary');
+  git('update-ref', 'refs/heads/main', boundary);
+  refs.unshift(boundary);
+
+  const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+  const first = await history.advance(() => 1);
+  expect(first.nodes.map(node => node.ref)).toEqual(refs.slice(0, 30));
+  expect(first.next).toBe(1);
+  expect(first.warning).toContain(missing);
+  git('config', 'log.abbrevCommit', 'synthetic-invalid-boolean');
+  await expect(history.advance(() => 2)).rejects.toMatchObject({
+    code: 'SOURCE_READ_FAILED', message: 'Could not read Git history. fatal: bad boolean config value for log.abbrevcommit',
+  });
+  git('config', '--unset', 'log.abbrevCommit');
+  const retried = await history.advance(() => 2);
+  expect(retried.nodes.map(node => node.ref)).toEqual(refs.slice(30));
+  expect(retried.next).toBeNull();
+});
+
+it('stops a repaired walk at a shallow boundary even when the older commit is available', async () => {
+  const older = commit('Older', '--allow-empty');
+  const shallow = commit('Shallow boundary', '--allow-empty');
+  const tree = git('rev-parse', `${shallow}^{tree}`);
+  const missing = 'a'.repeat(tree.length);
+  const boundary = writeCommitObject(tree, [missing, shallow], 'Damaged merge');
+  git('update-ref', 'refs/heads/main', boundary);
+  await writeFile(join(repo, '.git', 'shallow'), shallow + '\n');
+  expect(git('cat-file', '-t', older)).toBe('commit');
+
+  const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+  const page = await history.advance(() => 1);
+  expect(page.nodes.map(node => node.ref)).toEqual([boundary, shallow]);
+  expect(page.next).toBeNull();
+  expect(page.warning).toContain('shallow');
+  expect(page.warning).toContain(missing);
+  await expect(readChange(repo, workspace, 'commit', older)).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
+});
+
+it.each(['shallow file', 'reachability refs', 'raw commits'])('limits repair storage for %s and removes the private directory', async input => {
+  const scratch = join(root, 'repair-temp');
+  await mkdir(scratch);
+  for (const key of ['TMPDIR', 'TMP', 'TEMP']) vi.stubEnv(key, scratch);
+  const tree = git('rev-parse', `${commit('Base', '--allow-empty')}^{tree}`);
+  const missing = 'a'.repeat(tree.length);
+  const parents = [missing];
+  const message = input === 'raw commits' ? 'x'.repeat(8 * 1024 * 1024) : 'Boundary';
+  const boundary = writeCommitObject(tree, parents, message);
+  const repairs = new Map([[boundary, { parents, missing: new Set(parents) }]]);
+  if (input === 'shallow file') {
+    await writeFile(join(repo, '.git', 'shallow'), (boundary + '\n').repeat(26_000));
+  } else if (input === 'reachability refs') {
+    const prefix = `${boundary} refs/tags/${'x'.repeat(220)}-`;
+    const refs = Array.from({ length: 16_000 }, (_, i) => prefix + i.toString().padStart(5, '0')).join('\n');
+    await writeFile(join(repo, '.git', 'packed-refs'), refs + '\n');
+  } else {
+    const other = writeCommitObject(tree, parents, 'Other ' + message);
+    repairs.set(other, { parents, missing: new Set(parents) });
+  }
+
+  const reader = await gitReader(repo);
+  const action = vi.fn();
+  const scope = input === 'reachability refs' ? 'reachability' : 'history';
+  await expect(withBoundaries(reader, repairs, action, scope)).rejects.toMatchObject({ code: 'SOURCE_LIMIT' });
+  expect(action).not.toHaveBeenCalled();
+  expect(await readdir(scratch)).toEqual([]);
+});
+
+it('bounds the number of replacement objects and refs in a private walk', async () => {
+  const id = (value: number) => value.toString(16).padStart(40, '0');
+  const missing = id(1_000);
+  const boundary = { parents: [missing], missing: new Set([missing]) };
+  const repairs = new Map(Array.from({ length: 257 }, (_, index) => [id(index + 1), boundary]));
+  const reader = { run: vi.fn(), stream: vi.fn() };
+  const action = vi.fn();
+  await expect(withBoundaries(reader, repairs, action)).rejects.toMatchObject({ code: 'SOURCE_LIMIT' });
+  expect(reader.run).not.toHaveBeenCalled();
+  expect(action).not.toHaveBeenCalled();
+});
 
 it('keeps available shallow commits and explains how to fetch older history', async () => {
   commit('Older', '--allow-empty');
