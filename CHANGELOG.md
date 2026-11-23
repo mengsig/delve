@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.1] - 2026-11-23
+
+### Added
+- Verified one-line installer and curl uninstall instructions (#21, #24).
+- Lesson checks and mastery remain in view, with a fieldwork mastery map (#25, #26).
+
+### Fixed
+- Addressed window, git and shutdown review follow-ups (#22).
+- Uninstall preserves unrelated files (#23).
+- Unreadable saved tutor jobs are dismissed safely (#27).
+- Replaced deprecated history graft files (#28).
+- History filters clear hidden commit selections, GitHub login guidance appears once, and invalid sources have corrected keyboard focus and screen-reader association (#29).
+
 ## [0.1.0] - 2026-11-21
 
 ### Added
