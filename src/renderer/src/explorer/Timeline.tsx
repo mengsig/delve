@@ -127,11 +127,13 @@ function TimelineResults({ workspaceId, selected, onSelect, onOpen, onRefresh, f
   }, [onBranches, branches, onInitialNode, latest]);
 
   return <>
-    {!pendingFilters && page && <HistoryNotice page={page} />}
-    <HistoryViewport query={query} nodes={nodes} layout={layout} selected={selected} more={more}
-      loadMore={history.loadMore} onSelect={onSelect} onOpen={onOpen} />
     {pendingFilters ? <p className="timeline-message" role="status">Updating history…</p>
-      : <TimelineFeedback history={history} filters={filters} onRefresh={onRefresh} />}
+      : <>
+        {page && <HistoryNotice page={page} />}
+        <HistoryViewport query={query} nodes={nodes} layout={layout} selected={selected} more={more}
+          loadMore={history.loadMore} onSelect={onSelect} onOpen={onOpen} />
+        <TimelineFeedback history={history} filters={filters} onRefresh={onRefresh} />
+      </>}
   </>;
 }
 
