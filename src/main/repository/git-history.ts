@@ -154,11 +154,14 @@ async function brokenParent(reader: GitReader, tips: string[]): Promise<BrokenPa
   const read = await readHistoryOutput(reader, traversal);
   if (read.kind !== 'object' || !read.failure.child) return null;
   const { object: missing, child: commit } = read.failure;
-  const result = await reader.run(['cat-file', 'commit', commit], 2 * 1024 * 1024);
-  const content = completeHistoryOutput(result).toString('utf8');
+  const result = await reader.run(['cat-file', 'commit', commit], WALK_LIMIT);
+  const content = gitReadState(result, WALK_LIMIT) === 'limited' ? result.output : completeHistoryOutput(result);
   const end = content.indexOf('\n\n');
-  if (end < 0) return null;
-  const headers = content.slice(0, end);
+  if (end < 0) {
+    if (result.truncated) historyReadFailed(result);
+    return null;
+  }
+  const headers = content.subarray(0, end).toString('utf8');
   const parents = [...headers.matchAll(/^parent ([a-f0-9]+)$/gm)].map(match => match[1] ?? '');
   if (!parents.every(parent => OBJECT_ID.test(parent)) || !parents.includes(missing)) return null;
   return { commit, missing, parents };

@@ -78,8 +78,9 @@ async function openGitChange(path: string, ref: string) {
   const revisions = parent ? [parent, commit] : [commit];
   if (parent) {
     const check = await reader.run(['cat-file', '-t', parent], 1024);
+    const errors = check.diagnostic.split(/\r?\n/).filter(line => /^(?:fatal|error):/.test(line));
     if (!check.truncated && check.status === 128 && check.output.length === 0
-      && check.diagnostic.trimEnd() === 'fatal: git cat-file: could not get object info') {
+      && errors.length === 1 && errors[0] === 'fatal: git cat-file: could not get object info') {
       return { reader, snapshot, revisions: null };
     }
     assert.equal(gitOutput(check, 'Could not read the parent of that commit.').toString('utf8').trim(), 'commit');

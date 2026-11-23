@@ -169,36 +169,20 @@ describe('Git change read boundaries', () => {
     await expect(stat(sentinel)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('returns partial coverage at a shallow history boundary', async () => {
+  it.each([false, true])('returns shallow-boundary coverage with config warnings set to %s', async withWarning => {
     await writeFile(join(repo, 'main.ts'), 'old\n');
     const base = commit('Baseline');
     await writeFile(join(repo, 'main.ts'), 'new\n');
     const head = commit('Change');
     const shallow = join(root, 'shallow.git');
     git('clone', '--bare', '--depth=1', '--no-local', repo, shallow);
+    if (withWarning) git('config', '--file', join(shallow, 'config'), 'core.fsyncMethod', 'unknown-fsync-mode');
     expect(await readChange(shallow, workspace, 'commit', head)).toMatchObject({
       commit: head, title: 'Change', diff: '', files: [], partial: true,
     });
     expect(await readChangeDetail(shallow, workspace, 'commit', head)).toMatchObject({
       node: { ref: head, parents: [base] }, base, partial: true, statsCoverage: 'unavailable', files: [],
     });
-  });
-
-  it('reports a fatal parent read instead of showing missing-parent coverage', async () => {
-    const parent = commit('Base', '--allow-empty');
-    const head = commit('Change', '--allow-empty');
-    const { gitSource } = sourceProcess;
-    const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation((args, options) =>
-      args.includes('cat-file') && args.includes('-t') && args.at(-1) === parent
-        ? Promise.resolve({ status: 128, truncated: false, output: Buffer.alloc(0), diagnostic: 'fatal: repository read failed' })
-        : gitSource(args, options));
-    try {
-      await expect(readChangeDetail(repo, workspace, 'commit', head)).rejects.toMatchObject({
-        code: 'SOURCE_READ_FAILED', message: 'Could not read the parent of that commit. fatal: repository read failed',
-      });
-    } finally {
-      spy.mockRestore();
-    }
   });
 
   it('omits binary and oversized patches while keeping complete text patches', async () => {
@@ -221,6 +205,23 @@ describe('Git change read boundaries', () => {
     await expect(readChange(repo, workspace, 'commit', 'HEAD~1')).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
     await expect(readChange(repo, workspace, 'commit', dangling)).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
   });
+});
+
+it('reports a fatal parent read instead of showing missing-parent coverage', async () => {
+  const parent = commit('Base', '--allow-empty');
+  const head = commit('Change', '--allow-empty');
+  const { gitSource } = sourceProcess;
+  const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation((args, options) =>
+    args.includes('cat-file') && args.includes('-t') && args.at(-1) === parent
+      ? Promise.resolve({ status: 128, truncated: false, output: Buffer.alloc(0), diagnostic: 'fatal: could not read repository data' })
+      : gitSource(args, options));
+  try {
+    await expect(readChangeDetail(repo, workspace, 'commit', head)).rejects.toMatchObject({
+      code: 'SOURCE_READ_FAILED', message: 'Could not read the parent of that commit. fatal: could not read',
+    });
+  } finally {
+    spy.mockRestore();
+  }
 });
 
   it.each([{ count: 'one parent', missingIds: ['a'] }, { count: 'two parents', missingIds: ['a', 'b'] }])(
@@ -319,6 +320,25 @@ describe('Git change read boundaries', () => {
     }
   });
 
+  it.each([
+    { key: 'log.date', shape: 'single line', reason: 'unknown date format' },
+    { key: 'log.date', shape: 'multiple lines', reason: 'unknown date format' },
+    { key: 'diff.ignoreSubmodules', shape: 'single line', reason: 'bad --ignore-submodules argument' },
+  ])('redacts unquoted $key values on $shape from real Git history and change reads', async ({ key, shape, reason }) => {
+    const head = commit('Healthy tip', '--allow-empty');
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const value = shape === 'single line' ? 'synthetic-date-format' : 'synthetic-date-format\nfatal: synthetic-continuation';
+    git('config', key, value);
+    const failures = await Promise.all([
+      history.advance(() => 1).catch((error: unknown) => error),
+      readChange(repo, workspace, 'commit', head).catch((error: unknown) => error),
+    ]);
+    const [historyFailure, changeFailure] = failures;
+    expect(failures.every(error => error instanceof DomainError && error.code === 'SOURCE_READ_FAILED')).toBe(true);
+    expect(historyFailure instanceof DomainError && historyFailure.message === 'Could not read Git history. fatal: ' + reason).toBe(true);
+    expect(changeFailure instanceof DomainError && changeFailure.message === 'Could not read the Git commit title. fatal: ' + reason).toBe(true);
+  });
+
   it('omits private multiline content from a Git history error', async () => {
     commit('Healthy tip', '--allow-empty');
     const { gitSource } = sourceProcess;
@@ -346,12 +366,12 @@ describe('Git change read boundaries', () => {
       if (!args.includes('--author-date-order') || !options?.graftFile) return result;
       expect(result.status).toBe(0);
       expect(result.output.toString()).toContain(boundary);
-      return { ...result, status, diagnostic: 'fatal: synthetic filesystem\u200bfailure' };
+      return { ...result, status, diagnostic: 'fatal: could not read \u200bfilesystem' };
     });
     try {
       const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
       await expect(history.advance(() => 1)).rejects.toMatchObject({
-        code: 'SOURCE_READ_FAILED', message: 'Could not read Git history. fatal: synthetic filesystem failure',
+        code: 'SOURCE_READ_FAILED', message: 'Could not read Git history. fatal: could not read',
       });
     } finally {
       spy.mockRestore();
@@ -371,7 +391,7 @@ describe('Git change read boundaries', () => {
       const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
       await expect(history.advance(() => 1)).rejects.toMatchObject({
         code: 'SOURCE_READ_FAILED',
-        message: 'Git history output exceeded the read limit. error: diagnostic from the limited walk',
+        message: 'Git history output exceeded the read limit. error:',
       });
     } finally {
       spy.mockRestore();
@@ -446,7 +466,7 @@ describe('Git change read boundaries', () => {
         ? Promise.resolve({ status: 128, truncated: false, output: Buffer.alloc(0), diagnostic: 'fatal: failed to read workspace settings' })
         : gitSource(args, options));
       await expect(openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []))
-        .rejects.toMatchObject({ code: 'SOURCE_READ_FAILED', message: 'Could not read Git history. fatal: failed to read workspace settings' });
+        .rejects.toMatchObject({ code: 'SOURCE_READ_FAILED', message: 'Could not read Git history. fatal: failed to read' });
     } finally {
       spy.mockRestore();
     }
@@ -506,6 +526,22 @@ describe('Git change read boundaries', () => {
   });
 
 describe('repository explorer metadata limits', () => {
+  it('keeps newer rows when the oversized commit also has a missing parent', async () => {
+    const missing = commit('Removed parent', '--allow-empty');
+    await writeFile(join(root, 'message'), 'x'.repeat(2 * 1024 * 1024 + 1024));
+    git('commit', '--quiet', '--allow-empty', '-F', join(root, 'message'));
+    const oversized = git('rev-parse', 'HEAD');
+    const tip = commit('Readable tip', '--allow-empty');
+    await rm(join(repo, '.git', 'objects', missing.slice(0, 2), missing.slice(2)));
+
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const page = await history.advance(() => 1);
+    expect(page.nodes.map(node => node.ref)).toEqual([tip]);
+    expect(page.next).toBeNull();
+    expect(page.warning).toContain(oversized.slice(0, 12));
+    expect(page.warning).toContain('metadata exceeded the read limit');
+  });
+
   it.each([0, 2, 35])('stops at the oversized commit with %i readable commits before it', async readable => {
     commit('Older commit', '--allow-empty');
     await writeFile(join(root, 'message'), 'x'.repeat(2 * 1024 * 1024 + 1024));

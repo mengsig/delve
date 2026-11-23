@@ -1,32 +1,48 @@
 import assert from 'node:assert/strict';
 import { DomainError } from '../../shared/errors';
-import { sourceText } from './source-policy';
+import { OBJECT_ID } from './source-policy';
 import type { CommandResult } from './source-process';
 
 const DIAGNOSTIC_LIMIT = 1024;
-const BAD_VALUE = /^((?:fatal|error|warning): bad (?:[a-z-]+ )*value)\b/i;
-const CONFIG_KEY = / for '([a-z][a-z0-9-]*\.[a-z][a-z0-9-]*)'(?:: (?:invalid unit|out of range))?$/i;
-const VALUE_START = /(?<assignment>(?<![\w.-])[\w.-]+=)|['"`]|(?<![\w+.-])[a-z][\w+.-]*:\/\/[^/\s]*@|(?<![\w./\\-])(?:\/|[a-z]:[/\\]|\\\\)/iu;
+const BOOLEAN_CONFIG = 'bad boolean config value';
+const CONFIG_KEY = / for '([a-z][a-z0-9-]*\.[a-z][a-z0-9-]*)'$/i;
+const OBJECT_CLASS = /^(?:bad object|could not read|could not parse|cannot read commit object|failed to read object|Failed to traverse parents of commit) ([a-f0-9]+)$/i;
+const CORRUPT_OBJECT = /^(?:loose|packed) object ([a-f0-9]+) \(stored in .+\) is corrupt$/i;
+const MESSAGE_CLASSES = [
+  BOOLEAN_CONFIG, 'bad numeric config value', 'bad config value', 'bad config line', 'invalid config format',
+  'unknown date format', 'bad --ignore-submodules argument', 'invalid color value', 'unsupported object format',
+  'not a git repository', 'detected dubious ownership', 'revision walk setup failed', 'git cat-file: could not get object info',
+  'Failed to traverse parents of commit', 'bad object', 'loose object', 'packed object', 'could not parse',
+  'cannot read commit object', 'failed to read object', 'failed to read', 'could not read', 'cannot read',
+  'cannot open', 'unable to open', 'could not reach', 'ambiguous argument',
+];
 
-function diagnosticSummary(diagnostic: string): string {
-  const text = diagnostic.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, character => character === '\n' ? '\n' : ' ').trim();
-  // Git can interpolate unescaped quotes and newlines. Keep only the prefix before a value.
-  const value = VALUE_START.exec(text);
-  const prefix = value ? text.slice(0, value.index) + (value.groups?.assignment ?? '') + '[redacted]' : text;
-  const lines = prefix.split('\n');
-  const detail = lines.find(line => line.startsWith('fatal:')) ?? lines.find(line => line.startsWith('error:'))
-    ?? lines.find(line => line.startsWith('warning:'));
-  if (!detail?.startsWith('fatal:') && /^fatal:/m.test(text)) return 'fatal:';
-  if (!detail) return '';
-
-  const badValue = BAD_VALUE.exec(detail);
-  if (badValue) {
-    const key = CONFIG_KEY.exec(text)?.[1];
-    return (key ? `${badValue[0]} for ${key}` : badValue[0]).slice(0, DIAGNOSTIC_LIMIT);
+function safeReason(message: string, completeDiagnostic?: string): string | undefined {
+  // Only known Git classes and structured fields can cross the renderer boundary.
+  const reason = MESSAGE_CLASSES.find(key => message === key || message.startsWith(key + ' ') || message.startsWith(key + ':'));
+  if (!completeDiagnostic || !reason) return reason;
+  if (reason === BOOLEAN_CONFIG && message.startsWith(BOOLEAN_CONFIG + " '")) {
+    const key = CONFIG_KEY.exec(completeDiagnostic)?.[1];
+    if (key) return reason + ' for ' + key;
   }
+  const object = OBJECT_CLASS.exec(message)?.[1] ?? CORRUPT_OBJECT.exec(message)?.[1];
+  if (object && OBJECT_ID.test(object)) return reason + ' ' + object;
+  return reason;
+}
 
-  const level = detail.slice(0, detail.indexOf(':') + 1);
-  return sourceText(Buffer.from(detail)) === null ? level : detail.slice(0, DIAGNOSTIC_LIMIT).trimEnd();
+function diagnosticSummary(result: CommandResult): string {
+  const { diagnostic, truncated } = result;
+  const match = /^fatal:.*/m.exec(diagnostic) ?? /^error:.*/m.exec(diagnostic) ?? /^warning:.*/m.exec(diagnostic);
+  if (!match) return '';
+  const [line] = match;
+  const end = line.indexOf(':') + 1;
+  const level = line.slice(0, end);
+  const completeDiagnostic = !truncated && match.index === 0 ? diagnostic.trimEnd() : undefined;
+  const reason = safeReason(line.slice(end).trimStart(), completeDiagnostic);
+  const summary = (reason ? level + ' ' + reason : level).slice(0, DIAGNOSTIC_LIMIT).trimEnd();
+  assert.ok(summary.length <= DIAGNOSTIC_LIMIT && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(summary));
+  assert.match(summary, /^(?:fatal|error|warning):/);
+  return summary;
 }
 
 export function gitReadState(result: CommandResult, outputLimit?: number): 'complete' | 'limited' | 'failed' {
@@ -42,7 +58,7 @@ export function gitReadState(result: CommandResult, outputLimit?: number): 'comp
 }
 
 export function gitReadFailed(result: CommandResult, message: string): never {
-  const detail = diagnosticSummary(result.diagnostic);
+  const detail = diagnosticSummary(result);
   throw new DomainError('SOURCE_READ_FAILED', detail ? message + ' ' + detail : message);
 }
 
