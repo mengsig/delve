@@ -50,7 +50,7 @@ async function captureThemes(page: Page, name: string) {
 }
 
 async function verifyLearnedLessonActions(page: Page) {
-  await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  await page.getByRole('button', { name: /Back to Knowledge/i }).click();
   await page.getByRole('button', { name: 'Learned list' }).click();
   const openLesson = page.getByRole('button', { name: 'Open lesson: Queues and workers' }).first();
   await openLesson.focus();
