@@ -287,7 +287,11 @@ test('opens a fresh Knowledge visit in the active workspace and restores the are
   upsertConcept(db, { key: 'delivery-confirmation', title: 'Delivery confirmation', workspaceId: origin.id, portable: false });
   db.close();
 
+  const legacyFilters = JSON.stringify({ workspace: next.id, state: '', depth: '', query: '', group: false });
+  await desktop.page.evaluate(filters => localStorage.setItem('delve.knowledge.filters', filters), legacyFilters);
   const page = await desktop.restart();
+  expect(await page.evaluate(() => localStorage.getItem('delve.knowledge.filters'))).toBe(legacyFilters);
+  await expect(page.locator('#active-workspace strong')).toHaveText(origin.name);
   const header = page.getByRole('navigation', { name: 'Application' });
   const knowledge = header.getByRole('button', { name: 'Knowledge', exact: true });
   const atlas = header.getByRole('button', { name: 'Atlas', exact: true });

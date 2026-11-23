@@ -4,13 +4,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { HistoryNode } from '../../shared/explorer';
 import { DomainError } from '../../shared/errors';
+import { gitReadFailed, gitReadState } from './git-diagnostics';
 import { changeTitle, gitReader, nulRecords, type GitReader } from './git-reader';
-import { OBJECT_ID, safeBranch, safeAuthor, sourceText } from './source-policy';
-import { completedOutput, type CommandResult } from './source-process';
+import { OBJECT_ID, safeBranch, safeAuthor } from './source-policy';
+import type { CommandResult } from './source-process';
 
 const COMMIT_BATCH = 32;
 const MAX_BRANCHES = 256;
 const MAX_PARENT_REPAIRS = 4;
+const WALK_LIMIT = 2 * 1024 * 1024;
+const METADATA_LIMIT = 1024 * 1024;
 const LOG = ['log', '--no-notes', '--no-show-signature', '--no-color', '--encoding=UTF-8', '-z'];
 const LOG_RECORDS = [...LOG, '--format=%H%x00%P%x00%an%x00%aI%x00%s'];
 const TIP_LOG = [...LOG, '--no-walk=unsorted', '--format=%H'];
@@ -19,17 +22,10 @@ type ObjectFailure = { object: string; child?: string };
 type HistoryRead =
   | { kind: 'complete'; output: Buffer }
   | { kind: 'object'; output: Buffer; failure: ObjectFailure };
+type HistoryWalk = HistoryRead | { kind: 'limited'; output: Buffer };
 
 function historyReadFailed(result: CommandResult): never {
-  const message = result.truncated ? 'Git history output exceeded the read limit.' : 'Could not read Git history.';
-  const printable = result.diagnostic.replace(/[\p{Cc}\p{Cf}]/gu, character => character === '\n' ? '\n' : ' ');
-  const sanitized = sourceText(Buffer.from(printable));
-  if (!sanitized) throw new DomainError('SOURCE_READ_FAILED', message);
-  const lines = sanitized.split('\n').map(line => line.trim()).filter(Boolean);
-  const detail = lines.join(' ');
-  const fatal = detail.length > 1024 ? lines.filter(line => line.startsWith('fatal:')).join(' ') : '';
-  const summary = (fatal || detail).slice(0, 1024);
-  throw new DomainError('SOURCE_READ_FAILED', summary ? message + ' ' + summary : message);
+  gitReadFailed(result, result.truncated ? 'Git history output exceeded the read limit.' : 'Could not read Git history.');
 }
 
 function parseObjectFailure(fatal: string, preceding: string): ObjectFailure | undefined {
@@ -44,12 +40,10 @@ function parseObjectFailure(fatal: string, preceding: string): ObjectFailure | u
 }
 
 function classifyHistory(result: CommandResult): HistoryRead {
-  assert.ok(Number.isInteger(result.status));
-  assert.ok(Buffer.isBuffer(result.output));
+  if (gitReadState(result) === 'complete') return { kind: 'complete', output: result.output };
   if (result.truncated) historyReadFailed(result);
   const lines = result.diagnostic.split(/\r?\n/);
   const fatals = lines.filter(line => line.startsWith('fatal:'));
-  if (result.status === 0 && fatals.length === 0) return { kind: 'complete', output: result.output };
   const [fatal] = fatals;
   if (fatals.length !== 1 || !fatal) historyReadFailed(result);
   const failure = parseObjectFailure(fatal.slice('fatal:'.length).trim(), lines[lines.indexOf(fatal) - 1] ?? '');
@@ -125,10 +119,13 @@ async function headTip(reader: GitReader): Promise<string | null> {
 export async function gitHistoryNode(reader: GitReader, head: string): Promise<HistoryNode> {
   assert.ok(OBJECT_ID.test(head));
   const { labels } = await branchTips(reader);
-  const result = await reader.run([...LOG_RECORDS, '--max-count=1', head, '--'], 1024 * 1024);
-  if (!result.truncated) completedOutput(result, 'Could not read the Git commit metadata.');
-  const [node] = commitNodes(nulRecords(result.output), labels);
-  if (!node) throw new DomainError('SOURCE_LIMIT', 'The Git commit metadata exceeded the read limit.');
+  const result = await reader.run([...LOG_RECORDS, '--max-count=1', head, '--'], METADATA_LIMIT);
+  if (gitReadState(result, METADATA_LIMIT) === 'limited') {
+    throw new DomainError('SOURCE_LIMIT', 'The Git commit metadata exceeded the read limit.');
+  }
+  const nodes = commitNodes(nulRecords(completeHistoryOutput(result)), labels);
+  const [node] = nodes;
+  assert.ok(nodes.length === 1 && node);
   assert.equal(node.head, head);
   return node;
 }
@@ -232,12 +229,19 @@ function addBrokenBoundary(boundaries: Map<string, BrokenBoundary>, { commit, pa
   return true;
 }
 
-async function walkHistory(reader: GitReader, tips: string[], skip: number, boundaries: Map<string, BrokenBoundary>): Promise<HistoryRead> {
+function orderedLog(reader: GitReader, tips: string[], skip: number, count: number) {
   assert.ok(tips.length > 0 && tips.every(tip => OBJECT_ID.test(tip)));
   assert.ok(Number.isSafeInteger(skip) && skip >= 0);
   // Ancestry takes precedence when authored dates are out of order.
-  const args = [...LOG_RECORDS, '--author-date-order', `--skip=${skip}`, `--max-count=${COMMIT_BATCH + 1}`, ...tips, '--'];
-  const run = () => withBoundaries(reader, boundaries, async git => readHistoryOutput(git, await git.run(args, 2 * 1024 * 1024)));
+  return reader.run([...LOG_RECORDS, '--author-date-order', `--skip=${skip}`, `--max-count=${count}`, ...tips, '--'], WALK_LIMIT);
+}
+
+async function walkHistory(reader: GitReader, tips: string[], skip: number, boundaries: Map<string, BrokenBoundary>): Promise<HistoryWalk> {
+  const run = () => withBoundaries(reader, boundaries, async git => {
+    const result = await orderedLog(git, tips, skip, COMMIT_BATCH + 1);
+    if (gitReadState(result, WALK_LIMIT) === 'limited') return { kind: 'limited', output: result.output } as const;
+    return readHistoryOutput(git, result);
+  });
   let log = await run();
   for (let attempt = 0; attempt < MAX_PARENT_REPAIRS && log.kind === 'object'; attempt++) {
     const parent = await withBoundaries(reader, boundaries, git => brokenParent(git, tips));
@@ -245,6 +249,20 @@ async function walkHistory(reader: GitReader, tips: string[], skip: number, boun
     log = await run();
   }
   return log;
+}
+
+async function checkWalkLimit(reader: GitReader, tips: string[], skip: number, labels: Map<string, string[]>,
+  boundaries: Map<string, BrokenBoundary>): Promise<{ node: HistoryNode; more: boolean } | { oversized: string }> {
+  const result = await withBoundaries(reader, boundaries, git => orderedLog(git, tips, skip, 2));
+  const limited = gitReadState(result, WALK_LIMIT) === 'limited';
+  const records = nulRecords(limited ? result.output : completeHistoryOutput(result));
+  const nodes = commitNodes(records, labels);
+  assert.ok(nodes.length <= 2);
+  const [node] = nodes;
+  if (node) return { node, more: limited || nodes.length === 2 };
+  const [id] = records;
+  if (!limited || !id || !OBJECT_ID.test(id)) historyReadFailed(result);
+  return { oversized: id };
 }
 
 function gapWarning(boundaries: Map<string, BrokenBoundary>, gaps: HistoryNode[]): string {
@@ -259,14 +277,30 @@ async function readGitHistoryBatch(reader: GitReader, tips: string[], labels: Ma
   boundaries: Map<string, BrokenBoundary>): Promise<GitHistoryBatch> {
   const log = await walkHistory(reader, tips, skip, boundaries);
   const history = commitNodes(nulRecords(log.output), labels);
+  let oversized: string | undefined;
+  let more = false;
+  if (log.kind === 'limited') {
+    assert.ok(history.length <= COMMIT_BATCH);
+    // A single record gets its own budget before we stop at the boundary.
+    const limit = await checkWalkLimit(reader, tips, skip + history.length, labels, boundaries);
+    if ('oversized' in limit) oversized = limit.oversized;
+    else {
+      history.push(limit.node);
+      more = limit.more;
+    }
+  }
   const nodes = history.slice(0, COMMIT_BATCH);
   const gaps = boundaries.size ? nodes.filter(node => boundaries.has(node.ref)) : [];
   const restored = gaps.length ? nodes.map(node => {
     const boundary = boundaries.get(node.ref);
     return boundary ? { ...node, parents: boundary.parents } : node;
   }) : nodes;
-  const warning = log.kind === 'object' ? unreadableWarning(log.failure.object) : gaps.length ? gapWarning(boundaries, gaps) : undefined;
-  return { nodes: restored, next: history.length > COMMIT_BATCH ? skip + nodes.length : null, warning };
+  const warnings: string[] = [];
+  if (log.kind === 'object') warnings.push(unreadableWarning(log.failure.object));
+  else if (gaps.length) warnings.push(gapWarning(boundaries, gaps));
+  if (oversized) warnings.push(`Git history stopped at commit ${oversized.slice(0, 12)} because its metadata exceeded the read limit.`);
+  const hasMore = !oversized && (more || history.length > COMMIT_BATCH);
+  return { nodes: restored, next: hasMore ? skip + nodes.length : null, warning: warnings.join(' ') || undefined };
 }
 
 export async function openGitHistory(path: string, branch?: string, commits = true): Promise<GitHistorySource> {
