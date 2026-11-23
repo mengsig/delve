@@ -347,16 +347,20 @@ it('does not merge opposite high-overlap descriptions into an existing portable 
   } finally { db.close(); }
 });
 
-it.each([{ portableTitle: 'TCP', localTitle: 'HTTP' }, { portableTitle: 'HTTP', localTitle: 'TCP' }])(
-  'does not link disagreeing known aliases during the v0.1.0 upgrade ($portableTitle, $localTitle)', ({ portableTitle, localTitle }) => {
+it.each([
+  { key: 'tcp', portableTitle: 'TCP', localTitle: 'HTTP' },
+  { key: 'tcp', portableTitle: 'HTTP', localTitle: 'TCP' },
+  { key: 'transport', portableTitle: 'HTTP', localTitle: 'TCP' },
+])(
+  'does not link disagreeing known aliases during the v0.1.0 upgrade ($key, $portableTitle, $localTitle)', ({ key, portableTitle, localTitle }) => {
     const db = new DatabaseSync(':memory:');
     try {
       migrate(db, MIGRATIONS.slice(0, 5));
       db.exec("INSERT INTO workspaces (id,kind,name,source,created_at) VALUES ('a','git','A','/a','t'), ('b','git','B','/b','t')");
       const concept = db.prepare(`INSERT INTO concepts (id,key,title,summary,portable,workspace_id,created_at,updated_at)
         VALUES (?,?,?,'A reliable ordered byte stream.',?,?,'t','t')`);
-      concept.run(1, 'tcp', portableTitle, 1, null);
-      concept.run(2, 'ws/b/tcp', localTitle, 0, 'b');
+      concept.run(1, key, portableTitle, 1, null);
+      concept.run(2, `ws/b/${key}`, localTitle, 0, 'b');
       db.exec(`INSERT INTO workspace_concepts (workspace_id,concept_id) VALUES ('a',1),('b',2);
         INSERT INTO evidence (concept_id,depth,status,source,note,workspace_id,recorded_at) VALUES
         (1,'medium','demonstrated','check','Original proof','a','t'), (2,'low','partial','check','Local proof','b','t');`);

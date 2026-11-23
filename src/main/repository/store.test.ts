@@ -274,19 +274,24 @@ it('requires more than a matching title and summary for an unrecognized alias', 
   expect(graph.concepts[0]!.id).not.toBe(existing.id);
 });
 
-it.each([{ linked: false, portable: true }, { linked: true, portable: false }])(
-  'scopes disagreeing known aliases (migrated link=$linked, portable proposal=$portable)', ({ linked, portable }) => {
+it.each([
+  { key: 'tcp', linked: false, portable: true },
+  { key: 'tcp', linked: true, portable: false },
+  { key: 'transport', linked: false, portable: true },
+  { key: 'transport', linked: true, portable: false },
+])(
+  'scopes disagreeing known aliases (key=$key, migrated link=$linked)', ({ key, linked, portable }) => {
     const origin = workspaceId;
     const summary = 'A reliable ordered byte stream.';
-    const tcp = upsertConcept(db, { key: 'tcp', title: 'TCP', summary, portable: true, workspaceId: origin });
+    const tcp = upsertConcept(db, { key, title: 'TCP', summary, portable: true, workspaceId: origin });
     recordEvidence(db, { workspaceId: origin, conceptId: tcp.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
     workspaceId = addWorkspace(db, { kind: 'git', path: '/transport' }).id;
     if (linked) {
-      const legacy = upsertConcept(db, { key: 'tcp', title: 'TCP', summary, portable: false, workspaceId });
+      const legacy = upsertConcept(db, { key, title: 'TCP', summary, portable: false, workspaceId });
       db.prepare('INSERT INTO concept_identity_links VALUES (?, ?)').run(legacy.id, tcp.id);
       db.prepare('UPDATE workspace_concepts SET on_atlas = 0 WHERE concept_id = ?').run(legacy.id);
     }
-    const conflicting = { key: 'tcp', title: 'HTTP', summary, portable };
+    const conflicting = { key, title: 'HTTP', summary, portable };
     const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [conflicting], edges: [],
       recommendation: { key: conflicting.key, reason: 'Start here.' } });
     const selected = source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline);
@@ -301,9 +306,11 @@ it.each([{ linked: false, portable: true }, { linked: true, portable: false }])(
     expect(readWorkspaceGraph(db, workspaceId).concepts).toEqual([scoped]);
 
     const next = source({ kind: 'baseline', commit: previous, paths: ['src/routes.ts'] }, previous);
-    persistGeneration(db, next, baselineReply.parse({ ...proposal, concepts: [conflicting,
-      { key: 'transmission-control-protocol', title: 'Transmission Control Protocol', summary, portable: true },
-    ] }));
+    const corroborated = linked ? { ...conflicting, title: 'TCP' }
+      : { key: 'transmission-control-protocol', title: 'Transmission Control Protocol', summary, portable: true };
+    persistGeneration(db, next, baselineReply.parse({ ...proposal, concepts: linked ? [corroborated] : [conflicting, corroborated],
+      recommendation: { ...proposal.recommendation, key: corroborated.key } }));
+    expect(db.prepare('SELECT next_concept FROM repository_generations WHERE cache_key = ?').get(next.cacheKey)?.next_concept).toBe(tcp.id);
     expect(readWorkspaceGraph(db, workspaceId).concepts).toEqual(expect.arrayContaining([scoped,
       expect.objectContaining({ id: tcp.id, portable: true }),
     ]));

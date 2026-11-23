@@ -14,7 +14,7 @@ import { bindConceptSpans } from './concept-spans';
 import { cacheModel, selectModel } from '../providers/model';
 import { baselineReply, type ChangeReply, type GraphProposal } from './schemas';
 import { portableConceptLookup } from './portable-concepts';
-import { compatibleDescriptions, normalizedConceptName, portableAlias } from '../db/portable-identity';
+import { compatibleDescriptions, compatiblePortableAliases, normalizedConceptName, portableAlias } from '../db/portable-identity';
 
 export interface ApprovedSource {
   request: RepoRequest;
@@ -45,7 +45,8 @@ function scopedFingerprint(input: ProposalConcept): string {
     assert.notEqual(keyAlias, titleAlias);
     return digest([keyAlias, titleAlias, summary]);
   }
-  return digest([input.portable ? alias ?? key : key, summary]);
+  if (!input.portable && alias !== undefined) return digest([key, alias, summary]);
+  return digest([alias ?? key, summary]);
 }
 
 function baselineScope(db: Db, workspaceId: string) {
@@ -101,7 +102,7 @@ function proposalConceptLookup(db: Db, workspaceId: string) {
     if (typeof linked?.key === 'string') {
       const canonical = getConceptByKey(db, linked.key);
       assert.ok(canonical?.portable, 'a migrated identity must point to a portable concept');
-      if (portableAlias(input.key, input.title) !== null && portableAlias(canonical.key, canonical.title) !== null
+      if (compatiblePortableAliases(portableAlias(input.key, input.title), portableAlias(canonical.key, canonical.title))
         && compatibleDescriptions(input.summary, canonical.summary)) {
         return { ...input, key: canonical.key, concept: canonical, portable: true };
       }
