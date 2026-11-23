@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type RefObject } from 'react';
 import { DEFAULT_DEPTH, DEPTHS, type Depth, type ProviderId, type WorkspaceKind } from '../../shared/domain';
 import type { TopicPreview } from '../../shared/reader';
 import { call } from './api';
@@ -6,6 +6,7 @@ import { PROVIDER_LABELS } from './preferences';
 import { SetupProvider, providerHint, useDetectedProvider, useProviderDetection } from './SetupProvider';
 import { Terrain } from './Terrain';
 import { errorMessage } from './useRead';
+import { shouldFocusSource, type FocusWatch } from './sourceErrors';
 import { droppedSource, repositoryInput } from './workspaceSource';
 import { useAttachFiles, useAttachInventory, useAttachPreview } from './repository/AttachReads';
 import { AttachReview } from './repository/AttachReview';
@@ -22,13 +23,16 @@ interface Props {
 
 const DEPTH_LABELS = { high: 'High · Overview', medium: 'Medium · Mechanics', low: 'Low · Detail' } as const;
 
-function SourceFields({ value, onValue, onPick, onDrop }: ReturnType<typeof useSourceFields>) {
+const SETUP_ERROR_ID = 'setup-error';
+
+function SourceFields({ value, onValue, onPick, onDrop, invalid, pending }: ReturnType<typeof useSourceFields> & { invalid: boolean; pending: boolean }) {
   return <div className="formrow">
     <label htmlFor="source-input">Topic or repository</label>
     <div className="source-control" onDrop={onDrop} onDragOver={event => event.preventDefault()}>
-      <input id="source-input" autoFocus aria-describedby="source-hint" required placeholder="Photography or https://github.com/owner/repo"
+      <input id="source-input" autoFocus required readOnly={pending} aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? `source-hint ${SETUP_ERROR_ID}` : 'source-hint'} placeholder="Photography or https://github.com/owner/repo"
         value={value} maxLength={4096} onChange={event => onValue(event.target.value)} />
-      <button type="button" onClick={onPick}>Choose folder…</button>
+      <button type="button" disabled={pending} onClick={onPick}>Choose folder…</button>
     </div>
     <span id="source-hint" className="sub">Paste or drop a GitHub URL, owner/name, or local repository path.</span>
   </div>;
@@ -148,13 +152,19 @@ function StartActions({ topic, signedIn, blocked, pending, attach, attachFailed,
   </div>;
 }
 
-function SetupFeedback({ error, onOpenSwitcher }: { error: string; onOpenSwitcher: Props['onOpenSwitcher'] }) {
+function SetupFeedback({ error, source, onOpenSwitcher, onRetry }: {
+  error?: string; source?: boolean; onOpenSwitcher?: Props['onOpenSwitcher']; onRetry?: () => void;
+}) {
   if (!error) return null;
   return <div className="attach-feedback">
-    <p role="alert" className="setup-error">{error}</p>
-    {error.includes('workspace switcher') && onOpenSwitcher
+    <p role="alert" id={source ? SETUP_ERROR_ID : undefined} className="setup-error">{error}</p>
+    {onOpenSwitcher
       ? <button type="button" onClick={onOpenSwitcher}>Open workspace switcher</button>
       : <button type="button" onClick={() => document.getElementById('source-input')?.focus()}>Edit source</button>}
+    {onRetry && <>
+      <p className="smallprint">Check the repository source and access, then retry or add it without mapping.</p>
+      <button type="button" onClick={onRetry}>Retry reading files</button>
+    </>}
   </div>;
 }
 
@@ -170,20 +180,67 @@ function TopicReview({ provider, request }: { provider: ProviderId; request: Ret
   </div>;
 }
 
+/** Refocuses the rejected source unless the user moved focus (focusin, or a press outside the form) mid-request. */
+function useSourceErrorFocus(form: RefObject<HTMLFormElement | null>, pending: boolean, rejected: boolean) {
+  const watchRef = useRef<FocusWatch | null>(null);
+  useLayoutEffect(() => {
+    if (!pending) return;
+    const watch: FocusWatch = { start: document.activeElement, moved: false };
+    watchRef.current = watch;
+    const focused = () => { watch.moved = true; };
+    const pressed = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !form.current?.contains(event.target)) watch.moved = true;
+    };
+    document.addEventListener('focusin', focused, true);
+    document.addEventListener('pointerdown', pressed, true);
+    return () => {
+      document.removeEventListener('focusin', focused, true);
+      document.removeEventListener('pointerdown', pressed, true);
+    };
+  }, [form, pending]);
+  useEffect(() => {
+    if (!rejected) return;
+    const source = document.getElementById('source-input');
+    const settled = watchRef.current;
+    watchRef.current = null;
+    const active = document.activeElement;
+    if (active !== source && shouldFocusSource(settled, active, document.body, source)) source?.focus();
+  }, [rejected]);
+}
+
+function WorkspaceOptions({ source, depth, provider, detection, onDepth, onProvider, onAddOnly }: {
+  source: ReturnType<typeof useSourceFields>; depth: Depth; provider: ProviderId;
+  detection: ReturnType<typeof useProviderDetection>; onDepth: (depth: Depth) => void;
+  onProvider: (provider: ProviderId) => void; onAddOnly?: () => void;
+}) {
+  return <details className="setup-advanced">
+    <summary>Advanced options <span className="smallprint">· {DEPTH_LABELS[depth].split(' · ')[0]} · {PROVIDER_LABELS[provider]}</span></summary>
+    {source.inferred !== 'topic' && <label><input type="checkbox" checked={source.asTopic}
+      onChange={event => source.setAsTopic(event.target.checked)} /> Treat input as a topic</label>}
+    <StartingDepth depth={depth} onChange={onDepth} />
+    <SetupProvider label="Tutor" provider={provider} detection={detection} onChange={onProvider} />
+    {onAddOnly && <button type="button" onClick={onAddOnly}>Add without mapping</button>}
+  </details>;
+}
+
 function WorkspaceEditor(props: Props) {
   const [depth, setDepth] = useState<Depth>(DEFAULT_DEPTH);
   const detection = useProviderDetection();
   const { provider, choose, cli } = useDetectedProvider(detection.statuses);
   const actions = useStartWorkspace(props.onAdded, depth, provider);
+  const form = useRef<HTMLFormElement>(null);
+  const pending = actions.pending !== null;
+  useSourceErrorFocus(form, pending, Boolean(actions.error?.source && !pending));
   const source = useSourceFields(actions);
   const attach = useAttachRequest(source.repository, depth, provider, cli);
+  const inventoryError = attach.inventory.error;
+  const sourceError = actions.error?.source ? actions.error : inventoryError;
   const topic = source.kind === 'topic';
   const signedIn = topic && cli?.state === 'signed-in';
   const title = source.value.trim().replace(/\s+/g, ' ');
   const request = useTopicPreview(title, depth, provider, signedIn);
   const waitingForTopic = Boolean(signedIn && title && title.length <= 120 && !request.preview);
-  const waitingForMap = attach.inventory.pending || attach.request.pending;
-  const blocked = !title || detection.checking || waitingForTopic || waitingForMap;
+  const blocked = !title || detection.checking || waitingForTopic || attach.inventory.pending || attach.request.pending;
   const showFiles = Boolean(source.repository && cli?.state === 'signed-in');
   const preview = attach.preview;
   const attachFailed = Boolean(preview && actions.failedToken === preview.token);
@@ -191,34 +248,33 @@ function WorkspaceEditor(props: Props) {
   const addOnly = () => actions.addOnly(source.kind, source.value, request.preview);
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (blocked || attachFailed) return;
+    if (pending || blocked || attachFailed) return;
     if (preview) actions.buildMap(preview, attach.allowed);
     else addOnly();
   }
 
-  return <form className="setup-grid" aria-label="Add workspace" onSubmit={submit}>
-    <fieldset className="sheet setup-form" disabled={actions.pending !== null}>
-      <SourceFields {...source} />
-      <p className="smallprint setup-cli-status" role="status">{detection.error ? 'Could not check sign-in. Open Advanced options to retry.' :
-        cli ? providerHint(cli) : 'Checking installed CLIs…'}</p>
-      <details className="setup-advanced">
-        <summary>Advanced options <span className="smallprint">· {DEPTH_LABELS[depth].split(' · ')[0]} · {PROVIDER_LABELS[provider]}</span></summary>
-        {source.inferred !== 'topic' && <label><input type="checkbox" checked={source.asTopic}
-          onChange={event => source.setAsTopic(event.target.checked)} /> Treat input as a topic</label>}
-        <StartingDepth depth={depth} onChange={next => { actions.clearError(); setDepth(next); }} />
-        <SetupProvider label="Tutor" provider={provider} detection={detection}
-          onChange={next => { actions.clearError(); choose(next); }} />
-        {showFiles && <button type="button" onClick={addOnly}>Add without mapping</button>}
-      </details>
-      {signedIn && <TopicReview provider={provider} request={request} />}
-      <SetupFeedback error={actions.error} onOpenSwitcher={props.onOpenSwitcher} />
-      <StartActions topic={topic} signedIn={Boolean(request.preview)} blocked={blocked}
-        pending={actions.pending} attach={attach} attachFailed={attachFailed}
-        rememberTutor={request.preview ? () => actions.addOnly(source.kind, source.value, request.preview, true) : undefined}
-        onCancel={props.firstRun && !showFiles ? undefined : props.onCancel} firstRun={props.firstRun} />
-      {request.preview && <ExactRequest data={request.preview} />}
-    </fieldset>
-    {showFiles ? <fieldset className="sheet setup-form setup-source-review" disabled={actions.pending !== null}>
+  return <form ref={form} className="setup-grid" aria-label="Add workspace" onSubmit={submit}>
+    <div className="sheet setup-form">
+      <SourceFields {...source} invalid={Boolean(sourceError)} pending={pending} />
+      <fieldset className="setup-controls" disabled={pending}>
+        <p className="smallprint setup-cli-status" role="status">{detection.error ? 'Could not check sign-in. Open Advanced options to retry.' :
+          cli ? providerHint(cli) : 'Checking installed CLIs…'}</p>
+        <WorkspaceOptions source={source} depth={depth} provider={provider} detection={detection}
+          onDepth={next => { actions.clearError(); setDepth(next); }}
+          onProvider={next => { actions.clearError(); choose(next); }} onAddOnly={showFiles ? addOnly : undefined} />
+        {signedIn && <TopicReview provider={provider} request={request} />}
+        <SetupFeedback error={sourceError?.message} source onOpenSwitcher={sourceError?.duplicate ? props.onOpenSwitcher : undefined}
+          onRetry={inventoryError && !inventoryError.duplicate && !sourceError?.duplicate
+            ? () => { actions.clearError(); attach.inventory.retry(); } : undefined} />
+        <SetupFeedback error={actions.error?.source ? undefined : actions.error?.message} />
+        <StartActions topic={topic} signedIn={Boolean(request.preview)} blocked={blocked}
+          pending={actions.pending} attach={attach} attachFailed={attachFailed}
+          rememberTutor={request.preview ? () => actions.addOnly(source.kind, source.value, request.preview, true) : undefined}
+          onCancel={props.firstRun && !showFiles ? undefined : props.onCancel} firstRun={props.firstRun} />
+        {request.preview && <ExactRequest data={request.preview} />}
+      </fieldset>
+    </div>
+    {showFiles ? !inventoryError && <fieldset className="sheet setup-form setup-source-review" disabled={pending}>
       <AttachReview inventory={attach.inventory} request={attach.request} depth={depth} provider={provider}
         selected={attach.files.selected} onFiles={paths => { actions.clearError(); attach.files.select(paths); }}
         allowed={attach.allowed} onAlwaysAllow={attach.chooseApproval} />

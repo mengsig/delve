@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace } from '../../shared/domain';
+import { DomainError } from '../../shared/errors';
 import { listChanges, readChange, readChangeDetail, repositorySnapshotPath, repositoryPath } from './source';
 import { listPullRequests } from './github';
 import { openRepositoryHistory } from './history';
@@ -90,6 +91,19 @@ describe('GitHub pull requests', () => {
 });
 
 describe('GitHub explorer', () => {
+  it('shows GitHub login guidance once when both history sources need the CLI', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'delve-history-login-'));
+    try {
+      git.mockResolvedValueOnce({ ...OK, status: 1, diagnostic: 'gh: not found', output: Buffer.alloc(0) });
+      gh.mockRejectedValueOnce(new DomainError('GITHUB_CLI_REQUIRED', 'Install GitHub CLI and run gh auth login.'));
+      const history = await openRepositoryHistory(workspace, root,
+        { workspaceId: workspace.id, cursor: 0, refreshSnapshot: true }, []);
+      const page = await history.advance(() => 1);
+      expect(page.pullStatus).toBe('unavailable');
+      expect(page.warning).toBe('Install GitHub CLI and run gh auth login to read this repository.');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('reads later pull request pages and uses created dates and a head link', async () => {
     gh.mockResolvedValueOnce(json(Array.from({ length: 25 }, (_, i) => ({ ...PULL, number: i + 1 }))))
       .mockResolvedValueOnce(json([PULL]));

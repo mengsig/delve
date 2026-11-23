@@ -38,11 +38,6 @@ interface Props {
 export function AttachReview({ inventory, request, selected, onFiles, depth, provider, allowed, onAlwaysAllow }: Props) {
   const snapshot = inventory.snapshot?.inventory;
   if (inventory.pending) return <p role="status">Reading the repository file list…</p>;
-  if (inventory.error) return <div className="attach-feedback">
-    <p className="setup-error" role="alert">Could not read repository files. {inventory.error}</p>
-    <p className="smallprint">Check the repository source and access, then retry or add it without mapping.</p>
-    {inventory.canRetry && <button type="button" onClick={inventory.retry}>Retry reading files</button>}
-  </div>;
   if (!snapshot) return null;
   if (!snapshot.files.length) return <p role="status">No eligible files in this snapshot. Commit source files to build a map, or add the repository as it is.</p>;
 

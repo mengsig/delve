@@ -8,34 +8,38 @@ import { useTutorJobs } from './reader/TutorJobs';
 import { useMapJobs } from './repository/MapJobs';
 import { setRepositoryApproval } from './repository/repositoryApproval';
 import { errorMessage } from './useRead';
-import { workspaceInput } from './workspaceSource';
+import { SourceError, sourceInput, sourceRejection } from './sourceErrors';
 
 export type WorkspaceAdded = (workspace: Workspace, depth: Depth, conceptId?: number, notice?: string) => void;
 
-function addError(cause: unknown, action: string) {
+interface ActionError { message: string; source: boolean; duplicate?: boolean }
+
+function actionError(cause: unknown, action: 'pick' | 'add' | 'map'): ActionError {
   const message = errorMessage(cause);
   if (cause instanceof IpcCallError && cause.code === 'DUPLICATE_WORKSPACE') {
-    return message + ' Open it from the workspace switcher.';
+    return { message: message + ' Open it from the workspace switcher.', source: true, duplicate: true };
   }
-  if (action === 'pick') return 'Could not choose a folder. ' + message;
-  return (action === 'map' ? 'Could not attach the reviewed map request. ' : 'Could not add the workspace. ') + message;
+  const prefix = action === 'pick' ? 'Could not choose a folder. '
+    : action === 'map' ? 'Could not attach the reviewed map request. ' : 'Could not add the workspace. ';
+  return { message: prefix + message, source: cause instanceof SourceError };
 }
 
 function useWorkspaceActions() {
   const locked = useRef(false);
   const [pending, setPending] = useState<'pick' | 'add' | 'map' | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<ActionError>();
   const [failedToken, setFailedToken] = useState<string>();
 
   async function run(action: NonNullable<typeof pending>, apply: () => Promise<void>, preview?: RepoPreview) {
     if (locked.current) return;
     locked.current = true;
     setPending(action);
-    setError('');
+    setError(current => action !== 'pick' && current?.source ? current : undefined);
     try {
       await apply();
+      setError(undefined);
     } catch (cause) {
-      setError(addError(cause, action));
+      setError(actionError(cause, action));
       if (preview) setFailedToken(preview.token);
     } finally {
       setPending(null);
@@ -43,7 +47,11 @@ function useWorkspaceActions() {
     }
   }
 
-  return { pending, error, failedToken, setError, run, clearError: () => setError('') };
+  return {
+    pending, error, failedToken, run,
+    setError: (message: string) => setError({ message, source: false }),
+    clearError: () => setError(undefined),
+  };
 }
 
 function sameRequest(reviewed: TopicPreview, current: TopicPreview) {
@@ -60,10 +68,11 @@ export function useStartWorkspace(onAdded: WorkspaceAdded, depth: Depth, provide
 
   function addOnly(kind: WorkspaceKind, value: string, reviewed?: TopicPreview, rememberTutor = false) {
     void actions.run('add', async () => {
-      const input = workspaceInput(kind, value);
-      if (input.kind !== 'topic') return onAdded(await call('workspaces:add', input), depth);
+      const input = sourceInput(kind, value);
+      const add = () => call('workspaces:add', input).catch(cause => { throw sourceRejection(cause); });
+      if (input.kind !== 'topic') return onAdded(await add(), depth);
       const saved = incompleteTopic.current;
-      const workspace = saved?.name === input.title ? saved : await call('workspaces:add', input);
+      const workspace = saved?.name === input.title ? saved : await add();
       incompleteTopic.current = workspace;
       const conceptId = await call('reader:start-topic', { workspaceId: workspace.id });
       incompleteTopic.current = null;

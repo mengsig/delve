@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DelveApi } from '../../src/shared/ipc';
-import { test } from './desktop';
+import { hold, test } from './desktop';
 import { withinBudget } from './action-budget';
 
 test.use({ tutorCli: true, firstRun: true });
@@ -193,6 +193,95 @@ test('accepts a folder dropped into the initial repository field and offers a re
     await page.getByRole('button', { name: 'Add and build map' }).click();
     await expect(page.getByLabel('Field guide')).toContainText(concept.title);
   });
+});
+
+test('announces one missing-path source error through preview and repeated submissions', async ({ desktop }) => {
+  const { page, directory, application } = desktop;
+  const source = page.getByRole('textbox', { name: 'Topic or repository' });
+  const form = page.getByRole('form', { name: 'Add workspace' });
+  const alerts = form.getByRole('alert');
+  const release = await hold(application, 'workspaces:add');
+  await source.fill(join(directory, 'absent'));
+  await expect(alerts).toContainText('Could not read repository files.');
+  await expect.soft(source).toHaveAttribute('aria-invalid', 'true', { timeout: 2000 });
+  await expect.soft(source).toHaveAttribute('aria-describedby', 'source-hint setup-error', { timeout: 2000 });
+  await expect(source).toBeFocused();
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await source.press('Enter');
+    await expect(form.getByRole('button', { name: 'Opening…' })).toBeDisabled();
+    await release.evaluate(resume => resume());
+    await expect(form.getByRole('button', { name: 'Add to atlas →' })).toBeEnabled();
+    await expect(alerts.filter({ hasText: 'Could not add the workspace.' })).toContainText('does not exist');
+    await expect.soft(alerts).toHaveCount(1, { timeout: 2000 });
+    await expect(source).toHaveAttribute('aria-invalid', 'true');
+    await expect(source).toHaveAttribute('aria-describedby', 'source-hint setup-error');
+    await expect(source).toBeFocused();
+  }
+
+  await source.fill('');
+  await expect(alerts).toHaveCount(0);
+  await expect(source).not.toHaveAttribute('aria-invalid');
+  await expect(source).toHaveAttribute('aria-describedby', 'source-hint');
+});
+
+test('keeps the source focused and offers one switcher action when a mapped repository is added again', async ({ desktop }) => {
+  const { page, directory, application } = desktop;
+  const { repo } = createRepository(directory);
+  const source = page.getByRole('textbox', { name: 'Topic or repository' });
+  await source.fill(repo);
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify({ ...graph, schema: 'delve.map/1' }));
+  await page.getByRole('button', { name: 'Add and build map' }).click();
+  await expect(page.getByLabel('Field guide')).toContainText(concept.title);
+  await page.getByRole('button', { name: 'Add a workspace', exact: true }).click();
+  await source.fill(repo);
+  const form = page.getByRole('form', { name: 'Add workspace' });
+  const alerts = form.getByRole('alert');
+  const switcher = form.getByRole('button', { name: 'Open workspace switcher', exact: true });
+  await expect(alerts).toContainText('already in your workspace switcher');
+  await expect.soft(source).toHaveAttribute('aria-invalid', 'true', { timeout: 1500 });
+  await expect.soft(source).toHaveAttribute('aria-describedby', 'source-hint setup-error', { timeout: 1500 });
+  await expect.soft(switcher).toHaveCount(1, { timeout: 1500 });
+  await source.evaluate(input => input.addEventListener('blur', () => input.setAttribute('data-left-source', 'true')));
+  const release = await hold(application, 'workspaces:add');
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await source.press('Enter');
+    await expect(form.getByRole('button', { name: 'Opening…' })).toBeDisabled();
+    await expect.soft(source).toBeFocused({ timeout: 1000 });
+    await release.evaluate(resume => resume());
+    await expect(form.getByRole('button', { name: 'Add to atlas →' })).toBeEnabled();
+    await expect(alerts.filter({ hasText: 'Open it from the workspace switcher.' })).toBeVisible();
+    await expect.soft(alerts).toHaveCount(1, { timeout: 2000 });
+    await expect.soft(source).toBeFocused({ timeout: 2000 });
+    await expect.soft(source).not.toHaveAttribute('data-left-source', { timeout: 2000 });
+    await expect.soft(source).toHaveAttribute('aria-invalid', 'true', { timeout: 1500 });
+    await expect.soft(source).toHaveAttribute('aria-describedby', 'source-hint setup-error', { timeout: 1500 });
+    await expect(switcher).toHaveCount(1);
+  }
+
+  await switcher.click();
+  await expect(page.getByRole('dialog', { name: 'Go to…' })).toBeVisible();
+});
+
+test('leaves focus and source validity alone when attaching the reviewed map request fails', async ({ desktop }) => {
+  const { page, application, directory } = desktop;
+  const { repo } = createRepository(directory);
+  await application.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('repo:attach');
+    // A source-like code proves the attach action, not the code, decides whether the source is blamed.
+    ipcMain.handle('repo:attach', async () => ({ ok: false, error: { code: 'INVALID_REQUEST', message: 'The reviewed request expired.' } }));
+  });
+  const source = page.locator('#source-input');
+  await source.fill(repo);
+  await page.getByRole('button', { name: 'Add and build map' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Could not attach the reviewed map request. The reviewed request expired.');
+  await expect(page.getByRole('button', { name: 'Review request again' })).toBeVisible();
+  await expect(source).not.toBeFocused();
+  await expect(source).not.toHaveAttribute('aria-invalid');
+  await expect(source).toHaveAttribute('aria-describedby', 'source-hint');
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  expect(existsSync(join(directory, 'request.json'))).toBe(false);
 });
 
 test('opens a readable history boundary with partial coverage and names the missing parent', async ({ desktop }, info) => {

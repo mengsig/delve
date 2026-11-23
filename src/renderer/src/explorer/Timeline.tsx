@@ -11,6 +11,7 @@ interface TimelineProps {
   workspaceId: string;
   selected?: ChangeRef;
   onSelect: (node: ChangeRef, title?: string) => void;
+  onClear: () => void;
   onOpen?: () => void;
   onRefresh?: () => void;
 }
@@ -104,16 +105,17 @@ function TimelineFeedback({ history, filters, onRefresh }: { history: ReturnType
 
 interface ResultProps extends TimelineProps {
   filters: HistoryFilters;
+  pendingFilters: boolean;
   view: AtlasView;
   onBranches: (branches: string[]) => void;
   onInitialNode: (node: HistoryNode) => void;
 }
 
-function TimelineResults({ workspaceId, selected, onSelect, onOpen, onRefresh, filters, view, onBranches, onInitialNode }: ResultProps) {
+function TimelineResults({ workspaceId, selected, onSelect, onOpen, onRefresh, filters, pendingFilters, view, onBranches, onInitialNode }: ResultProps) {
   const query = JSON.stringify(filters);
   const history = useHistory(workspaceId, filters, query);
   const { page } = history;
-  const nodes = page?.nodes ?? noNodes;
+  const nodes = pendingFilters ? noNodes : page?.nodes ?? noNodes;
   const branches = page?.branches;
   const latest = nodes[0];
   const more = page?.next != null;
@@ -125,10 +127,13 @@ function TimelineResults({ workspaceId, selected, onSelect, onOpen, onRefresh, f
   }, [onBranches, branches, onInitialNode, latest]);
 
   return <>
-    {page && <HistoryNotice page={page} />}
-    <HistoryViewport query={query} nodes={nodes} layout={layout} selected={selected} more={more}
-      loadMore={history.loadMore} onSelect={onSelect} onOpen={onOpen} />
-    <TimelineFeedback history={history} filters={filters} onRefresh={onRefresh} />
+    {pendingFilters ? <p className="timeline-message" role="status">Updating history…</p>
+      : <>
+        {page && <HistoryNotice page={page} />}
+        <HistoryViewport query={query} nodes={nodes} layout={layout} selected={selected} more={more}
+          loadMore={history.loadMore} onSelect={onSelect} onOpen={onOpen} />
+        <TimelineFeedback history={history} filters={filters} onRefresh={onRefresh} />
+      </>}
   </>;
 }
 
@@ -153,8 +158,11 @@ function WorkspaceTimeline(props: TimelineProps) {
   }, [onSelect, selected]);
 
   return <section className="timeline" aria-labelledby="change-timeline-label">
-    <TimelineControls draft={draft} branches={branches} view={view} onChange={setDraft} onView={setView} />
-    <TimelineResults {...props} filters={filters} view={view}
+    <TimelineControls draft={draft} branches={branches} view={view} onChange={next => {
+      setDraft(next);
+      if (selected) props.onClear();
+    }} onView={setView} />
+    <TimelineResults {...props} filters={filters} pendingFilters={draft.search.trim() !== search || draft.author.trim() !== author} view={view}
       onBranches={setBranches} onInitialNode={initialNode} />
   </section>;
 }
