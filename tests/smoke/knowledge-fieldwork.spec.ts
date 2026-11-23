@@ -272,7 +272,8 @@ test('opens Progress for the mastered path when the active workspace contains on
   await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
   await page.getByLabel('Workspace area').selectOption({ label: 'All workspaces' });
   await expect(page.getByRole('heading', { name: 'Path mastered' })).toBeVisible();
-  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveAttribute('aria-valuetext', '1 of 1');
+  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveAttribute('aria-valuetext', '1 of 2');
+  await expect(page.locator('.knowledge-area-bar')).toContainText('2 concepts');
   await page.getByRole('button', { name: 'View progress' }).click();
   await expect(page.getByRole('heading', { name: 'Your field record.' })).toBeVisible();
   await expect(identity).toHaveText(reviewed.name, { timeout: 2500 });
