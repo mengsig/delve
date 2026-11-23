@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, shortcut } from './desktop';
@@ -76,6 +76,93 @@ test('leaves focus and source validity alone when the workspace is already added
   await expect(source).not.toBeFocused();
   await expect(source).not.toHaveAttribute('aria-invalid');
   await expect(source).toHaveAttribute('aria-describedby', 'source-hint');
+});
+
+type Handler = (event: Electron.IpcMainInvokeEvent, request: unknown) => Promise<unknown>;
+
+// Holds each call on a real IPC channel until released, so input can arrive while the request runs.
+async function hold(application: ElectronApplication, channel: string) {
+  return application.evaluateHandle(({ ipcMain }, name) => {
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Handler> })._invokeHandlers;
+    const original = handlers.get(name);
+    if (!original) throw new Error(`The desktop ${name} handler must be installed.`);
+    const waiting: (() => void)[] = [];
+    ipcMain.removeHandler(name);
+    ipcMain.handle(name, async (event, request) => {
+      await new Promise<void>(resolve => { waiting.push(resolve); setTimeout(resolve, 10_000); });
+      return original(event, request);
+    });
+    return () => { for (const resume of waiting.splice(0)) resume(); };
+  }, channel);
+}
+
+async function failChannel(application: ElectronApplication, channel: string, message: string) {
+  await application.evaluate(({ ipcMain }, { name, text }) => {
+    ipcMain.removeHandler(name);
+    // A source-like code proves the failing action, not the code, decides whether the source is blamed.
+    ipcMain.handle(name, async () => ({ ok: false, error: { code: 'INVALID_REQUEST', message: text } }));
+  }, { name: channel, text: message });
+}
+
+function focusedId(page: Page) {
+  return page.evaluate(() => document.activeElement === document.body ? 'body' : document.activeElement?.id || document.activeElement?.textContent);
+}
+
+async function expectUnmarked(source: Locator) {
+  await expect(source).not.toBeFocused();
+  await expect(source).not.toHaveAttribute('aria-invalid');
+  await expect(source).toHaveAttribute('aria-describedby', 'source-hint');
+}
+
+test('keeps focus where the user moved it when a delayed source rejection arrives', async ({ desktop }) => {
+  const { page, application, directory } = desktop;
+  const release = await hold(application, 'workspaces:add');
+  const source = page.getByLabel('Topic or repository');
+  const submit = page.getByRole('button', { name: /Add to atlas →|Opening…/ });
+  const opener = page.locator('header').getByRole('button', { name: 'Switch workspace', exact: true });
+  await add(page, directory);
+  await expect(page.getByRole('button', { name: 'Opening…' })).toBeDisabled();
+  await opener.focus();
+  await release.evaluate(resume => resume());
+  await expect(page.getByRole('alert')).toContainText('not a Git repository');
+  await expect(source).toHaveAttribute('aria-invalid', 'true');
+  await expect(opener).toBeFocused();
+  await expect(source).not.toBeFocused();
+
+  await submit.click();
+  await expect(page.getByRole('button', { name: 'Opening…' })).toBeDisabled();
+  await expect(source).not.toHaveAttribute('aria-invalid');
+  // A press on plain header text moves focus to the page without a focusin, so only the press reveals the move.
+  await page.locator('header').getByText('Workspace setup', { exact: true }).click();
+  expect(await focusedId(page)).toBe('body');
+  await release.evaluate(resume => resume());
+  await expect(page.getByRole('alert')).toContainText('not a Git repository');
+  await expect(source).toHaveAttribute('aria-invalid', 'true');
+  expect(await focusedId(page)).toBe('body');
+  await expect(source).not.toBeFocused();
+});
+
+test('leaves focus and source validity alone when the folder picker or a drop fails', async ({ desktop }) => {
+  const { page, application } = desktop;
+  await failChannel(application, 'workspaces:pick-folder', 'The folder dialog is unavailable.');
+  await page.getByRole('button', { name: 'Add a workspace', exact: true }).click();
+  const source = page.getByLabel('Topic or repository');
+  await expect(source).toBeFocused();
+  await page.getByRole('button', { name: 'Choose folder…' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Could not choose a folder. The folder dialog is unavailable.');
+  await expectUnmarked(source);
+  expect(['body', 'Choose folder…']).toContain(await focusedId(page));
+
+  const cancel = page.getByRole('button', { name: 'Cancel', exact: true });
+  await cancel.focus();
+  await page.locator('.source-control').evaluate(control => {
+    const data = new DataTransfer();
+    data.setData('text/plain', 'not a repository');
+    control.dispatchEvent(new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByRole('alert')).toContainText('Could not read that drop.');
+  await expectUnmarked(source);
+  await expect(cancel).toBeFocused();
 });
 
 test('switcher supports filtering, keyboard navigation, cancellation and focus restoration', async ({ desktop }) => {

@@ -195,6 +195,26 @@ test('accepts a folder dropped into the initial repository field and offers a re
   });
 });
 
+test('leaves focus and source validity alone when attaching the reviewed map request fails', async ({ desktop }) => {
+  const { page, application, directory } = desktop;
+  const { repo } = createRepository(directory);
+  await application.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('repo:attach');
+    // A source-like code proves the attach action, not the code, decides whether the source is blamed.
+    ipcMain.handle('repo:attach', async () => ({ ok: false, error: { code: 'INVALID_REQUEST', message: 'The reviewed request expired.' } }));
+  });
+  const source = page.locator('#source-input');
+  await source.fill(repo);
+  await page.getByRole('button', { name: 'Add and build map' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Could not attach the reviewed map request. The reviewed request expired.');
+  await expect(page.getByRole('button', { name: 'Review request again' })).toBeVisible();
+  await expect(source).not.toBeFocused();
+  await expect(source).not.toHaveAttribute('aria-invalid');
+  await expect(source).toHaveAttribute('aria-describedby', 'source-hint');
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  expect(existsSync(join(directory, 'request.json'))).toBe(false);
+});
+
 test('opens a readable history boundary with partial coverage and names the missing parent', async ({ desktop }, info) => {
   const { repo, head } = createRepository(desktop.directory);
   await desktop.page.evaluate(async path => {

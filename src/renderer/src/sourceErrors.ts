@@ -28,8 +28,11 @@ export function sourceRejection(cause: unknown): unknown {
   return new SourceError(cause.message, { cause });
 }
 
-/** Restores focus only when it was lost to the disabled form or is still on the source. */
-export function shouldFocusSource(active: Element | null, body: Element, source: Element | null) {
-  if (!source) return false;
-  return active === null || active === body || active === source;
+/** What happened to focus between submitting the form and the request settling. */
+export interface FocusWatch { start: Element | null; moved: boolean }
+
+/** Restores focus only if the user did not move it while the request ran and it still sits where submit left it. */
+export function shouldFocusSource(watch: FocusWatch | null, active: Element | null, body: Element, source: Element | null) {
+  if (!source || watch?.moved) return false;
+  return active === null || active === body || active === source || (watch !== null && active === watch.start);
 }

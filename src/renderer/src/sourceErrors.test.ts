@@ -27,16 +27,22 @@ describe('setup source errors', () => {
 describe('source error focus', () => {
   const body = { id: 'body' } as unknown as Element;
   const source = { id: 'source-input' } as unknown as Element;
+  const submit = { id: 'submit' } as unknown as Element;
+  const still = { start: submit, moved: false };
 
-  it('restores focus lost to the disabled form, or kept on the source', () => {
-    expect(shouldFocusSource(body, body, source)).toBe(true);
-    expect(shouldFocusSource(null, body, source)).toBe(true);
-    expect(shouldFocusSource(source, body, source)).toBe(true);
+  it('restores focus lost to the disabled form, kept on the source, or left where submit put it', () => {
+    expect(shouldFocusSource(still, body, body, source)).toBe(true);
+    expect(shouldFocusSource(still, null, body, source)).toBe(true);
+    expect(shouldFocusSource(still, source, body, source)).toBe(true);
+    expect(shouldFocusSource(still, submit, body, source)).toBe(true);
+    expect(shouldFocusSource(null, body, body, source)).toBe(true);
   });
 
-  it('never takes focus from an element the user moved to', () => {
+  it('never takes focus once the user moved it during the request, even back to the page', () => {
     const advanced = { id: 'advanced-options' } as unknown as Element;
-    expect(shouldFocusSource(advanced, body, source)).toBe(false);
-    expect(shouldFocusSource(body, body, null)).toBe(false);
+    expect(shouldFocusSource({ start: submit, moved: true }, body, body, source)).toBe(false);
+    expect(shouldFocusSource(still, advanced, body, source)).toBe(false);
+    expect(shouldFocusSource(null, advanced, body, source)).toBe(false);
+    expect(shouldFocusSource(still, body, body, null)).toBe(false);
   });
 });
