@@ -75,3 +75,21 @@ export const test = base.extend<{ desktop: Desktop; tutorCli: boolean; firstRun:
 });
 
 export const shortcut = process.platform === 'darwin' ? 'Meta+K' : 'Control+K';
+
+type Handler = (event: Electron.IpcMainInvokeEvent, request: unknown) => Promise<unknown>;
+
+// Holds each call on a real IPC channel until released, so input can arrive while the request runs.
+export async function hold(application: ElectronApplication, channel: string) {
+  return application.evaluateHandle(({ ipcMain }, name) => {
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Handler> })._invokeHandlers;
+    const original = handlers.get(name);
+    if (!original) throw new Error(`The desktop ${name} handler must be installed.`);
+    const waiting: (() => void)[] = [];
+    ipcMain.removeHandler(name);
+    ipcMain.handle(name, async (event, request) => {
+      await new Promise<void>(resolve => { waiting.push(resolve); setTimeout(resolve, 10_000); });
+      return original(event, request);
+    });
+    return () => { for (const resume of waiting.splice(0)) resume(); };
+  }, channel);
+}

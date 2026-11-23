@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Depth, ProviderId, ProviderStatus } from '../../../shared/domain';
 import type { RepositoryInventory, RepoRequest } from '../../../shared/repository';
-import { call } from '../api';
+import { call, IpcCallError } from '../api';
 import { errorMessage } from '../useRead';
 import type { RepositoryInput } from '../workspaceSource';
 import { defaultFiles, retainFiles } from './fileSelection';
 
-type ReadResult<T> = { status: 'ready'; value: T } | { status: 'error'; message: string };
+type ReadResult<T> = { status: 'ready'; value: T } | { status: 'error'; cause: unknown };
 
 function useAttachRead<T>(read: (() => Promise<T>) | undefined, enabled: boolean, delay: number) {
   const [version, setVersion] = useState(0);
@@ -19,7 +19,7 @@ function useAttachRead<T>(read: (() => Promise<T>) | undefined, enabled: boolean
     const timer = window.setTimeout(() => {
       void read().then(
         value => { if (current) setSettled({ read, version, result: { status: 'ready', value } }); },
-        cause => { if (current) setSettled({ read, version, result: { status: 'error', message: errorMessage(cause) } }); },
+        cause => { if (current) setSettled({ read, version, result: { status: 'error', cause } }); },
       );
     }, delay);
     return () => { current = false; window.clearTimeout(timer); };
@@ -32,9 +32,16 @@ export function useAttachInventory(source: RepositoryInput | undefined, cli: Pro
   const enabled = cli?.state === 'signed-in';
   const read = useMemo(() => source && (() => call('repo:stage', { source })), [source]);
   const { result, retry } = useAttachRead(read, enabled, 450);
+  let error: { message: string; duplicate: boolean } | undefined;
+  if (enabled && result?.status === 'error') {
+    const { cause } = result;
+    const duplicate = cause instanceof IpcCallError && cause.code === 'DUPLICATE_WORKSPACE';
+    const message = errorMessage(cause);
+    error = { message: duplicate ? message : 'Could not read repository files. ' + message, duplicate };
+  }
   return {
     snapshot: result?.status === 'ready' ? result.value : undefined,
-    error: result?.status === 'error' ? result.message : undefined,
+    error,
     pending: Boolean(source && enabled && !result),
     retry,
     canRetry: enabled,
@@ -75,7 +82,7 @@ export function useAttachPreview(
   const { result, retry } = useAttachRead(read, true, 250);
   return {
     preview: result?.status === 'ready' ? result.value : undefined,
-    error: result?.status === 'error' ? result.message : undefined,
+    error: result?.status === 'error' ? errorMessage(result.cause) : undefined,
     pending: Boolean(read && !result),
     retry,
   };
