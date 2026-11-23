@@ -93,8 +93,10 @@ The demo tutor runs entirely offline. The Archon demo includes an illustrative b
 
 ## Global knowledge
 
-Portable concepts can carry verified understanding and lessons across repositories at the same depth.
-A shared provider key or recognized alias must also have a compatible description; a title alone
+Portable concepts can carry verified understanding across repositories at the same depth.
+Generated lessons stay bound to their workspace and snapshot; workspace-independent lessons can be reused.
+A shared provider key or recognized alias must also have a matching description (ignoring case, Unicode
+normalization, and whitespace); a title alone
 does not establish identity. Ambiguous concepts remain scoped to their repository. Older profiles
 are migrated conservatively, retaining their original evidence when descriptions do not agree.
 

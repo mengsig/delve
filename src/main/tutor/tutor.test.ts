@@ -311,6 +311,21 @@ it.each([
   expect(await session.wait(id)).toMatchObject({ blocks: expect.arrayContaining([explanation]) });
 });
 
+it('reports an out-of-range stored concept id without blocking valid jobs', async () => {
+  const workspaceId = addWorkspace(db, { kind: 'topic', title: 'Other unsafe workspace' }).id;
+  db.exec(`INSERT INTO concepts (id,key,title,summary,portable,workspace_id,created_at,updated_at)
+    VALUES (9007199254740992,'unsafe','Unsafe','',1,NULL,'t','t')`);
+  db.prepare('INSERT INTO workspace_concepts (workspace_id, concept_id) VALUES (?, 9007199254740992)').run(workspaceId);
+  db.prepare(`INSERT INTO tutor_jobs (id,workspace_id,concept_id,depth,token,detail,phase)
+    VALUES (?, ?, 9007199254740992, 'low', ?, ?, 'ready')`)
+    .run(randomUUID(), workspaceId, 'a'.repeat(64), JSON.stringify({ title: 'Unsafe', provider: 'codex', intent: { kind: 'teach' } }));
+  const id = randomUUID();
+  const { token } = prepareTurn(db, request).preview;
+  await session.run({ ...request, token, requestId: id });
+  expect(session.jobs()).toMatchObject([{ phase: 'unreadable' }, { id, phase: 'ready' }]);
+  expect(await session.wait(id)).toMatchObject({ blocks: expect.arrayContaining([explanation]) });
+});
+
 it('the offline provider reteaches a miss, offers fresh applied checks and recommends a path after understanding', async () => {
   seedDemoWorkspaces(db);
   session = new TutorSession(db);

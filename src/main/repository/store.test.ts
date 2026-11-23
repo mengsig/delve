@@ -261,3 +261,39 @@ it('keeps a conflicting meaning of a portable title local without inherited evid
   expect(readWorkspaceCoverage(db).find(item => item.workspaceId === workspaceId)).toMatchObject({ total: 1 });
   expect(readLesson(db, { workspaceId, conceptId: graph.concepts[0]!.id, depth: 'medium' }).reused).toBe(false);
 });
+
+it.each([true, false])('keeps conflicting regenerated migrated concepts separate (portable=%s)', portable => {
+  const summary = 'A collection that processes queued jobs in first in first out order.';
+  const conflict = 'A collection that processes queued jobs in last in first out order.';
+  const canonical = upsertConcept(db, { key: 'queues', title: 'Queue', summary, portable: true, workspaceId });
+  const legacy = upsertConcept(db, { key: 'queue', title: 'Queue', summary, portable: false, workspaceId });
+  db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, portable_concept_id) VALUES (?, ?)').run(legacy.id, canonical.id);
+  recordEvidence(db, { workspaceId, conceptId: canonical.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [{ key: 'queue', title: 'Queue', summary: conflict, portable }],
+    edges: [], recommendation: { key: 'queue', reason: 'Study the queue.' } });
+  persistGeneration(db, source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline), proposal);
+  const graph = readWorkspaceGraph(db, workspaceId);
+  const scoped = graph.concepts.find(concept => concept.summary === conflict)!;
+  expect(scoped).toMatchObject({ portable: false, title: 'Queue' });
+  expect(scoped.id).not.toBe(legacy.id);
+  expect(graph.evidence.some(item => item.conceptId === scoped.id)).toBe(false);
+  expect(db.prepare('SELECT summary FROM concepts WHERE id = ?').get(legacy.id)?.summary).toBe(summary);
+  expect(readLesson(db, { workspaceId, conceptId: scoped.id, depth: 'medium' }).reused).toBe(false);
+});
+
+it('scopes portable dependents of an ambiguous prerequisite and preserves the edges', () => {
+  upsertConcept(db, { key: 'queue', title: 'Queue', summary: 'First in first out ordering', portable: true, workspaceId });
+  const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [
+    { key: 'queue', title: 'Queue', summary: 'Last in first out ordering', portable: true },
+    { key: 'dependent', title: 'Consumer', summary: 'Consumes queued jobs', portable: true },
+    { key: 'top', title: 'Pipeline', summary: 'Processes queued jobs', portable: true },
+  ], edges: [{ concept: 'dependent', prerequisite: 'queue' }, { concept: 'top', prerequisite: 'dependent' }],
+  recommendation: { key: 'queue', reason: 'Start here.' } });
+  persistGeneration(db, source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline), proposal);
+  const graph = readWorkspaceGraph(db, workspaceId);
+  const ids = Object.fromEntries(graph.concepts.filter(concept => !concept.portable).map(concept => [concept.title, concept.id]));
+  expect(Object.keys(ids)).toEqual(expect.arrayContaining(['Queue', 'Consumer', 'Pipeline']));
+  expect(graph.edges).toEqual(expect.arrayContaining([
+    { conceptId: ids.Consumer, prerequisiteId: ids.Queue }, { conceptId: ids.Pipeline, prerequisiteId: ids.Consumer },
+  ]));
+});

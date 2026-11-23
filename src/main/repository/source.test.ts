@@ -205,7 +205,6 @@ describe('Git change read boundaries', () => {
   });
 });
 
-describe('repository explorer damaged and shallow history', () => {
   it.each([{ count: 'one parent', missingIds: ['a'] }, { count: 'two parents', missingIds: ['a', 'b'] }])(
     'keeps readable commits in order when a merge is missing $count', async ({ missingIds }) => {
       const base = commit('Base', '--allow-empty');
@@ -262,6 +261,37 @@ describe('repository explorer damaged and shallow history', () => {
     expect(pages.at(-1)?.warning).toContain(missing);
   }, 30_000);
 
+  it('continues byte-limited pages after a repaired missing-parent merge', async () => {
+    let parent = commit('Oldest', '--allow-empty');
+    const expected = [parent];
+    const tree = git('rev-parse', `${parent}^{tree}`);
+    for (let i = 0; i < 4; i++) {
+      const object = `tree ${tree}\nparent ${parent}\nauthor Fixture User <fixture@example.invalid> 1700000000 +0000\n`
+        + `committer Fixture User <fixture@example.invalid> 1700000000 +0000\n\nLarge ${i} ${'x'.repeat(800 * 1024)}\n`;
+      parent = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'],
+        { input: object, encoding: 'utf8' }).trim();
+      expected.unshift(parent);
+    }
+    const missing = 'd'.repeat(40);
+    const object = `tree ${tree}\nparent ${missing}\nparent ${parent}\nauthor Fixture User <fixture@example.invalid> 1700000000 +0000\n`
+      + 'committer Fixture User <fixture@example.invalid> 1700000000 +0000\n\nBoundary\n';
+    const boundary = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'],
+      { input: object, encoding: 'utf8' }).trim();
+    git('update-ref', 'refs/heads/main', boundary);
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const pages = [];
+    let next: number | null = 0;
+    while (next !== null && pages.length < 6) {
+      const page = await history.advance(() => pages.length + 1);
+      pages.push(page);
+      next = page.next;
+    }
+    expect(next).toBeNull();
+    expect(pages.flatMap(page => page.nodes.map(node => node.ref))).toEqual([boundary, ...expected]);
+    expect(pages[0]?.warning).toContain(missing);
+    expect(pages.length).toBeGreaterThan(1);
+  }, 30_000);
+
   it('keeps available shallow commits and explains how to fetch older history', async () => {
     commit('Older', '--allow-empty');
     const middle = commit('Middle', '--allow-empty');
@@ -276,7 +306,6 @@ describe('repository explorer damaged and shallow history', () => {
     expect(page.warning).toContain('shallow');
     expect(page.warning).toContain('git fetch --unshallow');
   });
-});
 
 describe('repository explorer metadata limits', () => {
   it('stops at an oversized first commit and identifies it', async () => {

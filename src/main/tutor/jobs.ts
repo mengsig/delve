@@ -43,10 +43,13 @@ export function storeTutorJob(db: Db, id: string, turn: PreparedTurn): void {
 }
 
 export function listTutorJobs(db: Db): TutorJobEntry[] {
-  const rows = db.prepare('SELECT *, CAST(rowid AS TEXT) AS row_key FROM tutor_jobs ORDER BY rowid').all();
+  const rows = db.prepare(`SELECT id, token, detail, workspace_id, CAST(concept_id AS TEXT) AS concept_id,
+    depth, phase, code, message, CAST(rowid AS TEXT) AS row_key FROM tutor_jobs ORDER BY rowid`).all();
   return rows.map(row => {
+    const conceptId = typeof row.concept_id === 'string' ? Number(row.concept_id) : NaN;
+    const candidate = Number.isSafeInteger(conceptId) && conceptId > 0 ? { ...row, concept_id: conceptId } : row;
     try {
-      return parseJob(row).job;
+      return parseJob(candidate).job;
     } catch (cause) {
       if (!(cause instanceof z.ZodError || cause instanceof SyntaxError)) throw cause;
       const rowKey = row.row_key;

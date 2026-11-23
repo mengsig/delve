@@ -317,3 +317,21 @@ it('does not merge conflicting known aliases when upgrading a v0.1.0 schema-5 pr
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   } finally { db.close(); }
 });
+
+it('does not merge opposite high-overlap descriptions into an existing portable concept', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    migrate(db, MIGRATIONS.slice(0, 5));
+    db.exec(`INSERT INTO workspaces (id,kind,name,source,created_at) VALUES ('a','git','A','/a','t'), ('b','git','B','/b','t');
+      INSERT INTO concepts (id,key,title,summary,portable,workspace_id,created_at,updated_at) VALUES
+      (1,'queues','Queue','A collection that processes queued jobs in first in first out order.',1,NULL,'t','t'),
+      (2,'ws/b/queue','Queue','A collection that processes queued jobs in last in first out order.',0,'b','t','t');
+      INSERT INTO workspace_concepts (workspace_id,concept_id) VALUES ('a',1),('b',2);
+      INSERT INTO evidence (concept_id,depth,status,source,note,workspace_id,recorded_at) VALUES
+      (1,'medium','demonstrated','check','FIFO proof','a','t');`);
+    migrate(db);
+    expect(db.prepare('SELECT * FROM concept_identity_links').all()).toEqual([]);
+    expect(readWorkspaceGraph(db, 'b').evidence).toEqual([]);
+    expect(readWorkspaceGraph(db, 'b').concepts.map(concept => concept.id)).toEqual([2]);
+  } finally { db.close(); }
+});

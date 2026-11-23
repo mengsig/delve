@@ -14,6 +14,7 @@ import { bindConceptSpans } from './concept-spans';
 import { cacheModel, selectModel } from '../providers/model';
 import { baselineReply, type ChangeReply, type GraphProposal } from './schemas';
 import { portableConceptLookup } from './portable-concepts';
+import { compatibleDescriptions } from '../db/portable-identity';
 
 export interface ApprovedSource {
   request: RepoRequest;
@@ -30,17 +31,63 @@ export function digest(value: unknown): string {
 
 function invalid(message: string): never { throw new DomainError('INVALID_PROPOSAL', message + ' Retry the request.'); }
 
+type ProposalConcept = GraphProposal['concepts'][number];
+type ResolvedConcept = ProposalConcept & { concept: Concept | null };
+
+function scopedProposal(db: Db, workspaceId: string, input: ProposalConcept): ResolvedConcept {
+  const key = 'ambiguous/' + digest([input.key.trim().toLowerCase(), input.title, input.summary]);
+  const concept = getConceptByKey(db, conceptStorageKey(key, false, workspaceId));
+  return { ...input, key, portable: false, concept };
+}
+
 function proposalConceptLookup(db: Db, workspaceId: string) {
   const portable = portableConceptLookup(db);
   const alias = db.prepare(`SELECT c.key FROM concept_identity_links link JOIN concepts c ON c.id = link.portable_concept_id
     WHERE link.legacy_concept_id = ?`);
-  return (input: GraphProposal['concepts'][number]) => {
-    if (input.portable) return { ...input, ...portable(input.key, input.title, input.summary) };
+  return (input: ProposalConcept): ResolvedConcept => {
     const local = getConceptByKey(db, conceptStorageKey(input.key, false, workspaceId));
-    const canonical = local && alias.get(local.id);
-    if (typeof canonical?.key === 'string') return { ...input, key: canonical.key, concept: getConceptByKey(db, canonical.key), portable: true };
+    const linked = local && alias.get(local.id);
+    if (typeof linked?.key === 'string') {
+      const canonical = getConceptByKey(db, linked.key);
+      assert.ok(canonical?.portable, 'a migrated identity must point to a portable concept');
+      if (compatibleDescriptions(input.summary, canonical.summary)) {
+        return { ...input, key: canonical.key, concept: canonical, portable: true };
+      }
+      return scopedProposal(db, workspaceId, input);
+    }
+    if (input.portable) {
+      const resolved = portable(input.key, input.title, input.summary);
+      return resolved.portable ? { ...input, ...resolved } : scopedProposal(db, workspaceId, input);
+    }
     return { ...input, concept: local };
   };
+}
+
+function resolveBaselineConcepts(db: Db, workspaceId: string, proposal: Extract<GraphProposal, {schema: 'delve.map/1'}>) {
+  const lookup = proposalConceptLookup(db, workspaceId);
+  const resolved = new Map<string, ResolvedConcept>();
+  const dependents = new Map<string, string[]>();
+  const inputs = new Map(proposal.concepts.map(input => [input.key, input]));
+  for (const input of proposal.concepts) {
+    if (resolved.has(input.key)) invalid('The provider supplied a duplicate concept key.');
+    resolved.set(input.key, lookup(input));
+  }
+  for (const edge of proposal.edges) {
+    if (!resolved.has(edge.concept) || !resolved.has(edge.prerequisite)) invalid('A prerequisite refers to a concept outside this proposal.');
+    const entries = dependents.get(edge.prerequisite) ?? [];
+    entries.push(edge.concept);
+    dependents.set(edge.prerequisite, entries);
+  }
+  const local = [...resolved].filter(([, concept]) => !concept.portable).map(([key]) => key);
+  for (let i = 0; i < local.length; i++) {
+    for (const key of dependents.get(local[i]!) ?? []) {
+      const concept = resolved.get(key)!;
+      if (!concept.portable) continue;
+      resolved.set(key, scopedProposal(db, workspaceId, inputs.get(key)!));
+      local.push(key);
+    }
+  }
+  return resolved;
 }
 
 function bindChangeConcepts(db: Db, source: ApprovedSource, snapshotId: number, reply: ChangeReply) {
@@ -75,11 +122,11 @@ function mergeBaseline(db: Db, workspaceId: string, snapshotId: number, proposal
   assert.ok(db.isTransaction);
   const mapped = new Map<string, Concept>();
   const bind = db.prepare('INSERT OR IGNORE INTO snapshot_concepts (snapshot_id, concept_id) VALUES (?, ?)');
-  const lookup = proposalConceptLookup(db, workspaceId);
+  const resolvedConcepts = resolveBaselineConcepts(db, workspaceId, proposal);
   const migrated = new Set<string>();
   for (const input of proposal.concepts) {
     if (mapped.has(input.key)) invalid('The provider supplied a duplicate concept key.');
-    const { concept: existing, ...resolved } = lookup(input);
+    const { concept: existing, ...resolved } = resolvedConcepts.get(input.key)!;
     const canonical = resolved.portable ? existing : null;
     if (!input.portable && resolved.portable) migrated.add(input.key);
     const concept = upsertConceptInTransaction(db, { ...resolved, workspaceId,

@@ -194,7 +194,7 @@ async function readGitHistoryBatch(reader: GitReader, tips: string[], labels: Ma
   const gaps = boundaries.size ? nodes.filter(node => boundaries.has(node.ref)) : [];
   if (gaps.length > 0) {
     const restored = nodes.map(node => (boundaries.has(node.ref) ? { ...node, parents: boundaries.get(node.ref)!.parents } : node));
-    return { nodes: restored, next: history.length > COMMIT_BATCH ? skip + nodes.length : null, warning: gapWarning(boundaries, gaps) };
+    return { nodes: restored, next: log.truncated || history.length > COMMIT_BATCH ? skip + nodes.length : null, warning: gapWarning(boundaries, gaps) };
   }
   if (!log.truncated && log.status !== 0) {
     const missing = unreadableObject(log.diagnostic);
