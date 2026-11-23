@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { HistoryNode } from '../../shared/explorer';
 import { DomainError } from '../../shared/errors';
 import { changeTitle, gitReader, nulRecords, type GitReader } from './git-reader';
-import { OBJECT_ID, safeBranch, safeAuthor } from './source-policy';
+import { OBJECT_ID, safeBranch, safeAuthor, sourceText } from './source-policy';
 import { completedOutput, type CommandResult } from './source-process';
 
 const COMMIT_BATCH = 32;
@@ -146,27 +146,34 @@ function unreadableWarning(id: string) {
   return `Git commit ${id} is missing or damaged. Run git fsck to check the repository. You may need to restore the commit from a healthy copy.`;
 }
 
+function fatalTipObject(diagnostic: string): string | undefined {
+  const fatal = diagnostic.split('\n').findLast(line => line.startsWith('fatal: ')) ?? '';
+  const id = /^fatal: (?:loose|packed) object ([a-f0-9]+) \(stored in .+\) is corrupt$/i.exec(fatal)?.[1]
+    ?? /^fatal: (?:bad object|could not read|could not parse|cannot read commit object|failed to read object) ([a-f0-9]+)$/i.exec(fatal)?.[1];
+  const object = id?.toLowerCase();
+  return object && OBJECT_ID.test(object) ? object : undefined;
+}
+
 async function readableTips(reader: GitReader, tips: string[]) {
   assert.ok(tips.length > 0 && tips.length <= MAX_BRANCHES + 1);
   assert.ok(tips.every(tip => OBJECT_ID.test(tip)));
-  const pending = [tips];
+  const pending = new Set(tips);
   const readable = new Set<string>();
-  while (pending.length > 0) {
-    const batch = pending.pop()!;
-    const log = await reader.run([...LOG, '--no-walk=unsorted', '--ignore-missing', '--format=%H', ...batch, '--'], 256 * 1024);
+  while (pending.size > 0) {
+    const log = await reader.run([...LOG, '--no-walk=unsorted', '--ignore-missing', '--format=%H', ...pending, '--'], 256 * 1024);
     if (log.truncated || log.status !== 0) {
-      // Git can abort on corrupt object storage even with --ignore-missing.
-      if (batch.length > 1) {
-        const middle = Math.floor(batch.length / 2);
-        pending.push(batch.slice(0, middle), batch.slice(middle));
-      }
-      continue;
+      const damaged = log.truncated ? undefined : fatalTipObject(log.diagnostic);
+      if (damaged && pending.delete(damaged)) continue;
+      const detail = sourceText(Buffer.from(log.diagnostic))?.replace(/[\p{Cc}\p{Cf}]+/gu, ' ').trim().slice(0, 1024);
+      const message = log.truncated ? 'Git history output exceeded the read limit.' : 'Could not read Git history.';
+      throw new DomainError(log.truncated ? 'SOURCE_LIMIT' : 'SOURCE_READ_FAILED', detail ? `${message} ${detail}` : message);
     }
     const { output } = log;
     assert.ok(output.length === 0 || output.at(-1) === 0);
     const records = nulRecords(output);
-    assert.ok(records.length <= batch.length && records.every(tip => OBJECT_ID.test(tip)));
+    assert.ok(records.length <= pending.size && records.every(tip => OBJECT_ID.test(tip)));
     for (const tip of records) readable.add(tip);
+    break;
   }
   return { tips: tips.filter(tip => readable.has(tip)), skipped: tips.filter(tip => !readable.has(tip)) };
 }

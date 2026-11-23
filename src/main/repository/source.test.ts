@@ -261,18 +261,43 @@ describe('Git change read boundaries', () => {
     expect(pages.at(-1)?.warning).toContain(missing);
   }, 30_000);
 
-  it.each(['missing', 'malformed', 'a corrupt loose object'])('keeps healthy branches when a branch tip is %s', async kind => {
+  it('reports a Git log configuration failure instead of marking healthy tips as damaged', async () => {
+    const base = commit('Base', '--allow-empty');
+    git('branch', 'other', base);
+    const head = commit('Healthy tip', '--allow-empty');
+    git('config', 'log.abbrevCommit', 'invalid');
+
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const page = await history.advance(() => 1);
+    expect(page).toMatchObject({ nodes: [], next: null, warning: expect.stringMatching(/bad boolean config value.*log\.abbrevcommit/i) });
+    expect(page.warning).not.toMatch(/missing or damaged|Skipped|git fsck/);
+    expect(page.warning).not.toContain(head);
+  });
+
+  it('reports a tip probe output limit even when Git emits a corrupt-object diagnostic', async () => {
+    const head = commit('Healthy tip', '--allow-empty');
+    const { gitSource } = sourceProcess;
+    const spy = vi.spyOn(sourceProcess, 'gitSource').mockImplementation((args, options) => args.includes('--no-walk=unsorted')
+      ? Promise.resolve({ status: 0, truncated: true, output: Buffer.alloc(0),
+        diagnostic: `fatal: loose object ${head} (stored in .git/objects/file) is corrupt` })
+      : gitSource(args, options));
+    try {
+      const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+      const page = await history.advance(() => 1);
+      expect(page).toMatchObject({ nodes: [], next: null, warning: expect.stringContaining('exceeded the read limit') });
+      expect(page.warning).not.toMatch(/missing or damaged|Skipped|git fsck/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each(['missing', 'malformed'])('keeps healthy branches when a branch tip is %s', async kind => {
     const base = commit('Base', '--allow-empty');
     const head = commit('Healthy tip', '--allow-empty');
     const damaged = kind === 'malformed'
       ? execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--literally', '--stdin'],
         { input: 'invalid commit\n', encoding: 'utf8' }).trim()
       : 'a'.repeat(head.length);
-    if (kind === 'a corrupt loose object') {
-      const directory = join(repo, '.git', 'objects', damaged.slice(0, 2));
-      await mkdir(directory, { recursive: true });
-      await writeFile(join(directory, damaged.slice(2)), Buffer.from([255, 255, 255, 255]));
-    }
     await writeFile(join(repo, '.git', 'refs', 'heads', 'broken'), damaged + '\n');
     const request = { workspaceId: workspace.id, cursor: 0, kind: 'commit' } as const;
     const history = await openRepositoryHistory(workspace, root, request, []);
@@ -286,6 +311,34 @@ describe('Git change read boundaries', () => {
     expect(filteredPage.nodes).toEqual([]);
     expect(filteredPage.next).toBeNull();
     expect(filteredPage.warning).toContain(damaged);
+  });
+
+  it('retries a corrupt loose tip by removing only the object named by Git', async () => {
+    const base = commit('Base', '--allow-empty');
+    git('switch', '-c', 'other');
+    const other = commit('Healthy other tip', '--allow-empty');
+    git('switch', 'main');
+    const head = commit('Healthy main tip', '--allow-empty');
+    const damaged = 'a'.repeat(head.length);
+    const directory = join(repo, '.git', 'objects', damaged.slice(0, 2));
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, damaged.slice(2)), Buffer.from([255, 255, 255, 255]));
+    await writeFile(join(repo, '.git', 'refs', 'heads', 'broken'), damaged + '\n');
+
+    const spy = vi.spyOn(sourceProcess, 'gitSource');
+    try {
+      const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+      const page = await history.advance(() => 1);
+      expect(page.nodes.map(node => node.ref).sort()).toEqual([head, other, base].sort());
+      expect(page.warning).toBe(`Git commit ${damaged} is missing or damaged. Run git fsck to check the repository. You may need to restore the commit from a healthy copy.`);
+      const probes = spy.mock.calls.map(([args]) => args).filter(args => args.includes('--no-walk=unsorted'));
+      expect(probes.map(args => args.slice(args.indexOf('--format=%H') + 1, -1))).toEqual([[damaged, head, other], [head, other]]);
+
+      const filtered = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit', branch: 'broken' }, []);
+      expect(await filtered.advance(() => 1)).toMatchObject({ nodes: [], next: null, warning: page.warning });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('reports a missing detached HEAD and keeps branch history', async () => {
