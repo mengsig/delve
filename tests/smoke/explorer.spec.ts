@@ -281,6 +281,8 @@ test('keeps one Knowledge node when a PR footprint and brief teach the same idea
     summary: 'The worker can make three delivery attempts.' }] });
   await page.getByRole('button', { name: 'Teach me this change' }).click();
   await expect(page.getByRole('heading', { name: 'How it works', exact: true })).toBeVisible();
+  const request = JSON.parse(readFileSync(join(directory, 'request.json'), 'utf8'));
+  expect(request.stdin).toContain(`"changeConcepts":[{"key":"${newConcept.key}","title":"${plainChangeTitle}"`);
   await verifyChangeKnowledge(page, info, 'pr-knowledge-high-after-low');
 });
 

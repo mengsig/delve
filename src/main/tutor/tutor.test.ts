@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ReaderLesson, TutorIntent, TutorRequest } from '../../shared/reader';
 import { addPrerequisite, upsertConcept } from '../db/concepts';
@@ -35,13 +36,17 @@ const opening: TutorReply = {
   lesson: { schema: 'delve.lesson/1', blocks: [explanation, check] }, assessment: null, recommendation: null, observation: null,
 };
 
+function tutorFixture(database: Db) {
+  const workspaceId = addWorkspace(database, { kind: 'topic', title: 'Networking' }).id;
+  const concept = upsertConcept(database, { key: 'routing', title: 'Routing', workspaceId, portable: true });
+  const request: TutorRequest = { workspaceId, conceptId: concept.id, depth: 'medium', provider: 'codex', intent: { kind: 'teach' } };
+  return { request, session: new TutorSession(database, async () => opening) };
+}
+
 beforeEach(() => {
   vi.stubEnv('CODEX_HOME', join(tmpdir(), `delve-missing-${randomUUID()}`));
   db = openDatabase(':memory:');
-  const workspaceId = addWorkspace(db, { kind: 'topic', title: 'Networking' }).id;
-  const concept = upsertConcept(db, { key: 'routing', title: 'Routing', workspaceId, portable: true });
-  request = { workspaceId, conceptId: concept.id, depth: 'medium', provider: 'codex', intent: { kind: 'teach' } };
-  session = new TutorSession(db, async () => opening);
+  ({ request, session } = tutorFixture(db));
 });
 
 it('uses the Codex config model unless an explicit override wins, and binds the preview to its source', async () => {
@@ -390,9 +395,12 @@ it('refuses dismissal of an unreadable active job and lets its turn commit', asy
 });
 
 it('assigns dismissal identities to existing version 8 tutor jobs', () => {
-  db.exec('DROP TRIGGER tutor_jobs_version_insert; DROP TRIGGER tutor_jobs_version_update; '
-    + 'ALTER TABLE tutor_jobs DROP COLUMN version; DROP TABLE lesson_foundations; '
-    + 'ALTER TABLE evidence DROP COLUMN probe_answered; PRAGMA user_version = 8;');
+  session.close();
+  db.close();
+  db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  expect(migrate(db, MIGRATIONS.slice(0, 8))).toBe(8);
+  ({ request, session } = tutorFixture(db));
   saveUnreadableJob();
   expect(migrate(db)).toBe(MIGRATIONS.length);
   const identity = unreadableIdentity();

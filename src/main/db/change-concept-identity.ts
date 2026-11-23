@@ -30,6 +30,18 @@ export function findChangeConcept(db: Db, scope: ChangeConceptScope, ...keys: st
   return null;
 }
 
+export function changeVocabulary(db: Db, scope: ChangeConceptScope) {
+  assert.match(scope.change, /^[a-f0-9]{64}$/);
+  return db.prepare(`SELECT min(substr(k.identity, 5)) AS key, c.title, substr(c.summary, 1, 320) AS summary
+    FROM change_concept_keys k JOIN concepts c ON c.id = k.concept_id
+    WHERE k.workspace_id = ? AND k.change_id = ? AND k.identity GLOB 'key:*'
+    GROUP BY c.id ORDER BY c.id LIMIT 60`).all(scope.workspaceId, scope.change).map(({ key, title, summary }) => {
+    assert.ok(typeof key === 'string' && key.length > 0);
+    assert.ok(typeof title === 'string' && typeof summary === 'string');
+    return { key, title, summary };
+  });
+}
+
 export function rememberChangeConcept(db: Db, scope: ChangeConceptScope, concept: Concept, ...keys: string[]): void {
   assert.ok(db.isTransaction);
   assert.ok(!concept.portable && concept.workspaceId === scope.workspaceId);
