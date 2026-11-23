@@ -70,12 +70,15 @@ function byDate(node: HistoryNode) {
 
 const changeKey = (node: HistoryNode) => node.kind + '/' + node.ref;
 
-/** Login advice asking for the same recovery step shares a key; any other warning is keyed by its own text. */
-function adviceKey(warning: string) {
-  if (/^Install GitHub CLI and run gh auth login\b/.test(warning)) return 'github:install';
-  if (/^Run gh auth login\b/.test(warning)) return 'github:login';
-  return warning;
-}
+// Whole GitHub messages that ask for the same recovery step; a message with any added advice keeps its own text.
+const EQUIVALENT_ADVICE = new Map([
+  ['Install GitHub CLI and run gh auth login.', 'github:install'],
+  ['Install GitHub CLI and run gh auth login to read this repository.', 'github:install'],
+  ['Run gh auth login to read GitHub pull requests.', 'github:login'],
+  ['Run gh auth login and make sure the account can read this repository.', 'github:login'],
+]);
+
+const adviceKey = (warning: string) => EQUIVALENT_ADVICE.get(warning) ?? warning;
 
 /** Keeps the first of each identical or equivalent warning, in order. */
 export function distinctWarnings(warnings: string[]): string[] {
