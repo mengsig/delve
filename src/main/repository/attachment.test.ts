@@ -55,7 +55,7 @@ it('rejects unlisted paths and stale approval tokens without creating a workspac
 
 it('includes global verified depths before a repository is attached', async () => {
   const prior = addWorkspace(db, { kind: 'git', path: '/prior' });
-  const tcp = upsertConcept(db, { key: 'tcp', title: 'TCP', portable: true, workspaceId: prior.id });
+  const tcp = upsertConcept(db, { key: 'tcp', title: 'TCP', summary: 'An ordered, reliable byte stream.', portable: true, workspaceId: prior.id });
   recordEvidence(db, { conceptId: tcp.id, workspaceId: prior.id, depth: 'medium', status: 'demonstrated',
     source: 'check', masteryVerified: true });
   const staged = await learning.stage({ kind: 'git', path: '/other' });
@@ -64,8 +64,9 @@ it('includes global verified depths before a repository is attached', async () =
   const preview = await learning.preview({ ...request, depth: 'medium' });
   const topUp = await learning.preview({ ...request, depth: 'low' });
   expect(preview.prompt).toContain('worker-lease-transport requiring tcp');
-  expect(preview.prompt).toContain('"key":"tcp","title":"TCP","demonstratedDepth":"medium","known":true');
-  expect(topUp.prompt).toContain('"key":"tcp","title":"TCP","demonstratedDepth":"medium","known":false');
+  const vocabulary = '"key":"tcp","title":"TCP","summary":"An ordered, reliable byte stream.","demonstratedDepth":"medium"';
+  expect(preview.prompt).toContain(vocabulary + ',"known":true');
+  expect(topUp.prompt).toContain(vocabulary + ',"known":false');
 });
 
 it('uses the Codex config model for repository generation and reports account rejection', async () => {

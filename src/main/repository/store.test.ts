@@ -262,6 +262,18 @@ it('keeps a conflicting meaning of a portable title local without inherited evid
   expect(readLesson(db, { workspaceId, conceptId: graph.concepts[0]!.id, depth: 'medium' }).reused).toBe(false);
 });
 
+it('requires more than a matching title and summary for an unrecognized alias', () => {
+  const existing = upsertConcept(db, { key: 'packet-framing', title: 'Framing', summary: 'Divides a stream into messages.', portable: true });
+  const key = 'other-framing';
+  const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [
+    { key, title: existing.title, summary: existing.summary, portable: true },
+  ], edges: [], recommendation: { key, reason: 'Study message boundaries.' } });
+  persistGeneration(db, source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline), proposal);
+  const graph = readWorkspaceGraph(db, workspaceId);
+  expect(graph.concepts).toMatchObject([{ title: existing.title, portable: false }]);
+  expect(graph.concepts[0]!.id).not.toBe(existing.id);
+});
+
 it.each([true, false])('keeps conflicting regenerated migrated concepts separate (portable=%s)', portable => {
   const summary = 'A collection that processes queued jobs in first in first out order.';
   const conflict = 'A collection that processes queued jobs in last in first out order.';
@@ -298,6 +310,62 @@ it('scopes portable dependents of an ambiguous prerequisite and preserves the ed
   ]));
 });
 
+it.each([true, false])('replays compatible aliases as one local identity (both aliases declare the prerequisite: %s)', both => {
+  const concepts = [
+    { key: 'queue', title: 'Queue', summary: 'Jobs wait in first in first out order.', portable: true },
+    { key: 'queues', title: 'Queues', summary: 'JOBS wait in first in first out order.', portable: true },
+    { key: 'dispatch', title: 'Local dispatcher', summary: 'Dispatches this repository’s jobs.', portable: false },
+  ];
+  const prerequisite = 'dispatch';
+  const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts,
+    edges: [{ concept: 'queue', prerequisite }, ...(both ? [{ concept: 'queues', prerequisite }] : [])],
+    recommendation: { key: 'queues', reason: 'Start here.' } });
+  const first = source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline);
+  const second = source({ kind: 'baseline', commit: previous, paths: ['src/routes.ts'] }, previous);
+  persistGeneration(db, first, proposal);
+  const original = readWorkspaceGraph(db, workspaceId);
+  const scoped = original.concepts.find(c => c.title === 'Queue')!;
+  const exposedKey = scoped.key.slice(`ws/${workspaceId}/`.length);
+  const secondMap = { ...proposal, concepts: [...concepts.slice(1), { ...concepts[0]!, key: exposedKey, portable: false }],
+    edges: [{ concept: 'queues', prerequisite }], recommendation: { key: exposedKey, reason: 'Start with the mapped concept.' } };
+  persistGeneration(db, second, secondMap);
+  expect(useCachedGeneration(db, first)).toEqual({ kind: 'baseline' });
+
+  const replayed = readWorkspaceGraph(db, workspaceId);
+  const queues = replayed.concepts.find(c => c.title === 'Queue')!;
+  const dispatch = replayed.concepts.find(c => c.title === 'Local dispatcher')!;
+  expect(replayed.concepts).toEqual(original.concepts);
+  expect(replayed.concepts).toHaveLength(2);
+  expect(queues.portable).toBe(false);
+  expect(replayed.edges).toEqual([{ conceptId: queues.id, prerequisiteId: dispatch.id }]);
+  expect(replayed.suggestions).toEqual(original.suggestions);
+  expect(db.prepare('SELECT next_concept FROM repository_generations WHERE cache_key = ?').get(first.cacheKey)?.next_concept).toBe(queues.id);
+});
+
+it('replays a scoped change concept against its own commit after another brief touches the same meaning', () => {
+  const title = 'TCP';
+  const summary = 'A tropical climate policy for farmers.';
+  upsertConcept(db, { key: 'tcp', title, summary: 'A network byte stream.', portable: true, workspaceId });
+  const proposal = { ...change, concepts: [{ key: 'tcp', title, summary, portable: true }], edges: [],
+    touched: ['tcp'], recommendation: { key: 'tcp', reason: 'Study this change.' } };
+  const first = source({ kind: 'commit', ref: baseline }, baseline);
+  const second = source({ kind: 'commit', ref: previous }, previous);
+  const saved = persistGeneration(db, first, proposal);
+  const next = persistGeneration(db, second, proposal);
+  if (saved.kind !== 'change' || next.kind !== 'change') throw new Error('Expected saved briefs');
+  const lesson = (conceptId: number) => readLesson(db, { workspaceId, conceptId, depth: 'medium' });
+  expect(lesson(saved.brief.recommendation.conceptId).source).toBe(baseline);
+  const replay = useCachedGeneration(db, first);
+  if (replay?.kind !== 'change') throw new Error('Expected replayed brief');
+  const firstId = replay.brief.recommendation.conceptId;
+  const secondId = next.brief.recommendation.conceptId;
+  expect(replay.brief.touched).toEqual([{ id: firstId, title }]);
+  expect(lesson(secondId).source).toBe(previous);
+  expect(lesson(firstId).source).toBe(baseline);
+  expect(firstId).not.toBe(secondId);
+  expect(latestBrief(db, { workspaceId, kind: 'commit', ref: baseline, depth: 'medium', provider: 'codex' })).toEqual(replay.brief);
+});
+
 it.each([true, false])('resolves aliases within one proposal consistently on cache replay (compatible=%s)', compatible => {
   const fifo = 'A collection processes jobs in first in first out order.';
   const second = compatible ? fifo : 'A collection processes jobs in last in first out order.';
@@ -320,7 +388,7 @@ it.each([true, false])('resolves aliases within one proposal consistently on cac
 it('does not overwrite an unrelated local at an internally allocated key', () => {
   const original = 'A reliable ordered byte stream';
   const input = { key: 'tcp', title: 'TCP', summary: 'A tropical climate policy for farmers', portable: true };
-  const internal = 'ambiguous/' + digest([input.key, input.title, input.summary]);
+  const internal = 'ambiguous/' + digest([input.key, input.summary.toLowerCase()]);
   upsertConcept(db, { key: 'tcp', title: 'TCP', summary: original, portable: true, workspaceId });
   const occupied = upsertConcept(db, { key: internal, title: 'Unrelated', summary: 'Independent knowledge', portable: false, workspaceId });
   recordEvidence(db, { workspaceId, conceptId: occupied.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });

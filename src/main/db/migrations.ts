@@ -267,7 +267,7 @@ export const MIGRATIONS: readonly Migration[] = [
     CREATE TEMP TABLE migration_candidates AS
     SELECT id, workspace_id, coalesce(delve_portable_alias(local_key, title), local_key) AS general_key,
       coalesce(delve_portable_alias('', title), delve_normalized_concept(title)) AS normalized_title,
-      lower(trim(summary)) AS normalized_summary, delve_portable_alias('', title) AS known_alias
+      delve_normalized_concept(summary) AS normalized_summary
     FROM (SELECT c.*, substr(c.key, length('ws/' || c.workspace_id || '/') + 1) AS local_key
     FROM concepts c JOIN workspaces w ON w.id = c.workspace_id
     WHERE c.portable = 0 AND w.kind <> 'topic' AND w.source NOT LIKE 'Demo:%'
@@ -280,17 +280,14 @@ export const MIGRATIONS: readonly Migration[] = [
     CREATE TEMP TABLE migration_portable AS
     SELECT id, coalesce(delve_portable_alias(key, title), key) AS general_key,
       coalesce(delve_portable_alias('', title), delve_normalized_concept(title)) AS normalized_title,
-      lower(trim(summary)) AS normalized_summary
+      delve_normalized_concept(summary) AS normalized_summary
     FROM concepts WHERE portable = 1 AND key NOT LIKE 'Demo:%';
     CREATE INDEX migration_portable_key ON migration_portable(general_key);
     CREATE INDEX migration_portable_title ON migration_portable(normalized_title, normalized_summary);
     CREATE TEMP TABLE migration_groups AS
     SELECT general_key, min(id) AS sample_id, min(normalized_title) AS normalized_title,
       count(DISTINCT workspace_id) AS workspace_count,
-      CASE WHEN count(DISTINCT normalized_summary) = 1 AND min(normalized_summary) <> '' THEN min(normalized_summary) END AS shared_summary,
-      count(known_alias) = count(*) AS known_identity,
-      count(DISTINCT nullif(normalized_summary, '')) AS description_count,
-      max(normalized_summary) AS description
+      CASE WHEN count(DISTINCT normalized_summary) = 1 AND min(normalized_summary) <> '' THEN min(normalized_summary) END AS shared_summary
     FROM migration_candidates
     GROUP BY general_key HAVING count(DISTINCT normalized_title) = 1 AND count(DISTINCT workspace_id) = count(*);
     CREATE INDEX migration_groups_key ON migration_groups(general_key);

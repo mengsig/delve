@@ -65,14 +65,16 @@ function learningContext(db: Db, request: RepoRequest) {
   const keys = new Map(concepts.map(c => [c.id, c.key]));
   const edges = graph.edges.filter(e => keys.has(e.conceptId) && keys.has(e.prerequisiteId)).slice(0, 320)
     .map(e => ({ concept: keys.get(e.conceptId), prerequisite: keys.get(e.prerequisiteId) }));
-  const portable = db.prepare(`SELECT c.key, c.title, max(CASE e.depth WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END) AS rank
+  const portable = db.prepare(`SELECT c.key, c.title, c.summary,
+    max(CASE e.depth WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END) AS rank
     FROM concepts c LEFT JOIN evidence e ON c.id = e.concept_id AND e.mastery_verified = 1
     WHERE c.portable = 1 AND c.key NOT LIKE 'Demo:%'
-    GROUP BY c.id ORDER BY rank DESC, c.id LIMIT 200`).all().map(({ key, title, rank }) => {
+    GROUP BY c.id ORDER BY rank DESC, c.id LIMIT 200`).all().map(({ key, title, summary, rank }) => {
     assert.ok(typeof key === 'string' && typeof title === 'string');
+    assert.ok(typeof summary === 'string');
     assert.ok(rank === null || typeof rank === 'number' && DEPTHS[rank] !== undefined);
     const demonstratedDepth = rank === null ? null : DEPTHS[rank]!;
-    return { key, title, demonstratedDepth, known: demonstratedDepth !== null && coversDepth(demonstratedDepth, request.depth) };
+    return { key, title, summary, demonstratedDepth, known: demonstratedDepth !== null && coversDepth(demonstratedDepth, request.depth) };
   });
   return { mappedConcepts: concepts, prerequisites: edges, portableVocabulary: portable };
 }
@@ -85,7 +87,7 @@ export async function prepareSource(db: Db, path: string | null, workspace: Work
   const baseline = request.selection.kind === 'baseline';
   const schema = baseline ? 'delve.map/1' : 'delve.change/1';
   const instructions = [baseline ? mapTask : changeTask, depthGuide[request.depth],
-    'Classify transferable ideas as portable. Describe each in general terms and give it a stable key independent of the repository. Reuse the exact key from portableVocabulary for the same idea, including synonyms.',
+    'Classify transferable ideas as portable. Describe each in general terms and give it a stable key independent of the repository. When a portableVocabulary key and summary describe the same idea, reuse both verbatim. Use a different key and your own summary for a different idea with a similar name.',
     portableKeyGuide,
     'Make a separate local concept for each repository-specific use of a portable idea. For example, emit tcp as portable and worker-lease-transport as local, with worker-lease-transport requiring tcp. Keep local code and policy in the local summary. A portable concept can only require portable concepts.',
     'Give concepts stable lowercase keys without workspace prefixes. Edges and the recommendation must use keys listed in your response. Avoid loops and duplicate keys.',

@@ -308,12 +308,23 @@ it('does not merge conflicting known aliases when upgrading a v0.1.0 schema-5 pr
       (1,'ws/a/tcp','TCP','A reliable ordered byte stream',0,'a','t','t'),
       (2,'ws/b/tcp','Transmission Control Protocol','A tropical climate policy for farmers',0,'b','t','t');
       INSERT INTO workspace_concepts (workspace_id,concept_id) VALUES ('a',1),('b',2);
+      INSERT INTO snapshots VALUES (1,'a','abcd','t');
+      INSERT INTO lessons (id,cache_key,schema_version,concept_id,workspace_id,snapshot_id,depth,provider,model,body,created_at)
+      VALUES (1,'tcp-opening','delve.lesson/1',1,'a',1,'medium','codex','fixture',
+        '{"schema":"delve.lesson/1","blocks":[{"type":"prose","heading":"TCP","text":"The network lesson."}]}','t');
+      INSERT INTO transfer_links (from_concept_id,to_concept_id,reason,provider,model,workspace_id,created_at)
+      VALUES (1,2,'Compare lessons from different domains.','codex','fixture','a','t');
       INSERT INTO evidence (concept_id,depth,status,source,note,workspace_id,recorded_at) VALUES
       (1,'medium','demonstrated','check','network proof','a','t'), (2,'low','partial','check','climate proof','b','t');`);
     expect(migrate(db)).toBe(MIGRATIONS.length);
     expect(db.prepare('SELECT * FROM concept_identity_links').all()).toEqual([]);
     expect(db.prepare('SELECT concept_id,note FROM evidence ORDER BY concept_id').all())
       .toEqual([{ concept_id: 1, note: 'network proof' }, { concept_id: 2, note: 'climate proof' }]);
+    expect(readLesson(db, { workspaceId: 'a', conceptId: 1, depth: 'medium' })).toMatchObject({
+      source: 'abcd', blocks: [{ text: 'The network lesson.' }],
+    });
+    expect(db.prepare('SELECT from_concept_id,to_concept_id FROM transfer_links').all())
+      .toEqual([{ from_concept_id: 1, to_concept_id: 2 }]);
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   } finally { db.close(); }
 });

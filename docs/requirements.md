@@ -13,9 +13,11 @@ maintainer's approval. Design reference: `docs/design/proposal-v1.html`.
   non-code topic) and switch between them fast (switcher with keyboard shortcut).
 - **R4 Knowledge graph.** One local SQLite database owned by the main process: workspaces, canonical
   concepts, prerequisite edges, snapshot bindings, validated lessons, per-depth evidence. Portable
-  concepts are shared across workspaces when a provider key or recognized alias and compatible
-  descriptions corroborate identity. Ambiguous matches remain repository-scoped; verified understanding
-  of a shared concept at a depth carries across workspaces.
+  concepts are shared across workspaces when a provider key or recognized alias and descriptions
+  matching after Unicode, case, and whitespace normalization corroborate identity. Ambiguous concepts
+  keep their evidence and lessons in the repository. Compatible aliases with a repository-specific
+  prerequisite share one local identity. Verified understanding of a shared concept at a depth
+  carries across workspaces.
 - **R5 Depths.** High / Medium / Low as defined in `docs/product.md`; default Medium; switching depth
   keeps the same concept; reuse requires an exact portable concept at a demonstrated depth.
 - **R6 Lesson blocks.** Agents emit versioned JSON (`delve.lesson/1`) of typed blocks (prose, diagram,
@@ -36,7 +38,8 @@ maintainer's approval. Design reference: `docs/design/proposal-v1.html`.
   the concept map for the repository, and offer a first learning path.
 - **R11 Changes.** For a PR or commit, "what changed and why" at the chosen depth, linked to the
   concepts it touches. PR metadata and diffs come via read-only GitHub access (the user's `gh` login
-  or a token in the OS keychain). Missing or truncated diffs show partial coverage.
+  or a token in the OS keychain). Missing or truncated diffs show partial coverage. A
+  repository-specific concept introduced only in a change brief is tied to that brief's commit.
 - **R12 Recommendations.** The agent recommends the next step from the learner's knowledge graph
   (for example "explain this feature" versus "what changed and why"), with the reason shown.
 - **R13 Evidence and privacy.** At most one optional practical check per lesson, stored locally as
