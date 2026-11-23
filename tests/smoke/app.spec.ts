@@ -49,6 +49,7 @@ test('validates a local working tree and exposes the new empty atlas', async ({ 
   const { page, directory } = desktop;
   await add(page, directory);
   await expect(page.getByRole('alert')).toContainText('not a Git repository');
+  await expect(page.getByLabel('Topic or repository')).toBeFocused();
   const folder = join(directory, 'local-repository');
   mkdirSync(join(folder, '.git'), { recursive: true });
   await page.getByLabel('Topic or repository').fill(folder);

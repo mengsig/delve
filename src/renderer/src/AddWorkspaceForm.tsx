@@ -175,6 +175,9 @@ function WorkspaceEditor(props: Props) {
   const detection = useProviderDetection();
   const { provider, choose, cli } = useDetectedProvider(detection.statuses);
   const actions = useStartWorkspace(props.onAdded, depth, provider);
+  useEffect(() => {
+    if (actions.error && !actions.pending) document.getElementById('source-input')?.focus();
+  }, [actions.error, actions.pending]);
   const source = useSourceFields(actions);
   const attach = useAttachRequest(source.repository, depth, provider, cli);
   const topic = source.kind === 'topic';

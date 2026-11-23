@@ -122,7 +122,9 @@ class RepositoryHistory {
 
     const liveDone = this.commits.done && this.pulls.done;
     const warnings = [...this.git.warnings, this.github.warning, this.commits.warning, this.pulls.warning].filter(Boolean);
-    if (liveDone && this.saved.size && warnings.length) warnings.push('Previously saved changes are included.');
+    const loginWarning = warnings.findIndex(warning => warning?.includes('gh auth login'));
+    const uniqueWarnings = warnings.filter((warning, index) => index === loginWarning || !warning?.includes('gh auth login'));
+    if (liveDone && this.saved.size && uniqueWarnings.length) uniqueWarnings.push('Previously saved changes are included.');
     if (liveDone) {
       for (const [key, node] of this.saved) {
         if (nodes.length === PAGE_SIZE) break;
@@ -133,7 +135,7 @@ class RepositoryHistory {
     assert.ok(nodes.length <= PAGE_SIZE);
     const next = liveDone && this.saved.size === 0 ? null : cursor();
     return { nodes, next, branches: [...this.branches].sort(), pullStatus: this.pullStatus,
-      warning: [...new Set(warnings)].join(' ') || null };
+      warning: [...new Set(uniqueWarnings)].join(' ') || null };
   }
 }
 

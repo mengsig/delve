@@ -11,6 +11,7 @@ interface TimelineProps {
   workspaceId: string;
   selected?: ChangeRef;
   onSelect: (node: ChangeRef, title?: string) => void;
+  onClear: () => void;
   onOpen?: () => void;
   onRefresh?: () => void;
 }
@@ -153,7 +154,10 @@ function WorkspaceTimeline(props: TimelineProps) {
   }, [onSelect, selected]);
 
   return <section className="timeline" aria-labelledby="change-timeline-label">
-    <TimelineControls draft={draft} branches={branches} view={view} onChange={setDraft} onView={setView} />
+    <TimelineControls draft={draft} branches={branches} view={view} onChange={next => {
+      setDraft(next);
+      if (selected) props.onClear();
+    }} onView={setView} />
     <TimelineResults {...props} filters={filters} view={view}
       onBranches={setBranches} onInitialNode={initialNode} />
   </section>;
