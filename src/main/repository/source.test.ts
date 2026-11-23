@@ -261,12 +261,18 @@ describe('Git change read boundaries', () => {
     expect(pages.at(-1)?.warning).toContain(missing);
   }, 30_000);
 
-  it.each(['missing', 'malformed'])('keeps healthy branches when a branch tip is %s', async kind => {
+  it.each(['missing', 'malformed', 'a corrupt loose object'])('keeps healthy branches when a branch tip is %s', async kind => {
     const base = commit('Base', '--allow-empty');
     const head = commit('Healthy tip', '--allow-empty');
-    const damaged = kind === 'missing' ? 'a'.repeat(head.length)
-      : execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--literally', '--stdin'],
-        { input: 'invalid commit\n', encoding: 'utf8' }).trim();
+    const damaged = kind === 'malformed'
+      ? execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--literally', '--stdin'],
+        { input: 'invalid commit\n', encoding: 'utf8' }).trim()
+      : 'a'.repeat(head.length);
+    if (kind === 'a corrupt loose object') {
+      const directory = join(repo, '.git', 'objects', damaged.slice(0, 2));
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, damaged.slice(2)), Buffer.from([255, 255, 255, 255]));
+    }
     await writeFile(join(repo, '.git', 'refs', 'heads', 'broken'), damaged + '\n');
     const request = { workspaceId: workspace.id, cursor: 0, kind: 'commit' } as const;
     const history = await openRepositoryHistory(workspace, root, request, []);

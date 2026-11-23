@@ -149,12 +149,25 @@ function unreadableWarning(id: string) {
 async function readableTips(reader: GitReader, tips: string[]) {
   assert.ok(tips.length > 0 && tips.length <= MAX_BRANCHES + 1);
   assert.ok(tips.every(tip => OBJECT_ID.test(tip)));
-  const log = await reader.run([...LOG, '--no-walk=unsorted', '--ignore-missing', '--format=%H', ...tips, '--'], 32 * 1024);
-  const output = completedOutput(log, 'Could not check the Git branch tips.');
-  assert.ok(output.length === 0 || output.at(-1) === 0);
-  const records = nulRecords(output);
-  assert.ok(records.length <= tips.length && records.every(tip => OBJECT_ID.test(tip)));
-  const readable = new Set(records);
+  const pending = [tips];
+  const readable = new Set<string>();
+  while (pending.length > 0) {
+    const batch = pending.pop()!;
+    const log = await reader.run([...LOG, '--no-walk=unsorted', '--ignore-missing', '--format=%H', ...batch, '--'], 256 * 1024);
+    if (log.truncated || log.status !== 0) {
+      // Git can abort on corrupt object storage even with --ignore-missing.
+      if (batch.length > 1) {
+        const middle = Math.floor(batch.length / 2);
+        pending.push(batch.slice(0, middle), batch.slice(middle));
+      }
+      continue;
+    }
+    const { output } = log;
+    assert.ok(output.length === 0 || output.at(-1) === 0);
+    const records = nulRecords(output);
+    assert.ok(records.length <= batch.length && records.every(tip => OBJECT_ID.test(tip)));
+    for (const tip of records) readable.add(tip);
+  }
   return { tips: tips.filter(tip => readable.has(tip)), skipped: tips.filter(tip => !readable.has(tip)) };
 }
 

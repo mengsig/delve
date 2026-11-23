@@ -119,6 +119,7 @@ describe('GitHub explorer', () => {
       git.mockResolvedValueOnce(jsonText('git@github.com:Octo/Project.git\n'))
         .mockResolvedValueOnce(jsonText(`${HEAD}\tmain\t\n`))
         .mockResolvedValueOnce(jsonText(HEAD + '\n'))
+        .mockResolvedValueOnce(jsonText(HEAD + '\0'))
         .mockResolvedValueOnce(jsonText('false\n'))
         .mockResolvedValueOnce(jsonText([HEAD, '', 'Octocat', '2024-01-01T00:00:00Z', 'Commit', ''].join('\0')));
       const commits = await openRepositoryHistory({ ...workspace, source: repo, kind: 'git' }, '/cache',
@@ -155,13 +156,15 @@ describe('GitHub explorer source and detail', () => {
       git.mockClear();
       git.mockResolvedValueOnce(jsonText(`${HEAD}\tmain\t\n`))
         .mockResolvedValueOnce(jsonText(HEAD + '\n'))
+        .mockResolvedValueOnce(jsonText(HEAD + '\0'))
         .mockResolvedValueOnce(jsonText('true\n'))
         .mockResolvedValueOnce(jsonText([HEAD, '', 'Octocat', '2024-01-01T00:00:00Z', 'Commit', ''].join('\0')));
       const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
       expect(await history.advance(() => 1)).toMatchObject({
         nodes: [{ ref: HEAD }], next: null, pullStatus: 'unchecked', warning: expect.stringContaining('shallow snapshot'),
       });
-      expect(git.mock.calls.map(([args]) => args[3])).toEqual(['for-each-ref', 'rev-parse', 'rev-parse', 'log']);
+      expect(git.mock.calls.map(([args]) => args[3])).toEqual(['for-each-ref', 'rev-parse', 'log', 'rev-parse', 'log']);
+      expect(git.mock.calls[2]?.[0]).toContain('--no-walk=unsorted');
       expect(gh).not.toHaveBeenCalled();
     } finally {
       await rm(root, { recursive: true, force: true });
