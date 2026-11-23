@@ -180,8 +180,12 @@ test('keeps commit history usable when GitHub has no PRs or needs sign-in', asyn
   await expect(commits.first()).toContainText('Merge delivery retries');
   await commits.first().click();
   await page.getByLabel('Search history').fill('no such change exists');
+  await page.getByRole('option', { name: /Merge delivery retries/ }).evaluateAll(rows => {
+    for (const row of rows) (row as HTMLElement).click();
+  });
   await expect(page.getByRole('region', { name: 'Selected change' })).toContainText('Choose a change');
   await expect(page.getByText('No changes match these filters.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Selected change' })).toContainText('Choose a change');
   await page.getByRole('button', { name: 'Clear filters' }).click();
   writeFileSync(fixture, JSON.stringify({ ...response, signedOut: true }));
   await page.getByRole('button', { name: /^refresh/i }).first().click();
