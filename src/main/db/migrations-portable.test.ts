@@ -118,6 +118,7 @@ function migratedQueue(): DatabaseSync {
     (3,'queues','Queues',1,NULL,'2020','2020');
     INSERT INTO workspace_concepts (workspace_id,concept_id) VALUES ('a',1), ('b',2);
     INSERT INTO snapshots VALUES (1,'a','abcd','2020');`);
+  db.exec("UPDATE concepts SET summary = 'First in first out ordering' WHERE id IN (1,2,3)");
   seedLegacyLesson(db);
   db.exec("UPDATE lessons SET created_at = '2020' WHERE id = 1");
   migrate(db);
@@ -182,6 +183,7 @@ function proveGlobalLearning(db: DatabaseSync, portable: number): void {
         (3, 'queues', 'Queues', 1, NULL, 't', 't'),
         (4, 'ws/a/cache', 'Cache', 0, 'a', 't', 't'), (5, 'ws/b/cache', 'Different', 0, 'b', 't', 't'),
         (6, 'ws/a/routing-policy', 'Routing policy', 0, 'a', 't', 't'), (7, 'ws/b/routing-policy', 'Routing policy', 0, 'b', 't', 't');
+        UPDATE concepts SET summary = 'First in first out ordering' WHERE id IN (1,2,3);
         UPDATE concepts SET summary = 'Schedule CPU work.' WHERE id = 6;
         UPDATE concepts SET summary = 'Route HTTP hostnames.' WHERE id = 7;
         INSERT INTO workspace_concepts (workspace_id, concept_id) VALUES ('a',1), ('b',2), ('a',4), ('b',5), ('a',6), ('b',7);
@@ -224,6 +226,7 @@ function proveGlobalLearning(db: DatabaseSync, portable: number): void {
         (6, 'ws/b/change/queue', 'Queue', '', 0, 'b', 't', 't'),
         (7, 'ws/a/Demo:x', 'Sample', '', 0, 'a', 't', 't'),
         (8, 'ws/b/Demo:x', 'Sample', '', 0, 'b', 't', 't');
+        UPDATE concepts SET summary = 'First in first out ordering' WHERE id IN (1,2);
         INSERT INTO workspace_concepts (workspace_id, concept_id) VALUES
         ('a',1), ('b',2), ('a',3), ('topic',4), ('a',5), ('b',6), ('a',7), ('b',8);
         INSERT INTO concept_edges VALUES (3,1,'t'), (2,6,'t');
@@ -268,7 +271,7 @@ function proveGlobalLearning(db: DatabaseSync, portable: number): void {
     }
   });
 
-it('preserves distinct punctuation and reuses a foundation under a different portable key', () => {
+it('preserves distinct punctuation and keeps an uncorroborated title scoped', () => {
   const db = new DatabaseSync(':memory:');
   try {
     migrate(db, MIGRATIONS.slice(0, 6));
@@ -285,12 +288,32 @@ it('preserves distinct punctuation and reuses a foundation under a different por
       (6,'medium','demonstrated','check','False positives','a','t',1);`);
     migrate(db);
     expect(db.prepare('SELECT legacy_concept_id, portable_concept_id FROM concept_identity_links ORDER BY legacy_concept_id').all())
-      .toEqual([{ legacy_concept_id: 4, portable_concept_id: 6 }, { legacy_concept_id: 5, portable_concept_id: 6 }]);
+      .toEqual([]);
     const graph = readWorkspaceGraph(db, 'b');
-    expect(graph.concepts.map(c => c.id)).toEqual([2, 6]);
-    expect(graph.evidence).toMatchObject([{ conceptId: 6, note: 'False positives' }]);
+    expect(graph.concepts.map(c => c.id)).toEqual([2, 5]);
+    expect(graph.evidence).toEqual([]);
     expect(db.prepare('SELECT note FROM evidence WHERE concept_id = 1').get()?.note).toBe('C++ templates');
   } finally {
     db.close();
   }
+});
+
+it('does not merge conflicting known aliases when upgrading a v0.1.0 schema-5 profile', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec('PRAGMA foreign_keys = ON');
+    migrate(db, MIGRATIONS.slice(0, 5));
+    db.exec(`INSERT INTO workspaces (id,kind,name,source,created_at) VALUES ('a','git','A','/a','t'), ('b','git','B','/b','t');
+      INSERT INTO concepts (id,key,title,summary,portable,workspace_id,created_at,updated_at) VALUES
+      (1,'ws/a/tcp','TCP','A reliable ordered byte stream',0,'a','t','t'),
+      (2,'ws/b/tcp','Transmission Control Protocol','A tropical climate policy for farmers',0,'b','t','t');
+      INSERT INTO workspace_concepts (workspace_id,concept_id) VALUES ('a',1),('b',2);
+      INSERT INTO evidence (concept_id,depth,status,source,note,workspace_id,recorded_at) VALUES
+      (1,'medium','demonstrated','check','network proof','a','t'), (2,'low','partial','check','climate proof','b','t');`);
+    expect(migrate(db)).toBe(MIGRATIONS.length);
+    expect(db.prepare('SELECT * FROM concept_identity_links').all()).toEqual([]);
+    expect(db.prepare('SELECT concept_id,note FROM evidence ORDER BY concept_id').all())
+      .toEqual([{ concept_id: 1, note: 'network proof' }, { concept_id: 2, note: 'climate proof' }]);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+  } finally { db.close(); }
 });

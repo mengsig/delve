@@ -178,20 +178,23 @@ async function walkHistory(reader: GitReader, tips: string[], skip: number, boun
   return { ...log, output: readable };
 }
 
+function gapWarning(boundaries: Map<string, BrokenBoundary>, gaps: HistoryNode[]): string {
+  const boundary = boundaries.get(gaps[0]!.ref);
+  assert.ok(boundary);
+  const missing = boundary.parents.find(parent => boundary.missing.has(parent));
+  assert.ok(missing);
+  return unreadableWarning(missing);
+}
+
 async function readGitHistoryBatch(reader: GitReader, tips: string[], labels: Map<string, string[]>, skip: number,
   boundaries: Map<string, BrokenBoundary>): Promise<GitHistoryBatch> {
   const log = await walkHistory(reader, tips, skip, boundaries);
   const history = commitNodes(nulRecords(log.output), labels);
   const nodes = history.slice(0, COMMIT_BATCH);
-  const boundaryIndex = boundaries.size ? nodes.findIndex(node => boundaries.has(node.ref)) : -1;
-  if (boundaryIndex >= 0) {
-    const node = nodes[boundaryIndex]!;
-    const boundary = boundaries.get(node.ref);
-    assert.ok(boundary);
-    const missing = boundary.parents.find(parent => boundary.missing.has(parent));
-    assert.ok(missing);
-    return { nodes: [...nodes.slice(0, boundaryIndex), { ...node, parents: boundary.parents }], next: null,
-      warning: unreadableWarning(missing) };
+  const gaps = boundaries.size ? nodes.filter(node => boundaries.has(node.ref)) : [];
+  if (gaps.length > 0) {
+    const restored = nodes.map(node => (boundaries.has(node.ref) ? { ...node, parents: boundaries.get(node.ref)!.parents } : node));
+    return { nodes: restored, next: history.length > COMMIT_BATCH ? skip + nodes.length : null, warning: gapWarning(boundaries, gaps) };
   }
   if (!log.truncated && log.status !== 0) {
     const missing = unreadableObject(log.diagnostic);

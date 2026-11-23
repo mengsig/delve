@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import { z } from 'zod';
-import type { SavedTutorJob } from '../../shared/reader';
+import type { SavedTutorJob, TutorJobEntry } from '../../shared/reader';
 import type { Db } from '../db/connection';
 import { digest, tutorRequest } from './request';
 import type { PreparedTurn } from './prompt';
 
 const detail = tutorRequest.pick({ provider: true, intent: true }).extend({
   title: z.string().min(1), submittedAnswer: z.string().optional(),
+}).refine(({ intent, submittedAnswer }) => (submittedAnswer !== undefined) === (intent.kind === 'answer'), {
+  path: ['submittedAnswer'],
+  message: 'A submitted answer is required for answer requests and forbidden for other requests.',
 });
 const rowSchema = z.object({ id: z.uuid(), token: digest, detail: z.string(),
   workspace_id: tutorRequest.shape.workspaceId, concept_id: tutorRequest.shape.conceptId, depth: tutorRequest.shape.depth,
@@ -18,7 +21,6 @@ const rowSchema = z.object({ id: z.uuid(), token: digest, detail: z.string(),
 function parseJob(raw: unknown): { token: string; job: SavedTutorJob } {
   const row = rowSchema.parse(raw);
   const { intent, provider, title, submittedAnswer } = detail.parse(JSON.parse(row.detail));
-  assert.equal(submittedAnswer !== undefined, intent.kind === 'answer');
   const request = { workspaceId: row.workspace_id, conceptId: row.concept_id, depth: row.depth, intent, provider };
   const base = { id: row.id, title, request, submittedAnswer };
   const job: SavedTutorJob = row.phase === 'failed'
@@ -40,8 +42,19 @@ export function storeTutorJob(db: Db, id: string, turn: PreparedTurn): void {
   assert.equal(result.changes, 1);
 }
 
-export function listTutorJobs(db: Db): SavedTutorJob[] {
-  return db.prepare('SELECT * FROM tutor_jobs ORDER BY rowid').all().map(row => parseJob(row).job);
+export function listTutorJobs(db: Db): TutorJobEntry[] {
+  const rows = db.prepare('SELECT *, CAST(rowid AS TEXT) AS row_key FROM tutor_jobs ORDER BY rowid').all();
+  return rows.map(row => {
+    try {
+      return parseJob(row).job;
+    } catch (cause) {
+      if (!(cause instanceof z.ZodError || cause instanceof SyntaxError)) throw cause;
+      const rowKey = row.row_key;
+      assert.ok(typeof rowKey === 'string' && rowKey.length > 0, 'every stored tutor job must have a row key');
+      return { phase: 'unreadable', rowKey,
+        message: 'A saved tutor request could not be read and was skipped.' };
+    }
+  });
 }
 
 export function findTutorJob(db: Db, id: string) {

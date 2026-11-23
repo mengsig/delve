@@ -14,7 +14,7 @@ import { addWorkspace } from '../db/workspaces';
 import { makeShimDir, makeTempDir, setupRunner } from '../providers/test-helpers';
 import { readLesson, readerHandlers } from '../reader/ipc';
 import { saveMastery } from './mastery';
-import { tutorSchemas } from './ipc';
+import { tutorHandlers, tutorSchemas } from './ipc';
 import { prepareTurn, previewNewTopic } from './prompt';
 import { createGenerator, type Generate, type TutorReply } from './provider';
 import { demoTurn } from './sample';
@@ -290,6 +290,25 @@ it('restores an approved tutor request and records completion with the saved les
   expect(finish).toHaveBeenCalledOnce();
   expect(session.dismiss(id)).toBe(true);
   expect(session.jobs()).toEqual([]);
+});
+
+it.each([
+  '{}',
+  JSON.stringify({ title: 'Routing', provider: 'codex', intent: { kind: 'teach' }, submittedAnswer: '/24' }),
+])('skips a malformed tutor job while restoring a valid one (%s)', async detail => {
+  const { workspaceId, conceptId } = request;
+  db.prepare(`INSERT INTO tutor_jobs (id, workspace_id, concept_id, depth, token, detail, phase)
+    VALUES (?, ?, ?, 'low', ?, ?, 'running')`).run(randomUUID(), workspaceId, conceptId, 'a'.repeat(64), detail);
+
+  const id = randomUUID();
+  const { token } = prepareTurn(db, request).preview;
+  await session.run({ ...request, token, requestId: id });
+
+  expect(tutorHandlers(db, session)['tutor:jobs'](null)).toMatchObject([
+    { phase: 'unreadable', rowKey: expect.any(String), message: 'A saved tutor request could not be read and was skipped.' },
+    { id, phase: 'ready', request },
+  ]);
+  expect(await session.wait(id)).toMatchObject({ blocks: expect.arrayContaining([explanation]) });
 });
 
 it('the offline provider reteaches a miss, offers fresh applied checks and recommends a path after understanding', async () => {

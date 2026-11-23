@@ -99,7 +99,7 @@ it('opens a saved change with the current global evidence and teaches its reposi
 it('restores the original saved recommendation after portable evidence is reset', () => {
   const selection = { kind: 'pr', ref: '20' } as const;
   const selected = source(selection, previous);
-  const proxy = upsertConcept(db, { workspaceId, portable: true, key: 'nginx/proxy', title: 'Proxy' });
+  const proxy = upsertConcept(db, { workspaceId, portable: true, key: 'nginx/proxy', title: 'Proxy', summary: 'Forwards requests' });
   recordEvidence(db, { workspaceId, conceptId: proxy.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
   const reply = { ...change, recommendation: { key: proxy.key, reason: 'Learn about proxies.' } };
   const result = persistGeneration(db, selected, reply);
@@ -141,7 +141,7 @@ it('suggests the PR usage in Atlas only while current portable evidence covers t
 });
 
 it('recommends the missing prerequisite of the linked usage before an unrelated ready concept', () => {
-  const portable = upsertConcept(db, { workspaceId, portable: true, key: 'nginx/proxy', title: 'Proxy' });
+  const portable = upsertConcept(db, { workspaceId, portable: true, key: 'nginx/proxy', title: 'Proxy', summary: 'Forwards requests' });
   recordEvidence(db, { workspaceId, conceptId: portable.id, depth: 'medium', status: 'demonstrated',
     source: 'check', masteryVerified: true });
   const proposal = { ...mapped, concepts: [
@@ -160,14 +160,14 @@ it('recommends the missing prerequisite of the linked usage before an unrelated 
 describe('atomic repository generation', () => {
   it('preserves canonical portable knowledge at its demonstrated depth and binds both concepts to the approved commit', () => {
     const prior = addWorkspace(db, { kind: 'topic', title: 'Reverse proxies' });
-    const portable = upsertConcept(db, { workspaceId: prior.id, portable: true, key: 'nginx/proxy', title: 'NGINX reverse proxy', summary: 'Original definition' });
+    const portable = upsertConcept(db, { workspaceId: prior.id, portable: true, key: 'nginx/proxy', title: 'NGINX reverse proxy', summary: 'Forwards requests' });
     recordEvidence(db, { workspaceId: prior.id, conceptId: portable.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
     const selected = source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline);
     persistGeneration(db, selected, mapped);
     expect(persistGeneration(db, selected, mapped)).toEqual({ kind: 'baseline' });
     const graph = readWorkspaceGraph(db, workspaceId);
     expect(graph.concepts).toHaveLength(2);
-    expect(graph.concepts).toContainEqual(expect.objectContaining({ id: portable.id, title: 'NGINX reverse proxy', summary: 'Original definition' }));
+    expect(graph.concepts).toContainEqual(expect.objectContaining({ id: portable.id, title: 'NGINX reverse proxy', summary: 'Forwards requests' }));
     expect(graph.evidence).toMatchObject([{ workspaceId: prior.id, conceptId: portable.id, depth: 'medium' }]);
     expect(graph.edges).toEqual([{ prerequisiteId: portable.id, conceptId: graph.suggestions?.medium?.conceptId }]);
     expect(graph.suggestions?.medium?.reason).toContain('demonstrated');
@@ -238,8 +238,26 @@ describe('change conversations', () => {
     expect(current.snapshot).toBe(baseline);
     expect(readWorkspaceCoverage(db)).toMatchObject([{ total: 2 }]);
     expect(result.brief.touched.map(c => c.title)).toEqual(['Routing policy', 'New feature']);
-    expect(readWorkspaceGraph(db, workspaceId, true).concepts).toHaveLength(4);
+    expect(readWorkspaceGraph(db, workspaceId, true).concepts).toHaveLength(5);
     expect(readLesson(db, { workspaceId, conceptId: result.brief.conceptId, depth: 'medium' }).source).toBe(previous);
   });
 
+});
+
+it('keeps a conflicting meaning of a portable title local without inherited evidence or coverage', () => {
+  const origin = workspaceId;
+  const selected = () => source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline);
+  const proposal = (key: string, title: string, summary: string) => baselineReply.parse({ schema: 'delve.map/1',
+    concepts: [{ key, title, summary, portable: true }], edges: [], recommendation: { key, reason: 'Start here.' } });
+  persistGeneration(db, selected(), proposal('tcp', 'TCP', 'A reliable ordered byte stream'));
+  const tcp = readWorkspaceGraph(db, origin).concepts[0]!;
+  recordEvidence(db, { workspaceId: origin, conceptId: tcp.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  workspaceId = addWorkspace(db, { kind: 'github', owner: 'acme', repo: 'other' }).id;
+  persistGeneration(db, selected(), proposal('tcp', 'TCP', 'A tropical climate policy for farmers'));
+  const graph = readWorkspaceGraph(db, workspaceId);
+  expect(graph.concepts).toMatchObject([{ title: 'TCP', portable: false }]);
+  expect(graph.concepts[0]!.id).not.toBe(tcp.id);
+  expect(graph.evidence).toEqual([]);
+  expect(readWorkspaceCoverage(db).find(item => item.workspaceId === workspaceId)).toMatchObject({ total: 1 });
+  expect(readLesson(db, { workspaceId, conceptId: graph.concepts[0]!.id, depth: 'medium' }).reused).toBe(false);
 });

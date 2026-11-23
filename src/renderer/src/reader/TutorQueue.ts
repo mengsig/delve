@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
-import { lessonKey, type ReaderLesson, type SavedTutorJob, type TutorRequest } from '../../../shared/reader';
+import { lessonKey, type ReaderLesson, type SavedTutorJob, type TutorRequest, type UnreadableTutorJob } from '../../../shared/reader';
 import { call, IpcCallError } from '../api';
 import { errorMessage } from '../useRead';
 
@@ -36,20 +36,22 @@ function useJobStore() {
 function useSavedJobs(restore: (jobs: SavedTutorJob[]) => void) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
+  const [unreadable, setUnreadable] = useState<UnreadableTutorJob[]>([]);
   const [attempt, setAttempt] = useState(0);
   const loaded = useEffectEvent(restore);
   useEffect(() => {
     let current = true;
     void call('tutor:jobs', null).then(jobs => {
       if (!current) return;
-      loaded(jobs);
+      loaded(jobs.filter(job => job.phase !== 'unreadable'));
+      setUnreadable(jobs.filter(job => job.phase === 'unreadable'));
       setReady(true);
     }, cause => {
       if (current) setError('Could not load tutor activity. ' + errorMessage(cause));
     });
     return () => { current = false; };
   }, [attempt]);
-  return { ready, error, reload: () => { setError(''); setAttempt(value => value + 1); } };
+  return { ready, error, unreadable, reload: () => { setError(''); setAttempt(value => value + 1); } };
 }
 
 function useLiveJobs({ replace }: ReturnType<typeof useJobStore>) {

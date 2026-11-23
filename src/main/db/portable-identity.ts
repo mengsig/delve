@@ -16,3 +16,13 @@ export function portableAlias(key: string, title: string): string | undefined {
 }
 
 export const portableKeyGuide = 'For common foundations use these canonical keys: ' + [...new Set(aliases.values())].join(', ') + '.';
+
+// Descriptions must share at least 60% of their distinct meaningful words (Jaccard similarity).
+export function compatibleDescriptions(left: string, right: string): boolean {
+  const words = (value: string) => new Set(normalizedConceptName(value).match(/[\p{L}\p{N}]+/gu)?.filter(word => word.length > 2) ?? []);
+  const a = words(left);
+  const b = words(right);
+  if (!a.size || !b.size) return false;
+  const shared = [...a].filter(word => b.has(word)).length;
+  return shared / (a.size + b.size - shared) >= 0.6;
+}

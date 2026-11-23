@@ -13,7 +13,9 @@ maintainer's approval. Design reference: `docs/design/proposal-v1.html`.
   non-code topic) and switch between them fast (switcher with keyboard shortcut).
 - **R4 Knowledge graph.** One local SQLite database owned by the main process: workspaces, canonical
   concepts, prerequisite edges, snapshot bindings, validated lessons, per-depth evidence. Portable
-  concepts are shared across workspaces; a concept known at a depth is reused, never retaught.
+  concepts are shared across workspaces when a provider key or recognized alias and compatible
+  descriptions corroborate identity. Ambiguous matches remain repository-scoped; verified understanding
+  of a shared concept at a depth carries across workspaces.
 - **R5 Depths.** High / Medium / Low as defined in `docs/product.md`; default Medium; switching depth
   keeps the same concept; reuse requires an exact portable concept at a demonstrated depth.
 - **R6 Lesson blocks.** Agents emit versioned JSON (`delve.lesson/1`) of typed blocks (prose, diagram,

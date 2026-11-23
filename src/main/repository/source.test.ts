@@ -218,7 +218,7 @@ describe('repository explorer damaged and shallow history', () => {
       const boundary = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'],
         { input: object, encoding: 'utf8' }).trim();
       git('update-ref', 'refs/heads/main', boundary);
-      const expected = [boundary];
+      const expected = [boundary, base];
       for (let i = 0; i < 35; i++) expected.unshift(commit(`Readable ${i}`, '--allow-empty'));
       const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
       const pages = [];
@@ -230,10 +230,37 @@ describe('repository explorer damaged and shallow history', () => {
       }
       expect(next).toBeNull();
       expect(pages.flatMap(page => page.nodes.map(node => node.ref))).toEqual(expected);
-      expect(pages.flatMap(page => page.nodes).at(-1)?.parents).toEqual(parents);
+      expect(pages.flatMap(page => page.nodes).find(node => node.ref === boundary)?.parents).toEqual(parents);
       expect(pages.at(-1)?.warning).toContain(missing[0]);
       expect(pages.at(-1)?.warning).toContain('git fsck');
     }, 30_000);
+
+  it('keeps commits from other branches that are not behind the missing parent', async () => {
+    const root0 = commit('Root', '--allow-empty');
+    git('switch', '-c', 'other');
+    for (let i = 0; i < 3; i++) commit(`Other ${i}`, '--allow-empty', '--date=2019-01-01T00:00:00+00:00');
+    git('switch', 'main');
+    const tree = git('rev-parse', `${root0}^{tree}`);
+    const missing = 'c'.repeat(40);
+    const object = `tree ${tree}\nparent ${missing}\nauthor Fixture User <fixture@example.invalid> 1700000000 +0000\n`
+      + 'committer Fixture User <fixture@example.invalid> 1700000000 +0000\n\nBroken tip\n';
+    const broken = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'],
+      { input: object, encoding: 'utf8' }).trim();
+    git('update-ref', 'refs/heads/main', broken);
+    const expected = new Set([broken, root0, ...git('log', '--format=%H', 'other').split('\n')]);
+    const history = await openRepositoryHistory(workspace, root, { workspaceId: workspace.id, cursor: 0, kind: 'commit' }, []);
+    const pages = [];
+    let next: number | null = 0;
+    while (next !== null && pages.length < 5) {
+      const page = await history.advance(() => pages.length + 1);
+      pages.push(page);
+      next = page.next;
+    }
+    const refs = pages.flatMap(page => page.nodes.map(node => node.ref));
+    expect(new Set(refs)).toEqual(expected);
+    expect(refs).toHaveLength(expected.size);
+    expect(pages.at(-1)?.warning).toContain(missing);
+  }, 30_000);
 
   it('keeps available shallow commits and explains how to fetch older history', async () => {
     commit('Older', '--allow-empty');

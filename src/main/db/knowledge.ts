@@ -166,18 +166,28 @@ function requireText(value: string, field: string): string {
   return text;
 }
 
-function assertLinkable(db: Db, input: TransferLinkInput): void {
-  if (input.fromConceptId === input.toConceptId) throw new DomainError('INVALID_LINK', 'A concept cannot link to itself.');
-  for (const id of [input.fromConceptId, input.toConceptId]) {
-    if (!getConcept(db, id)) throw new DomainError('CONCEPT_NOT_FOUND', `Concept ${id} does not exist.`);
-  }
+function canonicalLinkEndpoint(db: Db, id: number): number {
+  if (!getConcept(db, id)) throw new DomainError('CONCEPT_NOT_FOUND', `Concept ${id} does not exist.`);
+  const row = db.prepare('SELECT portable_concept_id AS id FROM concept_identity_links WHERE legacy_concept_id = ?').get(id);
+  assert.ok(!row || typeof row.id === 'number');
+  return row ? row.id as number : id;
+}
+
+function assertLinkable(db: Db, input: TransferLinkInput): [number, number] {
+  const from = canonicalLinkEndpoint(db, input.fromConceptId);
+  const to = canonicalLinkEndpoint(db, input.toConceptId);
+  if (from === to) throw new DomainError('INVALID_LINK', 'A concept cannot link to itself.');
   if (input.workspaceId !== undefined && !getWorkspace(db, input.workspaceId)) {
     throw new DomainError('WORKSPACE_NOT_FOUND', 'That workspace no longer exists.');
   }
-  const duplicate = db.prepare(
-    `SELECT 1 FROM transfer_links WHERE min(from_concept_id, to_concept_id) = min(?, ?) AND max(from_concept_id, to_concept_id) = max(?, ?)`,
-  ).get(input.fromConceptId, input.toConceptId, input.fromConceptId, input.toConceptId);
+  const duplicate = db.prepare(`SELECT 1 FROM transfer_links t
+    LEFT JOIN concept_identity_links a ON a.legacy_concept_id = t.from_concept_id
+    LEFT JOIN concept_identity_links b ON b.legacy_concept_id = t.to_concept_id
+    WHERE min(coalesce(a.portable_concept_id, t.from_concept_id), coalesce(b.portable_concept_id, t.to_concept_id)) = min(?, ?)
+      AND max(coalesce(a.portable_concept_id, t.from_concept_id), coalesce(b.portable_concept_id, t.to_concept_id)) = max(?, ?)`)
+    .get(from, to, from, to);
   if (duplicate) throw new DomainError('DUPLICATE_LINK', 'These concepts are already linked.');
+  return [from, to];
 }
 
 /** Creates a transfer link; rejects self-links, unknown endpoints and duplicates (in either direction). */
@@ -186,11 +196,11 @@ export function createTransferLink(db: Db, input: TransferLinkInput): TransferLi
   const provider = requireText(input.provider, 'provider');
   const model = requireText(input.model, 'model');
   const save = () => {
-    assertLinkable(db, input);
+    const [from, to] = assertLinkable(db, input);
     const result = db.prepare(
       `INSERT INTO transfer_links (from_concept_id, to_concept_id, reason, provider, model, workspace_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(input.fromConceptId, input.toConceptId, reason, provider, model, input.workspaceId ?? null, nowIso());
+    ).run(from, to, reason, provider, model, input.workspaceId ?? null, nowIso());
     const saved = db.prepare(`${LINK_SELECT} WHERE id = ?`).get(result.lastInsertRowid) as unknown as LinkRow | undefined;
     assert.ok(saved && saved.reason === reason, 'created link must be readable');
     return saved;
@@ -201,7 +211,18 @@ export function createTransferLink(db: Db, input: TransferLinkInput): TransferLi
 /** Deletes a link by id; returns false when it did not exist. */
 export function deleteTransferLink(db: Db, id: number): boolean {
   assert.ok(Number.isSafeInteger(id) && id > 0, 'link id must be a positive integer');
-  const result = db.prepare('DELETE FROM transfer_links WHERE id = ?').run(id);
-  assert.ok(result.changes <= 1, 'link id is unique');
-  return result.changes === 1;
+  const result = db.prepare(`DELETE FROM transfer_links WHERE id IN (
+    SELECT other.id FROM transfer_links selected
+    LEFT JOIN concept_identity_links sa ON sa.legacy_concept_id = selected.from_concept_id
+    LEFT JOIN concept_identity_links sb ON sb.legacy_concept_id = selected.to_concept_id
+    JOIN transfer_links other
+    LEFT JOIN concept_identity_links oa ON oa.legacy_concept_id = other.from_concept_id
+    LEFT JOIN concept_identity_links ob ON ob.legacy_concept_id = other.to_concept_id
+    WHERE selected.id = ?
+      AND min(coalesce(sa.portable_concept_id, selected.from_concept_id), coalesce(sb.portable_concept_id, selected.to_concept_id))
+        = min(coalesce(oa.portable_concept_id, other.from_concept_id), coalesce(ob.portable_concept_id, other.to_concept_id))
+      AND max(coalesce(sa.portable_concept_id, selected.from_concept_id), coalesce(sb.portable_concept_id, selected.to_concept_id))
+        = max(coalesce(oa.portable_concept_id, other.from_concept_id), coalesce(ob.portable_concept_id, other.to_concept_id))
+  )`).run(id);
+  return result.changes > 0;
 }

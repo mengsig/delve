@@ -100,11 +100,14 @@ export function TutorJobStatus({ onOpen }: { onOpen: (address: LessonAddress) =>
     }
   }
 
-  if (!notices.length && !openError && !saved.error && !dismissError) return null;
+  if (!notices.length && !saved.unreadable.length && !openError && !saved.error && !dismissError) return null;
   return <section className="map-jobs" aria-label="Tutor activity">
     {openError && <p role="alert">{openError}</p>}
     {saved.error && <p role="alert">{saved.error} <button onClick={saved.reload}>Retry loading tutor activity</button></p>}
     {dismissError && <p role="alert">{dismissError}</p>}
-    <ul>{notices.map(job => <JobNotice key={job.id} job={job} onOpen={() => void open(job)} />)}</ul>
+    <ul>
+      {saved.unreadable.map(job => <li className="map-job" key={job.rowKey}><div role="alert">{job.message}</div></li>)}
+      {notices.map(job => <JobNotice key={job.id} job={job} onOpen={() => void open(job)} />)}
+    </ul>
   </section>;
 }

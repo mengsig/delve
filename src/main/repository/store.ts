@@ -35,10 +35,10 @@ function proposalConceptLookup(db: Db, workspaceId: string) {
   const alias = db.prepare(`SELECT c.key FROM concept_identity_links link JOIN concepts c ON c.id = link.portable_concept_id
     WHERE link.legacy_concept_id = ?`);
   return (input: GraphProposal['concepts'][number]) => {
-    if (input.portable) return { ...input, ...portable(input.key, input.title) };
+    if (input.portable) return { ...input, ...portable(input.key, input.title, input.summary) };
     const local = getConceptByKey(db, conceptStorageKey(input.key, false, workspaceId));
     const canonical = local && alias.get(local.id);
-    if (typeof canonical?.key === 'string') return { ...input, ...portable(canonical.key, input.title), portable: true };
+    if (typeof canonical?.key === 'string') return { ...input, key: canonical.key, concept: getConceptByKey(db, canonical.key), portable: true };
     return { ...input, concept: local };
   };
 }

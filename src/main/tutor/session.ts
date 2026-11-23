@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { DomainError } from '../../shared/errors';
-import { lessonKey, type ReaderLesson, type SavedTutorJob, type TutorContract } from '../../shared/reader';
+import { lessonKey, type ReaderLesson, type SavedTutorJob, type TutorContract, type TutorJobEntry } from '../../shared/reader';
 import type { Db } from '../db/connection';
 import { readLesson } from '../reader/ipc';
 import { findTutorJob, listTutorJobs, markTutorJobFailed, markTutorJobReady, removeTutorJob, storeTutorJob } from './jobs';
@@ -59,7 +59,7 @@ export class TutorSession {
     return active?.id === job.id ? active : undefined;
   }
 
-  jobs(): SavedTutorJob[] {
+  jobs(): TutorJobEntry[] {
     return listTutorJobs(this.db).map(job => job.phase === 'running' && !this.active(job)
       ? { ...job, phase: 'failed', ...interrupted } : job);
   }

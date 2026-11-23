@@ -93,6 +93,11 @@ The demo tutor runs entirely offline. The Archon demo includes an illustrative b
 
 ## Global knowledge
 
+Portable concepts can carry verified understanding and lessons across repositories at the same depth.
+A shared provider key or recognized alias must also have a compatible description; a title alone
+does not establish identity. Ambiguous concepts remain scoped to their repository. Older profiles
+are migrated conservatively, retaining their original evidence when descriptions do not agree.
+
 Open **Knowledge** in the header or through Ctrl/⌘-K. The map starts in your workspace’s area when
 it contains concepts. Choose **All workspaces** above the map to see bridges and transfers. The guide
 selects an eligible lesson at your reading depth and explains which prerequisites you already know.

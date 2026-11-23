@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { DatabaseSync } from 'node:sqlite';
-import { normalizedConceptName, portableAlias } from './portable-identity';
+import { compatibleDescriptions, normalizedConceptName, portableAlias } from './portable-identity';
 
 export interface Migration {
   version: number;
@@ -14,6 +14,11 @@ function registerPortableIdentity(db: DatabaseSync): void {
     assert.equal(typeof key, 'string');
     assert.equal(typeof title, 'string');
     return portableAlias(String(key), String(title)) ?? null;
+  });
+  db.function('delve_compatible_descriptions', { deterministic: true, directOnly: true }, (left, right) => {
+    assert.equal(typeof left, 'string');
+    assert.equal(typeof right, 'string');
+    return Number(compatibleDescriptions(String(left), String(right)));
   });
   db.function('delve_normalized_concept', { deterministic: true, directOnly: true }, text => {
     assert.ok(typeof text === 'string');
@@ -265,6 +270,7 @@ export const MIGRATIONS: readonly Migration[] = [
       AND substr(c.key, length('ws/' || c.workspace_id || '/') + 1) NOT LIKE 'change/%'
       AND substr(c.key, length('ws/' || c.workspace_id || '/') + 1) NOT LIKE 'Demo:%'
       AND c.title NOT LIKE 'Demo:%');
+    CREATE INDEX migration_candidates_key ON migration_candidates(general_key, workspace_id);
     CREATE TEMP TABLE migration_portable AS
     SELECT id, coalesce(delve_portable_alias(key, title), key) AS general_key,
       coalesce(delve_portable_alias('', title), delve_normalized_concept(title)) AS normalized_title,
@@ -281,32 +287,28 @@ export const MIGRATIONS: readonly Migration[] = [
       max(normalized_summary) AS description
     FROM migration_candidates
     GROUP BY general_key HAVING count(DISTINCT normalized_title) = 1 AND count(DISTINCT workspace_id) = count(*);
+    CREATE INDEX migration_groups_key ON migration_groups(general_key);
     ALTER TABLE migration_groups ADD COLUMN portable_id INTEGER;
     UPDATE migration_groups AS groups SET portable_id = (
-      SELECT CASE WHEN count(*) = 1 AND min(p.normalized_title) = groups.normalized_title
-        AND (min(p.normalized_summary) = groups.shared_summary OR
-          (groups.known_identity AND groups.description_count <= 1
-            AND (groups.description_count = 0 OR min(p.normalized_summary) IN ('', groups.description))))
+      SELECT CASE WHEN count(*) = 1 AND groups.shared_summary IS NOT NULL
+        AND delve_compatible_descriptions(min(p.normalized_summary), groups.shared_summary)
         THEN min(p.id) END
       FROM migration_portable p WHERE p.general_key = groups.general_key
     );
-    UPDATE migration_groups AS groups SET portable_id = (
-      SELECT CASE WHEN count(*) = 1 THEN min(p.id) END FROM migration_portable p
-      WHERE p.normalized_title = groups.normalized_title AND p.normalized_summary = groups.shared_summary
-    ) WHERE portable_id IS NULL
-      AND NOT EXISTS (SELECT 1 FROM migration_portable p WHERE p.general_key = groups.general_key);
-    DELETE FROM migration_groups WHERE portable_id IS NOT NULL AND EXISTS (
-      SELECT 1 FROM migration_candidates a JOIN migration_candidates b ON a.workspace_id = b.workspace_id AND a.id <> b.id
-      JOIN migration_groups other ON other.general_key = b.general_key
-      WHERE a.general_key = migration_groups.general_key AND other.portable_id = migration_groups.portable_id
-    );
-    DELETE FROM migration_groups WHERE portable_id IS NULL AND (
-      workspace_count < 2 OR (NOT known_identity AND shared_summary IS NULL)
+    CREATE TEMP TABLE migration_duplicate_memberships AS
+    SELECT m.workspace_id, g.portable_id FROM migration_candidates m
+    JOIN migration_groups g ON g.general_key = m.general_key
+    WHERE g.portable_id IS NOT NULL
+    GROUP BY m.workspace_id, g.portable_id HAVING count(*) > 1;
+    CREATE INDEX migration_duplicate_memberships_id ON migration_duplicate_memberships(portable_id);
+    DELETE FROM migration_groups WHERE portable_id IN (SELECT portable_id FROM migration_duplicate_memberships);
+    DELETE FROM migration_groups WHERE shared_summary IS NULL OR (portable_id IS NULL AND (
+      workspace_count < 2
       OR EXISTS (SELECT 1 FROM migration_portable p WHERE p.general_key = migration_groups.general_key)
-      OR EXISTS (SELECT 1 FROM migration_portable p
-        WHERE p.normalized_title = migration_groups.normalized_title AND p.normalized_summary = migration_groups.shared_summary)
+      OR EXISTS (SELECT 1 FROM migration_portable p WHERE p.normalized_title = migration_groups.normalized_title)
       OR EXISTS (SELECT 1 FROM concepts c WHERE c.key = migration_groups.general_key)
-    );
+    ));
+    DROP TABLE migration_duplicate_memberships;
     INSERT INTO concepts (key, title, summary, portable, workspace_id, created_at, updated_at)
     SELECT g.general_key, c.title, c.summary, 1, NULL, c.created_at, c.updated_at
     FROM migration_groups g JOIN concepts c ON c.id = g.sample_id WHERE g.portable_id IS NULL;

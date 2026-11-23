@@ -117,6 +117,20 @@ describe('transfer links', () => {
     expect(getGlobalKnowledgeGraph(db).links).toEqual([]);
   });
 
+  it('deduplicates and removes links by canonical identity', () => {
+    const a = upsertConcept(db, { key: 'canonical-a', title: 'A', portable: true, workspaceId: alpha });
+    const b = upsertConcept(db, { key: 'canonical-b', title: 'B', portable: true, workspaceId: alpha });
+    const legacy = upsertConcept(db, { key: 'legacy-a', title: 'A', portable: false, workspaceId: alpha });
+    db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, portable_concept_id) VALUES (?, ?)').run(legacy.id, a.id);
+    const first = createTransferLink(db, link(legacy.id, b.id));
+    expect(first.fromConceptId).toBe(a.id);
+    expect(() => createTransferLink(db, link(b.id, legacy.id))).toThrow(/already linked/);
+    db.prepare(`INSERT INTO transfer_links (from_concept_id,to_concept_id,reason,provider,model,created_at)
+      VALUES (?,?,'legacy','fixture','fixture','t')`).run(legacy.id, b.id);
+    expect(deleteTransferLink(db, first.id)).toBe(true);
+    expect(getGlobalKnowledgeGraph(db).links).toEqual([]);
+  });
+
   it('rejects self links, unknown endpoints, duplicates in either direction and blank fields', () => {
     const a = upsertConcept(db, { key: 'a', title: 'A', portable: true, workspaceId: alpha });
     const b = upsertConcept(db, { key: 'b', title: 'B', portable: true, workspaceId: alpha });
