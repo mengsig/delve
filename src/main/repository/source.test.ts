@@ -228,6 +228,9 @@ describe('Git changes with missing parents', () => {
     });
   });
 
+});
+
+describe('Git change reachability with missing parents', () => {
   it('rejects an unreachable commit even when its parent is missing', async () => {
     const parent = commit('Missing parent', '--allow-empty');
     const boundary = commit('Unreachable boundary', '--allow-empty');
@@ -235,6 +238,17 @@ describe('Git changes with missing parents', () => {
     git('update-ref', 'refs/heads/main', unrelated);
     await rm(join(repo, '.git', 'objects', parent.slice(0, 2), parent.slice(2)));
     await expect(readChange(repo, workspace, 'commit', boundary)).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
+  });
+
+  it('rejects an unreachable merge when only its second parent is missing', async () => {
+    const first = commit('First parent', '--allow-empty');
+    const missing = 'a'.repeat(40);
+    const tree = git('rev-parse', `${first}^{tree}`);
+    const raw = `tree ${tree}\nparent ${first}\nparent ${missing}\nauthor Fixture User <fixture@example.invalid> 1700000000 +0000\n`
+      + 'committer Fixture User <fixture@example.invalid> 1700000000 +0000\n\nUnreachable merge\n';
+    const merge = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'],
+      { input: raw, encoding: 'utf8' }).trim();
+    await expect(readChange(repo, workspace, 'commit', merge)).rejects.toMatchObject({ code: 'INVALID_COMMIT' });
   });
 
   it('opens a missing-parent boundary reachable only from detached HEAD', async () => {

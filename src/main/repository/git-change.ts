@@ -4,7 +4,7 @@ import { gitOutput } from './git-diagnostics';
 import { gitHistoryNode, readCommitLog, withMissingParents } from './git-history';
 import { DomainError } from '../../shared/errors';
 import { changeTitle, gitReader, nulRecords, readBlob, requireReachable, resolveCommit,
-  withoutChangePatches, ReachabilityCheckFailed, type ChangeSnapshot, type ChangePatch, type GitReader } from './git-reader';
+  withoutChangePatches, type ChangeSnapshot, type ChangePatch, type GitReader } from './git-reader';
 import { GIT_NULL_FILE } from './source-process';
 import { isSourcePath, MAX_DIFF_BYTES, MAX_DIFF_FILES, MAX_PATCH_BYTES, OBJECT_ID, sourceText } from './source-policy';
 
@@ -84,21 +84,14 @@ async function missingParents(reader: GitReader, parents: string[]): Promise<str
   return missing;
 }
 
-async function requireChangeReachable(reader: GitReader, commit: string, parents: string[]): Promise<void> {
+async function effectiveParents(reader: GitReader, commit: string, parents: string[]): Promise<string[]> {
   assert.ok(OBJECT_ID.test(commit));
   assert.ok(parents.every(parent => OBJECT_ID.test(parent)));
-  try {
-    await requireReachable(reader, commit);
-  } catch (error) {
-    if (!(error instanceof ReachabilityCheckFailed) || error.result.status !== 128 || error.result.output.length) throw error;
-    const lines = error.result.diagnostic.split(/\r?\n/).filter(line => /^(?:error|fatal):/.test(line));
-    const parent = /^error: Could not read ([a-f0-9]+)$/.exec(lines[0] ?? '')?.[1];
-    if (!parent || !parents.includes(parent) || lines[1] !== `error: could not parse commit ${parent}`
-      || (lines.length !== 2 && !(lines.length === 3 && lines[2] === 'fatal: failed to check reachability'))) throw error;
-    const missing = await missingParents(reader, parents);
-    if (!missing.includes(parent)) throw error;
-    await withMissingParents(reader, commit, parents, missing, git => requireReachable(git, commit));
-  }
+  const result = await reader.run(['rev-list', '--no-walk', '--parents', commit, '--'], COMMIT_LIMIT);
+  const [head, ...effective] = gitOutput(result, 'Could not read the parents of that commit.', COMMIT_LIMIT).toString('utf8').trim().split(' ');
+  assert.equal(head, commit);
+  assert.ok(effective.length === 0 || (effective.length === parents.length && effective.every((parent, i) => parent === parents[i])));
+  return effective;
 }
 
 async function openGitChange(path: string, ref: string) {
@@ -106,11 +99,13 @@ async function openGitChange(path: string, ref: string) {
   const reader = await gitReader(path);
   const commit = await resolveCommit(reader, ref);
   const { title, parents, description } = await commitInfo(reader, commit);
-  await requireChangeReachable(reader, commit, parents);
+  const effective = await effectiveParents(reader, commit, parents);
+  const missing = await missingParents(reader, effective);
+  await withMissingParents(reader, commit, parents, missing, git => requireReachable(git, commit));
   const [parent] = parents;
   const snapshot: ChangeSnapshot = { commit, base: parent, title, description, diff: '', partial: false, files: [] };
   const revisions = parent ? [parent, commit] : [commit];
-  if (parent && (await missingParents(reader, [parent])).length) {
+  if (parent && (missing.includes(parent) || (!effective.length && (await missingParents(reader, [parent])).length))) {
     const coverageNote = `Git parent ${parent} is missing from the local snapshot.`;
     return { reader, snapshot: { ...snapshot, partial: true, coverageNote }, revisions: null, parents };
   }

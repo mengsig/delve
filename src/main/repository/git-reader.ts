@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { DomainError } from '../../shared/errors';
-import { gitSource, completedOutput, type CommandResult } from './source-process';
+import { gitSource, completedOutput } from './source-process';
 import { isSourcePath, MAX_BLOB_BYTES, MAX_READ_BYTES, MAX_READ_FILES, OBJECT_ID, sourceText } from './source-policy';
 
 const MAX_TREE_BYTES = 2 * 1024 * 1024;
@@ -78,17 +78,6 @@ export function nulRecords(output: Buffer): string[] {
 
 export class MissingSnapshotCommit extends DomainError {}
 
-export class ReachabilityCheckFailed extends DomainError {
-  constructor(message: string, readonly result: CommandResult) {
-    super('SOURCE_READ_FAILED', message);
-  }
-}
-
-function reachabilityOutput(result: CommandResult, message: string): Buffer {
-  if (!result.truncated && result.status !== 0) throw new ReachabilityCheckFailed(message, result);
-  return completedOutput(result, message);
-}
-
 export async function resolveCommit(reader: GitReader, ref: string): Promise<string> {
   if (ref !== 'HEAD' && !/^[a-fA-F0-9]{7,64}$/.test(ref)) {
     throw new DomainError('INVALID_COMMIT', 'Choose a hexadecimal Git commit ID.');
@@ -109,12 +98,12 @@ export async function requireReachable(reader: GitReader, commit: string): Promi
   assert.ok(OBJECT_ID.test(commit));
   const result = await reader.run(['for-each-ref', '--count=1', `--contains=${commit}`, '--format=%(objectname)',
     'refs/heads', 'refs/remotes', 'refs/tags'], 1024);
-  const ref = reachabilityOutput(result, 'Could not check whether that commit is reachable.').toString('utf8').trim();
+  const ref = completedOutput(result, 'Could not check whether that commit is reachable.').toString('utf8').trim();
   if (OBJECT_ID.test(ref)) return;
   assert.equal(ref, '', 'for-each-ref must return an object ID or no matches');
   const ancestor = await reader.run(['merge-base', '--is-ancestor', commit, 'HEAD'], 1024);
   if (ancestor.status === 1) throw new MissingSnapshotCommit('INVALID_COMMIT', 'That commit is outside the available repository history.');
-  reachabilityOutput(ancestor, 'Could not check whether that commit is reachable from HEAD.');
+  completedOutput(ancestor, 'Could not check whether that commit is reachable from HEAD.');
 }
 
 async function treeFiles(reader: GitReader, commit: string, paths: string[] = []): Promise<{ files: TreeFile[]; partial: boolean }> {
