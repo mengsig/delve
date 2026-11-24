@@ -6,6 +6,7 @@ import { cacheModel, selectModel } from '../providers/model';
 import { readLesson, readerHandlers } from '../reader/ipc';
 import { baselineReply } from '../repository/schemas';
 import { cachedGeneration, digest, latestBrief, persistGeneration, useCachedGeneration, type ApprovedSource } from '../repository/store';
+import { changeFootprintKey, changeIdentity } from './change-concept-identity';
 import { upsertConcept } from './concepts';
 import { listEvidence, recordEvidence } from './evidence';
 import { readWorkspaceGraph } from './graph';
@@ -67,7 +68,7 @@ function seedSavedChange(selection: ChangeRef, depth: Depth, cacheKey: string, a
     result, proposal, next_concept, reason, created_at, last_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'delve.change/1',
     ?, ?, ?, 'Start here.', '2026-01-01', (SELECT coalesce(max(last_used), 0) + 1 FROM repository_generations))`)
     .run(cacheKey, workspaceId, snapshotId, selection.kind, selection.ref, depth, provider, model,
-      JSON.stringify(result), JSON.stringify({ concepts: [affected], touched: [affected.key] }), touchedId);
+      JSON.stringify(result), JSON.stringify({ concepts: [affected], touched: [affected.key], recommendation: { key: affected.key } }), touchedId);
   return { ...lesson, conceptId: overview.id };
 }
 
@@ -139,6 +140,74 @@ it('recovers a released footprint that was only linked as a prerequisite', () =>
   expect(after.concepts).toHaveLength(before.concepts.length);
   expect(after.edges.filter(edge => edge.conceptId === target)).toEqual([{ conceptId: target, prerequisiteId: known }]);
   expect(after.concepts.find(c => c.id === known)?.masteredDepth).toBe('high');
+});
+
+it.each([true, false])('recovers a uniquely attributable title-derived footprint (directly touched: %s)', touched => {
+  const input = { key: 'sending-data', title: 'TCP', summary: 'Messages must arrive in order.', portable: true };
+  upsertConcept(db, { ...input, key: 'tcp', summary: 'This conflicting portable definition already exists.', workspaceId });
+  const learned = createFootprint({ ...input, portable: false }, ['tcp', input.summary.toLowerCase()]);
+  const target = touched ? learned : createFootprint(footprint);
+  seedSavedChange(pull, 'high', 'saved', touched ? input : footprint, target);
+  if (!touched) {
+    const edge = { concept: footprint.key, prerequisite: input.key };
+    db.prepare("UPDATE repository_generations SET proposal = ? WHERE cache_key = 'saved'").run(JSON.stringify({
+      concepts: [footprint, input], edges: [edge], touched: [footprint.key], recommendation: { key: footprint.key },
+    }));
+    db.prepare('INSERT INTO concept_edges VALUES (?, ?, ?)').run(target, learned, '2026-01-01');
+  }
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: learned, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+  migrate(db);
+  const before = getGlobalKnowledgeGraph(db);
+  const result = touched ? regenerate(pull, input) : regenerate(pull, footprint, 'medium', input);
+  expect(result).toMatchObject({ brief: { touched: [{ id: target }] } });
+  const after = getGlobalKnowledgeGraph(db);
+  expect(after.concepts).toHaveLength(before.concepts.length);
+  expect(after.edges).toEqual(before.edges);
+  expect(after.concepts.find(c => c.id === learned)?.masteredDepth).toBe('high');
+});
+
+it('keeps competing keys from acquiring proof from a shared title-derived footprint', () => {
+  const first = { key: 'sending-data', title: 'TCP', summary: 'Messages must arrive in order.', portable: true };
+  const second = { ...first, key: 'handling-requests' };
+  const legacy = createFootprint({ ...first, portable: false }, ['tcp', first.summary.toLowerCase()]);
+  seedSavedChange(pull, 'high', 'first', first, legacy);
+  seedSavedChange(commit, 'high', 'second', second, legacy);
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: legacy, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+  migrate(db);
+
+  for (const [selection, input] of [[pull, first], [commit, second]] as const) {
+    expect(latestBrief(db, { ...selection, workspaceId, depth: 'high', provider: 'codex' })?.touched).toMatchObject([{ id: legacy }]);
+    const result = regenerate(selection, input);
+    if (result.kind !== 'change') throw new Error('Expected a saved change.');
+    const next = result.brief.touched[0]!.id;
+    expect(next).not.toBe(legacy);
+    expect(listEvidence(db, next)).toEqual([]);
+  }
+  expect(listEvidence(db, legacy)).toMatchObject([{ depth: 'high', masteryVerified: true }]);
+});
+
+it('stabilizes regeneration when two compatible released bindings both persisted locally', () => {
+  const input = { key: 'tcp', title: 'TCP', summary: 'Messages arrive in order.', portable: false };
+  const summary = input.summary.toLowerCase();
+  upsertConcept(db, { ...input, portable: true, summary: 'Another meaning occupies the global key.', workspaceId });
+  const requestedPortable = createFootprint(input, ['tcp', summary]);
+  const requestedLocal = createFootprint(input, ['tcp', 'tcp', summary]);
+  seedSavedChange(pull, 'high', 'requested-portable', { ...input, portable: true }, requestedPortable);
+  seedSavedChange(pull, 'low', 'requested-local', input, requestedLocal);
+  const scope = { workspaceId, change: changeIdentity(pull.kind, pull.ref, base, head) };
+  const occupied = upsertConcept(db, { ...input, key: changeFootprintKey(scope, input), workspaceId });
+  migrate(db);
+
+  const first = regenerate(pull, { ...input, portable: true });
+  if (first.kind !== 'change') throw new Error('Expected a saved change.');
+  const stable = first.brief.touched[0]!.id;
+  expect([requestedPortable, requestedLocal, occupied.id]).not.toContain(stable);
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: stable, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const count = getGlobalKnowledgeGraph(db).concepts.length;
+  expect(regenerate(pull, input, 'high')).toMatchObject({ brief: { touched: [{ id: stable }] } });
+  expect(regenerate(pull, { ...input, portable: true }, 'low')).toMatchObject({ brief: { touched: [{ id: stable }] } });
+  expect(getGlobalKnowledgeGraph(db).concepts).toHaveLength(count);
+  expect(listEvidence(db, stable)).toMatchObject([{ depth: 'medium', masteryVerified: true }]);
 });
 
 it.each(['tcp', 'sending-data'])('preserves the schema-9 baseline binding for %s without relying on its title', key => {

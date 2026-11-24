@@ -15,11 +15,11 @@ import { plainConceptTitle } from '../../shared/plain-language';
 import { cacheModel, selectModel } from '../providers/model';
 import { baselineReply, type ChangeReply, type GraphProposal } from './schemas';
 import { portableConceptLookup } from './portable-concepts';
-import { baselineConceptFingerprint, compatibleConceptMeanings, compatiblePortableAliases, compatibleScopedMeanings, normalizedConceptName, portableAlias } from '../db/portable-identity';
+import { baselineConceptFingerprint, compatibleConceptMeanings, compatiblePortableAliases, compatibleScopedMeanings, portableAlias } from '../db/portable-identity';
 import { findPortableConcept } from '../db/portable-concepts';
 import { saveFoundations } from '../tutor/foundation-progress';
 import { resolveTutorPrerequisite } from '../db/tutor-prerequisites';
-import { changeIdentity, findChangeOverview, findScopedChangeKey, overviewKey, rememberChangeConcept, type ChangeConceptScope } from '../db/change-concept-identity';
+import { changeFootprintKey, changeIdentity, findChangeOverview, findScopedChangeKey, overviewKey, rememberChangeConcept, type ChangeConceptScope } from '../db/change-concept-identity';
 
 export interface ApprovedSource {
   request: RepoRequest;
@@ -199,14 +199,13 @@ function resolveChangeFootprint(db: Db, scope: ChangeConceptScope, overview: Con
   if (prior) return using(prior);
   const direct = directChangeConcept(db, workspaceId, input);
   if (direct?.concept) return direct;
-  const foundation = reply.foundations?.find(f => f.key === input.key && compatibleConceptMeanings(f, input));
+  const foundation = reply.foundations?.find(f => f.key === input.key && compatibleConceptMeanings(input, f));
   if (foundation) return using(resolveTutorPrerequisite(db, workspaceId, foundation));
   const alias = portableAlias(input.key, input.title);
   if (firstOverview && !input.portable && reply.overviewConceptKey === input.key
     && compatiblePortableAliases(alias, portableAlias('', overview.title))) return using(overview);
   if (direct) return direct;
-  const stem = 'change/' + digest([scope.change, input.key, normalizedConceptName(input.summary),
-    alias === null ? normalizedConceptName(input.title) : alias]);
+  const stem = changeFootprintKey(scope, input);
   let key = stem;
   for (let suffix = 1; getConceptByKey(db, prefix + key); suffix++) key = stem + '-' + suffix;
   return { key, concept: null, portable: false };

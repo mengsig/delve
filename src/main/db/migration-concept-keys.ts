@@ -1,44 +1,73 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { changeIdentity, rememberChangeConcept } from './change-concept-identity';
+import { changeIdentity, rememberChangeConcept, type ChangeConceptScope } from './change-concept-identity';
 import { canonicalConceptId, getConcept, getConceptByKey, type Concept } from './concepts';
 import type { Db } from './connection';
 import { findPortableConcept } from './portable-concepts';
 import { baselineConceptFingerprint, compatibleScopedMeanings, portableAlias, releasedScopedFingerprint } from './portable-identity';
 
+const savedKey = z.string().regex(/^[a-z0-9][a-z0-9._/-]{0,149}$/);
 const savedProposal = z.object({ concepts: z.array(z.object({
-  key: z.string().regex(/^[a-z0-9][a-z0-9._/-]{0,149}$/), title: z.string().trim().min(1), summary: z.string().trim().min(1), portable: z.boolean(),
+  key: savedKey, title: z.string().trim().min(1), summary: z.string().trim().min(1), portable: z.boolean(),
 })).max(60) });
+const savedChangeProposal = savedProposal.extend({
+  touched: z.array(savedKey).max(60), recommendation: z.object({ key: savedKey.nullable() }).optional(),
+});
 const savedBrief = z.object({ brief: z.object({
   conceptId: z.int().positive(), base: z.string().nullish(), touched: z.array(z.object({ id: z.int().positive() })),
 }) });
 type Footprint = z.infer<typeof savedProposal>['concepts'][number];
+type ArchivedBrief = z.infer<typeof savedBrief>['brief'];
+type ArchivedProposal = z.infer<typeof savedChangeProposal>;
+type RecoveredFootprint = { concept: Concept; titleHash: boolean };
 
-function savedFootprint(db: Db, workspaceId: string, snapshotId: number, ids: Set<number>, input: Footprint): Concept | null {
+function attributedFootprints(proposal: ArchivedProposal, brief: ArchivedBrief, next: number): Map<string, number> {
+  assert.ok(brief.conceptId > 0);
+  assert.ok(next > 0);
+  const ids = new Map<string, number>();
+  // Schema 9 wrote touched IDs in proposal order but collapsed repeated IDs.
+  if (proposal.touched.length === brief.touched.length) {
+    proposal.touched.forEach((key, index) => ids.set(key, brief.touched[index]!.id));
+  }
+  const key = proposal.recommendation?.key;
+  if (key && next !== brief.conceptId) {
+    const touched = ids.get(key);
+    if (touched === undefined || touched === next) ids.set(key, next);
+    else ids.delete(key);
+  }
+  return ids;
+}
+
+function savedFootprint(db: Db, workspaceId: string, snapshotId: number, explicitId: number | undefined,
+  input: Footprint, hashOwners: Map<number, string | null>): RecoveredFootprint | null {
   assert.ok(db.isTransaction && snapshotId > 0);
   assert.ok(input.key && workspaceId);
   const prefix = `ws/${workspaceId}/`;
-  const candidates = [getConceptByKey(db, prefix + input.key), input.portable ? findPortableConcept(db, input) : null];
-  const label = portableAlias(input.key, input.title);
-  // Some released portable fingerprints used a recognized title in place of the key.
-  if (!input.portable || label === null || label === portableAlias(input.key, '')) {
-    const hash = createHash('sha256').update(JSON.stringify(['concept', snapshotId, releasedScopedFingerprint(input)])).digest('hex');
-    candidates.push(getConceptByKey(db, prefix + 'change/' + hash));
-  }
+  const hash = createHash('sha256').update(JSON.stringify(['concept', snapshotId, releasedScopedFingerprint(input)])).digest('hex');
+  const generated = getConceptByKey(db, prefix + 'change/' + hash);
+  const candidates = [getConceptByKey(db, prefix + input.key), input.portable ? findPortableConcept(db, input) : null, generated];
   const membership = db.prepare('SELECT 1 FROM snapshot_concepts WHERE snapshot_id = ? AND concept_id = ?');
-  const attributed = new Map<number, Concept>();
-  const matches = new Map<number, Concept>();
+  const matches = new Map<number, RecoveredFootprint>();
+  let attributed: RecoveredFootprint | undefined;
   for (const saved of candidates) {
     if (!saved || !compatibleScopedMeanings(input, { ...saved, key: saved.portable ? saved.key : input.key })) continue;
     const canonical = getConcept(db, canonicalConceptId(db, saved.id));
     assert.ok(canonical && (canonical.portable || canonical.workspaceId === workspaceId));
     if (!compatibleScopedMeanings(input, { ...canonical, key: canonical.portable ? canonical.key : input.key })) continue;
-    if (ids.has(saved.id) || ids.has(canonical.id)) attributed.set(canonical.id, canonical);
-    if (membership.get(snapshotId, saved.id)) matches.set(canonical.id, canonical);
+    const explicit = saved.id === explicitId || canonical.id === explicitId;
+    if (!explicit && !membership.get(snapshotId, saved.id)) continue;
+    const titleHash = saved.id === generated?.id && input.portable && typeof portableAlias(input.key, input.title) === 'string';
+    const binding = { concept: canonical, titleHash };
+    if (titleHash) {
+      const key = portableAlias(input.key, '') ?? input.key;
+      const owner = hashOwners.get(canonical.id);
+      hashOwners.set(canonical.id, owner === undefined || owner === key ? key : null);
+    }
+    if (explicit) attributed = binding;
+    matches.set(canonical.id, binding);
   }
-  const candidatesForChange = attributed.size ? attributed : matches;
-  return candidatesForChange.size === 1 ? candidatesForChange.values().next().value! : null;
+  return attributed ?? (matches.size === 1 ? matches.values().next().value! : null);
 }
 
 function indexSavedChanges(db: Db): void {
@@ -47,6 +76,8 @@ function indexSavedChanges(db: Db): void {
     FROM repository_generations g JOIN snapshots s ON s.id = g.snapshot_id
     WHERE g.kind IN ('pr', 'commit') AND g.schema_version = 'delve.change/1' ORDER BY g.id`).iterate();
   const overviews = new Map<string, { workspaceId: string; change: string; ids: Set<number> }>();
+  const hashOwners = new Map<number, string | null>();
+  const hashed: { scope: ChangeConceptScope; concept: Concept; input: Footprint }[] = [];
   for (const { workspace_id: workspaceId, kind, ref, snapshot_id: snapshotId, commit_sha: head, result, proposal, next_concept } of rows) {
     assert.ok(typeof workspaceId === 'string' && typeof snapshotId === 'number');
     assert.ok(typeof ref === 'string' && typeof head === 'string' && (kind === 'pr' || kind === 'commit'));
@@ -63,14 +94,19 @@ function indexSavedChanges(db: Db): void {
       entry.ids.add(overview.id);
       overviews.set(scopeKey, entry);
     }
-    const parsed = savedProposal.safeParse(JSON.parse(proposal));
+    const parsed = savedChangeProposal.safeParse(JSON.parse(proposal));
     if (!parsed.success) continue;
-    const ids = new Set([...brief.touched.map(({ id }) => id), next_concept]);
-    ids.delete(brief.conceptId);
+    const ids = attributedFootprints(parsed.data, brief, next_concept);
     for (const input of parsed.data.concepts) {
-      const concept = savedFootprint(db, workspaceId, snapshotId, ids, input);
-      if (concept) rememberChangeConcept(db, scope, concept, input);
+      const recovered = savedFootprint(db, workspaceId, snapshotId, ids.get(input.key), input, hashOwners);
+      if (!recovered || recovered.concept.id === brief.conceptId) continue;
+      if (recovered.titleHash) hashed.push({ scope, concept: recovered.concept, input });
+      else rememberChangeConcept(db, scope, recovered.concept, input);
     }
+  }
+  // Schema 9 could route distinct keys to one generated hash through a familiar title.
+  for (const { scope, concept, input } of hashed) {
+    if (hashOwners.get(concept.id) === (portableAlias(input.key, '') ?? input.key)) rememberChangeConcept(db, scope, concept, input);
   }
   for (const { ids, ...scope } of overviews.values()) {
     if (ids.size !== 1) continue;

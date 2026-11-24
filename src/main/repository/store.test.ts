@@ -84,6 +84,27 @@ it('keeps an alias contradiction separate from a verified scoped key on regenera
   expect(concepts.find(concept => concept.id === other)?.masteredDepth).toBeNull();
 });
 
+it('keeps a generic title from lending its key to conflicting recognized aliases', () => {
+  const input = { key: 'transport', title: 'Transport', summary: 'Messages arrive in order.', portable: true };
+  const approved = source({ kind: 'pr', ref: '42' }, previous);
+  const generate = (title: string) => {
+    const result = persistGeneration(db, { ...approved, cacheKey: title }, explain({ ...input, title }));
+    if (result.kind !== 'change') throw new Error('Expected a saved change.');
+    return result.brief.touched[0]!.id;
+  };
+  const generic = generate('Transport');
+  const tcp = generate('TCP');
+  expect(tcp).not.toBe(generic);
+  recordEvidence(db, { workspaceId, conceptId: tcp, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const http = generate('HTTP');
+  expect(new Set([generic, tcp, http]).size).toBe(3);
+  const again = persistGeneration(db, { ...approved, cacheKey: 'tcp-again' }, explain({ ...input, title: 'TCP' }));
+  expect(again).toMatchObject({ brief: { touched: [{ id: tcp }] } });
+  const { concepts } = getGlobalKnowledgeGraph(db);
+  expect(concepts.find(concept => concept.id === tcp)?.masteredDepth).toBe('medium');
+  expect(concepts.find(concept => concept.id === http)?.masteredDepth).toBeNull();
+});
+
 it('does not bind a foundation to a verified footprint with conflicting aliases', () => {
   const input = { key: 'transport', title: 'TCP', summary: 'Messages arrive in order.', portable: true };
   const learned = upsertConcept(db, { ...input, workspaceId });

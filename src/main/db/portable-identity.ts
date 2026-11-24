@@ -38,9 +38,12 @@ export function compatibleDescriptions(left: string, right: string): boolean {
   return first.length > 0 && first === second;
 }
 
-export function compatibleConceptMeanings(left: ConceptMeaning, right: ConceptMeaning): boolean {
-  return compatibleDescriptions(left.summary, right.summary)
-    && compatiblePortableAliases(portableAlias(left.key, left.title), portableAlias(right.key, right.title));
+export function compatibleConceptMeanings(input: ConceptMeaning, saved: ConceptMeaning): boolean {
+  const claim = portableAlias(input.key, input.title);
+  const known = portableAlias(saved.key, saved.title);
+  // An unrecognized title cannot establish a specific identity claimed by a later reply.
+  return claim !== null && known !== null && (claim === undefined || claim === known)
+    && compatibleDescriptions(input.summary, saved.summary);
 }
 
 export function compatibleScopedMeanings(input: ConceptMeaning, saved: ConceptMeaning): boolean {

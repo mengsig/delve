@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { getConcept, type Concept } from './concepts';
 import type { Db } from './connection';
-import { compatibleScopedMeanings, type ConceptMeaning } from './portable-identity';
+import { compatiblePortableAliases, compatibleScopedMeanings, normalizedConceptName, portableAlias, type ConceptMeaning } from './portable-identity';
 
 export type ChangeConceptScope = { workspaceId: string; change: string };
 
@@ -14,6 +14,15 @@ export function changeIdentity(kind: 'pr' | 'commit', ref: string, base: string 
 
 export const overviewKey = 'overview';
 const providerKey = (key: string) => 'key:' + key;
+
+export function changeFootprintKey(scope: ChangeConceptScope, input: ConceptMeaning): string {
+  assert.match(scope.change, /^[a-f0-9]{64}$/);
+  assert.ok(input.key && input.summary.trim());
+  const alias = portableAlias(input.key, input.title);
+  const label = alias === null ? normalizedConceptName(input.title) : alias;
+  const digest = createHash('sha256').update(JSON.stringify([scope.change, input.key, normalizedConceptName(input.summary), label])).digest('hex');
+  return 'change/' + digest;
+}
 
 export function findChangeOverview(db: Db, scope: ChangeConceptScope): Concept | null {
   const rows = db.prepare('SELECT concept_id FROM change_concept_keys WHERE workspace_id = ? AND change_id = ? AND identity = ?')
@@ -40,11 +49,18 @@ export function findScopedChangeKey(db: Db, scope: ChangeConceptScope, input: Co
     if (!compatibleScopedMeanings(input, { key, title, summary })) continue;
     const concept = getConcept(db, concept_id);
     assert.ok(concept && (concept.portable || concept.workspaceId === scope.workspaceId));
-    const meaning = { key: concept.portable ? concept.key : key, title: concept.title, summary: overview ? summary : concept.summary };
-    if (compatibleScopedMeanings(input, meaning)) compatible.push(concept);
+    const conceptKey = concept.portable ? concept.key : key;
+    const matches = overview
+      ? compatiblePortableAliases(portableAlias(key, input.title), portableAlias(conceptKey, concept.title))
+      : compatibleScopedMeanings(input, { ...concept, key: conceptKey });
+    if (matches) compatible.push(concept);
   }
+  if (compatible.length <= 1) return compatible[0] ?? null;
+  const stem = `ws/${scope.workspaceId}/${changeFootprintKey(scope, input)}`;
+  const variant = compatible.find(concept => concept.key === stem || concept.key.startsWith(stem + '-'));
+  if (variant) return variant;
   // Released profiles can already have an independently saved local and portable concept.
-  const matches = compatible.length > 1 ? compatible.filter(concept => concept.portable === portable) : compatible;
+  const matches = compatible.filter(concept => concept.portable === portable);
   return matches.length === 1 ? matches[0]! : null;
 }
 
