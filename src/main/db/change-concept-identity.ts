@@ -35,7 +35,10 @@ export function findChangeOverview(db: Db, scope: ChangeConceptScope): Concept |
   return overview;
 }
 
-export function findScopedChangeKey(db: Db, scope: ChangeConceptScope, input: ConceptMeaning & { portable: boolean }): Concept | null {
+export const ambiguousChangeKey = 'ambiguous';
+
+export function findScopedChangeKey(db: Db, scope: ChangeConceptScope, input: ConceptMeaning & { portable: boolean }):
+  Concept | typeof ambiguousChangeKey | null {
   const { key, portable } = input;
   assert.match(scope.change, /^[a-f0-9]{64}$/);
   assert.ok(scope.workspaceId && key);
@@ -59,6 +62,9 @@ export function findScopedChangeKey(db: Db, scope: ChangeConceptScope, input: Co
   const stem = `ws/${scope.workspaceId}/${changeFootprintKey(scope, input)}`;
   const variant = compatible.find(concept => concept.key === stem || concept.key.startsWith(stem + '-'));
   if (variant) return variant;
+  // A reply that names no recognized meaning cannot choose between conflicting saved meanings of its key.
+  const meanings = new Set(compatible.map(concept => portableAlias(concept.portable ? concept.key : key, concept.title)));
+  if (meanings.size > 1) return ambiguousChangeKey;
   // Released profiles can already have an independently saved local and portable concept.
   const matches = compatible.filter(concept => concept.portable === portable);
   return matches.length === 1 ? matches[0]! : null;

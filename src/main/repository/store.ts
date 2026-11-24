@@ -19,7 +19,7 @@ import { baselineConceptFingerprint, compatibleConceptMeanings, compatibleDescri
 import { findPortableConcept } from '../db/portable-concepts';
 import { saveFoundations } from '../tutor/foundation-progress';
 import { resolveTutorPrerequisite } from '../db/tutor-prerequisites';
-import { changeFootprintKey, changeIdentity, findChangeOverview, findScopedChangeKey, overviewKey, rememberChangeConcept, type ChangeConceptScope } from '../db/change-concept-identity';
+import { ambiguousChangeKey, changeFootprintKey, changeIdentity, findChangeOverview, findScopedChangeKey, overviewKey, rememberChangeConcept, type ChangeConceptScope } from '../db/change-concept-identity';
 
 export interface ApprovedSource {
   request: RepoRequest;
@@ -196,6 +196,7 @@ function resolveChangeFootprint(db: Db, scope: ChangeConceptScope, overview: Con
   const prefix = `ws/${workspaceId}/`;
   const using = (concept: Concept) => ({ key: concept.portable ? concept.key : concept.key.slice(prefix.length), portable: concept.portable, concept });
   const prior = findScopedChangeKey(db, scope, input);
+  if (prior === ambiguousChangeKey) return newScopedFootprint(db, scope, input);
   if (prior) return using(prior);
   const direct = directChangeConcept(db, workspaceId, input);
   if (direct?.concept) return direct;
@@ -205,9 +206,16 @@ function resolveChangeFootprint(db: Db, scope: ChangeConceptScope, overview: Con
   if (firstOverview && !input.portable && reply.overviewConceptKey === input.key
     && compatiblePortableAliases(alias, portableAlias('', overview.title))) return using(overview);
   if (direct) return direct;
+  return newScopedFootprint(db, scope, input);
+}
+
+function newScopedFootprint(db: Db, scope: ChangeConceptScope, input: ProposalConcept): ResolvedConcept {
+  assert.ok(db.isTransaction);
+  const prefix = `ws/${scope.workspaceId}/`;
   const stem = changeFootprintKey(scope, input);
   let key = stem;
   for (let suffix = 1; getConceptByKey(db, prefix + key); suffix++) key = stem + '-' + suffix;
+  assert.ok(key.startsWith('change/'), 'a scoped footprint key stays inside its change namespace');
   return { key, concept: null, portable: false };
 }
 

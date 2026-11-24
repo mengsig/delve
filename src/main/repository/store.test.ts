@@ -84,6 +84,27 @@ it('keeps an alias contradiction separate from a verified scoped key on regenera
   expect(concepts.find(concept => concept.id === other)?.masteredDepth).toBeNull();
 });
 
+it.each([true, false])('gives an unlabelled reply a neutral identity when its key has conflicting saved meanings (portable: %s)', portable => {
+  const input = { key: 'transport', title: 'TCP', summary: 'Messages arrive in order.', portable: true };
+  const approved = source({ kind: 'pr', ref: '42' }, previous);
+  const generate = (cacheKey: string, footprint: typeof input) => {
+    const result = persistGeneration(db, { ...approved, cacheKey }, explain(footprint));
+    if (result.kind !== 'change') throw new Error('Expected a saved change.');
+    return result.brief.touched[0]!.id;
+  };
+  const tcp = generate('tcp', input);
+  const http = generate('http', { ...input, title: 'HTTP', portable: false });
+  expect(http).not.toBe(tcp);
+  recordEvidence(db, { workspaceId, conceptId: tcp, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const neutral = generate('neutral', { ...input, title: 'Ordered delivery', portable });
+  expect([tcp, http]).not.toContain(neutral);
+  expect(generate('neutral-again', { ...input, title: 'Ordered delivery', portable: !portable })).toBe(neutral);
+  expect(generate('tcp-again', input)).toBe(tcp);
+  const { concepts } = getGlobalKnowledgeGraph(db);
+  expect(concepts.find(concept => concept.id === tcp)?.masteredDepth).toBe('medium');
+  expect(concepts.find(concept => concept.id === neutral)?.masteredDepth).toBeNull();
+});
+
 it('keeps a generic title from lending its key to conflicting recognized aliases', () => {
   const input = { key: 'transport', title: 'Transport', summary: 'Messages arrive in order.', portable: true };
   const approved = source({ kind: 'pr', ref: '42' }, previous);
