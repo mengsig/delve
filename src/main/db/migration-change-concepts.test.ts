@@ -1,183 +1,203 @@
 import { DatabaseSync } from 'node:sqlite';
-import { expect, it } from 'vitest';
-import { readLesson } from '../reader/ipc';
-import { cacheModel, selectModel } from '../providers/model';
-import { cachedGeneration, digest, latestBrief, persistGeneration, type ApprovedSource } from '../repository/store';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { Depth } from '../../shared/domain';
-import { addPrerequisite, upsertConcept } from './concepts';
-import { recordEvidence, resetEvidence } from './evidence';
-import { readWorkspaceGraph } from './graph';
+import type { ChangeRef, RepoRequest } from '../../shared/repository';
+import { cacheModel, selectModel } from '../providers/model';
+import { readLesson, readerHandlers } from '../reader/ipc';
+import { cachedGeneration, digest, latestBrief, persistGeneration, type ApprovedSource } from '../repository/store';
+import { upsertConcept } from './concepts';
+import { recordEvidence } from './evidence';
 import { getGlobalKnowledgeGraph } from './knowledge';
+import { lessonRevision } from './lesson-selection';
 import { bindSnapshot } from './lessons';
+import { masteryScope } from './mastery-scope';
 import { migrate, MIGRATIONS } from './migrations';
 import { addWorkspace } from './workspaces';
 
 const head = 'a'.repeat(40);
+const base = 'b'.repeat(40);
 const title = 'Keeping unconfirmed data';
+const pull = { kind: 'pr', ref: '42' } as const;
+const commit = { kind: 'commit', ref: head } as const;
 const footprint = { key: 'pending-data', title, summary: 'Keep data until it is acknowledged.', portable: false };
+let db: DatabaseSync;
+let workspaceId: string;
+let snapshotId: number;
 
-it('rejects a reverse edge across a v10 alias path without displacing the existing prerequisite', () => {
-  const db = new DatabaseSync(':memory:');
-  try {
-    migrate(db, MIGRATIONS.slice(0, 10));
-    const workspaceId = addWorkspace(db, { kind: 'github', owner: 'acme', repo: 'web' }).id;
-    const snapshotId = bindSnapshot(db, workspaceId, head);
-    const canonical = upsertConcept(db, { ...footprint, key: 'change/' + digest(['old', 'codex', 'model']), workspaceId });
-    const legacy = upsertConcept(db, { ...footprint, key: 'change/' + digest(['old', 'codex', 'other-model']), workspaceId });
-    const other = upsertConcept(db, { key: 'other', title: 'Other', portable: false, workspaceId });
-    seedSavedChange(db, workspaceId, snapshotId, canonical.id, canonical.id, 'high');
-    seedSavedChange(db, workspaceId, snapshotId, legacy.id, legacy.id, 'low');
-    db.prepare('INSERT INTO concept_edges VALUES (?, ?, ?)').run(legacy.id, other.id, '2026-01-01');
-    migrate(db);
-    expect(readWorkspaceGraph(db, workspaceId, true).edges).toEqual([{ conceptId: canonical.id, prerequisiteId: other.id }]);
-    expect(() => addPrerequisite(db, other.id, canonical.id)).toThrow(/cycle/);
-    expect(() => addPrerequisite(db, other.id, legacy.id)).toThrow(/cycle/);
-    expect(readWorkspaceGraph(db, workspaceId, true).edges).toEqual([{ conceptId: canonical.id, prerequisiteId: other.id }]);
-  } finally { db.close(); }
+beforeEach(() => {
+  db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  expect(migrate(db, MIGRATIONS.slice(0, 9))).toBe(9);
+  workspaceId = addWorkspace(db, { kind: 'github', owner: 'acme', repo: 'web' }).id;
+  snapshotId = bindSnapshot(db, workspaceId, head);
 });
+afterEach(() => db.close());
 
-function seedSavedChange(db: DatabaseSync, workspaceId: string, snapshotId: number, conceptId: number, touchedId: number, depth: Depth,
-  options: { cacheKey?: string; provider?: 'codex' | 'claude'; footprint?: typeof footprint; omitLessonId?: boolean } = {}) {
-  const { cacheKey = depth, provider = 'codex', footprint: affected = footprint, omitLessonId } = options;
-  const model = cacheModel(selectModel(provider).model);
-  const document = { schema: 'delve.lesson/1', source: head, blocks: [{ type: 'prose', heading: 'What changed', text: depth + ' lesson' }] };
-  const lessonId = db.prepare(`INSERT INTO lessons (cache_key, schema_version, concept_id, workspace_id, snapshot_id, depth, provider, model, body, created_at)
-    VALUES (?, 'delve.lesson/1', ?, ?, ?, ?, ?, ?, ?, '2026-01-01')`)
-    .run(cacheKey, conceptId, workspaceId, snapshotId, depth, provider, model, JSON.stringify(document)).lastInsertRowid;
-  const result = { kind: 'change', brief: { conceptId, lessonId: omitLessonId ? undefined : Number(lessonId), commit: head, title,
-    touched: [{ id: touchedId, title: affected.title }], recommendation: { conceptId: touchedId, title: affected.title, reason: 'Start with this change.' } } };
-  db.prepare(`INSERT INTO repository_generations (cache_key, workspace_id, snapshot_id, kind, ref, depth, provider, model, schema_version,
-    result, proposal, next_concept, reason, created_at, last_used) VALUES (?, ?, ?, 'pr', '42', ?, ?, ?, 'delve.change/1',
-    ?, ?, ?, 'Start here.', '2026-01-01', (SELECT coalesce(max(last_used), 0) + 1 FROM repository_generations))`)
-    .run(cacheKey, workspaceId, snapshotId, depth, provider, model,
-      JSON.stringify(result), JSON.stringify({ concepts: [affected], conceptTitle: title, touched: [affected.key] }), touchedId);
-  return Number(lessonId);
+function createFootprint(input: typeof footprint) {
+  const fingerprint = digest([input.key, input.summary.toLowerCase()]);
+  const concept = upsertConcept(db, { ...input, workspaceId, key: 'change/' + digest(['concept', snapshotId, fingerprint]) });
+  db.prepare('INSERT INTO snapshot_concepts VALUES (?, ?)').run(snapshotId, concept.id);
+  return concept.id;
 }
 
-it('keeps same-title v10 concepts with different meanings separate through upgrade and regeneration', () => {
-  const db = new DatabaseSync(':memory:');
-  try {
-    db.exec('PRAGMA foreign_keys = ON');
-    migrate(db, MIGRATIONS.slice(0, 10));
-    const workspaceId = addWorkspace(db, { kind: 'github', owner: 'acme', repo: 'web' }).id;
-    const snapshotId = bindSnapshot(db, workspaceId, head);
-    const dns = { key: 'dns', title: 'Caching', summary: 'Keep DNS responses until they expire.', portable: false };
-    const page = { key: 'pages', title: 'Caching', summary: 'Keep a copy of rendered pages.', portable: false };
-    const saveFootprint = (input: typeof dns) => {
-      const fingerprint = digest([input.key, input.summary.toLowerCase()]);
-      const concept = upsertConcept(db, { ...input, workspaceId, key: 'change/' + digest(['concept', snapshotId, fingerprint]) });
-      db.prepare('INSERT INTO snapshot_concepts VALUES (?, ?)').run(snapshotId, concept.id);
-      return concept.id;
-    };
-    const dnsId = saveFootprint(dns);
-    const pageId = saveFootprint(page);
-    const overview = upsertConcept(db, { ...dns, key: 'change/overview', title, workspaceId });
-    seedSavedChange(db, workspaceId, snapshotId, overview.id, dnsId, 'high', { footprint: dns });
-    seedSavedChange(db, workspaceId, snapshotId, overview.id, pageId, 'low', { footprint: page });
-    recordEvidence(db, { workspaceId, snapshotId, conceptId: pageId, depth: 'low',
-      status: 'demonstrated', source: 'check', masteryVerified: true });
+function seedLesson(conceptId: number, cacheKey: string, provider: RepoRequest['provider'], depth: Depth) {
+  const model = cacheModel(selectModel(provider).model);
+  const body = JSON.stringify({ schema: 'delve.lesson/1', source: head, blocks: [
+    { type: 'prose', heading: 'What changed', text: cacheKey }, { type: 'check', kind: 'prediction',
+      prompt: 'What data do we keep?', options: ['Queued data', 'Expired data', 'Sent data', 'All data'], expected: 0 },
+  ] });
+  const id = Number(db.prepare(`INSERT INTO lessons (cache_key, schema_version, concept_id, workspace_id, snapshot_id, depth, provider, model, body, created_at)
+    VALUES (?, 'delve.lesson/1', ?, ?, ?, ?, ?, ?, ?, '2026-01-01')`)
+    .run(cacheKey, conceptId, workspaceId, snapshotId, depth, provider, model, body).lastInsertRowid);
+  return { id, model, body };
+}
 
-    migrate(db);
-    migrate(db);
-    expect(getGlobalKnowledgeGraph(db).concepts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: dnsId, masteredDepth: null }), expect.objectContaining({ id: pageId, masteredDepth: 'low' }),
-    ]));
-    const source: ApprovedSource = { cacheKey: 'regenerated', revision: head,
-      request: { workspaceId, selection: { kind: 'pr', ref: '42' }, depth: 'medium', provider: 'codex' },
-      preview: { ...selectModel('codex'), title, commit: head, bytes: 1, prompt: 'test', files: [], token: 'test', partial: false } };
-    const refreshedPage = { ...page, key: 'page-cache' };
-    expect(persistGeneration(db, source, { schema: 'delve.change/1', concepts: [dns, refreshedPage], edges: [],
-      touched: [dns.key, refreshedPage.key], spans: [], summary: 'Review caching changes.', what: 'The caches change.',
-      why: 'This keeps responses current.', before: 'The old caches.', after: 'The new caches.', trace: [], excerpt: [],
-      mechanics: null, boundary: null, recommendation: { key: refreshedPage.key, reason: 'Read about page caching.' },
-    })).toMatchObject({ brief: { touched: [{ id: dnsId }, { id: pageId }], recommendation: { conceptId: pageId } } });
-    expect(getGlobalKnowledgeGraph(db).concepts).toHaveLength(3);
-  } finally {
-    db.close();
-  }
+function seedSavedChange(selection: ChangeRef, depth: Depth, cacheKey: string, affected: typeof footprint, touchedId: number,
+  provider: 'codex' | 'claude' = 'codex') {
+  const revision = digest([selection.kind, selection.ref, base, head, title, cacheKey]);
+  const model = cacheModel(selectModel(provider).model);
+  const overview = upsertConcept(db, { ...footprint, key: 'change/' + digest([revision, provider, selectModel(provider).model]), workspaceId });
+  db.prepare('INSERT INTO snapshot_concepts VALUES (?, ?)').run(snapshotId, overview.id);
+  const lesson = seedLesson(overview.id, cacheKey, provider, depth);
+  const result = { kind: 'change', brief: { conceptId: overview.id, commit: head, base, title,
+    touched: [{ id: touchedId, title: affected.title }], recommendation: { conceptId: touchedId, title: affected.title, reason: 'Start here.' } } };
+  db.prepare(`INSERT INTO repository_generations (cache_key, workspace_id, snapshot_id, kind, ref, depth, provider, model, schema_version,
+    result, proposal, next_concept, reason, created_at, last_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'delve.change/1',
+    ?, ?, ?, 'Start here.', '2026-01-01', (SELECT coalesce(max(last_used), 0) + 1 FROM repository_generations))`)
+    .run(cacheKey, workspaceId, snapshotId, selection.kind, selection.ref, depth, provider, model,
+      JSON.stringify(result), JSON.stringify({ concepts: [affected], touched: [affected.key] }), touchedId);
+  return { ...lesson, conceptId: overview.id };
+}
+
+function regenerate(selection: ChangeRef, input: typeof footprint, depth: Depth = 'medium') {
+  const source: ApprovedSource = { cacheKey: digest(['regenerated', selection, depth, input]), revision: head,
+    request: { workspaceId, selection, depth, provider: 'codex' },
+    preview: { ...selectModel('codex'), title, commit: head, base, bytes: 1, prompt: 'test', files: [], token: 'test', partial: false } };
+  return persistGeneration(db, source, { schema: 'delve.change/1', concepts: [input], edges: [],
+    touched: [input.key], spans: [], summary: 'Review the changes.', what: 'The behavior changes.',
+    why: 'This keeps data current.', before: 'The old behavior.', after: 'The new behavior.', trace: [], excerpt: [],
+    mechanics: null, boundary: null, recommendation: { key: input.key, reason: 'Read about the change.' } });
+}
+
+it('keeps released footprints with the same key and title but conflicting descriptions separate through upgrade', () => {
+  const dns = { ...footprint, key: 'cache', title: 'Caching', summary: 'Keep DNS responses until they expire.' };
+  const page = { ...dns, summary: 'Keep a copy of rendered pages.' };
+  const dnsId = createFootprint(dns);
+  const pageId = createFootprint(page);
+  seedSavedChange(pull, 'high', 'dns-brief', dns, dnsId);
+  seedSavedChange(pull, 'low', 'page-brief', page, pageId);
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: pageId, depth: 'low',
+    status: 'demonstrated', source: 'check', masteryVerified: true });
+
+  migrate(db);
+  const concepts = getGlobalKnowledgeGraph(db).concepts;
+  expect(concepts.find(c => c.id === dnsId)?.masteredDepth).toBeNull();
+  expect(concepts.find(c => c.id === pageId)?.masteredDepth).toBe('low');
+  expect(regenerate(pull, { ...dns, portable: true })).toMatchObject({ brief: { touched: [{ id: dnsId }] } });
+  expect(regenerate(pull, page, 'low')).toMatchObject({ brief: { touched: [{ id: pageId }] } });
+  expect(cachedGeneration(db, 'dns-brief')).toMatchObject({ brief: { touched: [{ id: dnsId }] } });
+  expect(cachedGeneration(db, 'page-brief')).toMatchObject({ brief: { touched: [{ id: pageId }] } });
+  expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
 });
 
-it.each([false, true])('recovers v10 brief documents and attributable history (ambiguous Codex history: %s)', ambiguous => {
-  const db = new DatabaseSync(':memory:');
-  try {
-    db.exec('PRAGMA foreign_keys = ON');
-    migrate(db, MIGRATIONS.slice(0, 10));
-    const workspaceId = addWorkspace(db, { kind: 'github', owner: 'acme', repo: 'web' }).id;
-    const snapshotId = bindSnapshot(db, workspaceId, head);
-    const codex = upsertConcept(db, { ...footprint, key: 'change/codex', workspaceId });
-    const claude = upsertConcept(db, { ...footprint, key: 'change/claude', workspaceId });
-    const codexId = seedSavedChange(db, workspaceId, snapshotId, codex.id, codex.id, 'high',
-      { cacheKey: 'codex-brief', omitLessonId: true });
-    const claudeId = seedSavedChange(db, workspaceId, snapshotId, claude.id, claude.id, 'high',
-      { cacheKey: 'claude-brief', provider: 'claude', omitLessonId: true });
-    const history = db.prepare(`INSERT INTO conversations (workspace_id, concept_id, lesson_id, depth, title, created_at, updated_at)
-      VALUES (?, ?, ?, 'high', 'Saved change conversation', '2026-01-01', '2026-01-01')`);
-    const message = db.prepare(`INSERT INTO messages (conversation_id, role, body, created_at) VALUES (?, 'learner', ?, '2026-01-01')`);
-    message.run(history.run(workspaceId, codex.id, codexId).lastInsertRowid, JSON.stringify('My Codex question'));
-    message.run(history.run(workspaceId, claude.id, claudeId).lastInsertRowid, JSON.stringify('My Claude question'));
-    if (ambiguous) db.prepare(`INSERT INTO lessons (cache_key, schema_version, concept_id, workspace_id, snapshot_id, depth, provider, model, body, created_at)
-      SELECT 'alternate', schema_version, concept_id, workspace_id, snapshot_id, depth, 'claude', model, body, created_at
-      FROM lessons WHERE id = ?`).run(codexId);
-    migrate(db);
-    migrate(db);
-    const address = { workspaceId, kind: 'pr', ref: '42', depth: 'high' } as const;
-    expect(cachedGeneration(db, 'codex-brief')).toMatchObject({ brief: { conceptId: codex.id, lessonId: codexId } });
-    expect(latestBrief(db, { ...address, provider: 'claude' })).toMatchObject({ conceptId: codex.id, lessonId: claudeId });
-    expect(codexId).not.toEqual(claudeId);
-    const lesson = { workspaceId, conceptId: codex.id, depth: 'high' } as const;
-    expect(readLesson(db, { ...lesson, lessonId: codexId }).messages.map(m => m.text))
-      .toEqual(ambiguous ? [] : ['My Codex question']);
-    expect(readLesson(db, { ...lesson, lessonId: claudeId }).messages.map(m => m.text)).toEqual(['My Claude question']);
-    expect(readLesson(db, lesson).messages.map(m => m.text)).toEqual(['My Codex question', 'My Claude question']);
-  } finally {
-    db.close();
+it.each([false, true])('keeps a saved footprint for both PR and head commit scopes (commit saved first: %s)', commitFirst => {
+  const id = createFootprint(footprint);
+  const views = commitFirst ? [commit, pull] : [pull, commit];
+  for (const view of views) seedSavedChange(view, 'high', view.kind, footprint, id);
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: id, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+  migrate(db);
+  const count = getGlobalKnowledgeGraph(db).concepts.length;
+  for (const view of views) {
+    expect(latestBrief(db, { ...view, workspaceId, provider: 'codex', depth: 'high' })).toMatchObject({ touched: [{ id }] });
+    expect(regenerate(view, { ...footprint, portable: true })).toMatchObject({ brief: { touched: [{ id }] } });
   }
+  const concepts = getGlobalKnowledgeGraph(db).concepts;
+  expect(concepts).toHaveLength(count);
+  expect(concepts.find(c => c.id === id)?.masteredDepth).toBe('high');
 });
 
-it('reconciles v10 PR duplicates without losing the strongest evidence or historical lessons', () => {
-  const db = new DatabaseSync(':memory:');
-  try {
-    db.exec('PRAGMA foreign_keys = ON');
-    migrate(db, MIGRATIONS.slice(0, 10));
-    const workspaceId = addWorkspace(db, { kind: 'github', owner: 'acme', repo: 'web' }).id;
-    const snapshotId = bindSnapshot(db, workspaceId, head);
-    const make = (key: string) => upsertConcept(db, { ...footprint, workspaceId, key });
-    const high = make('change/' + digest(['old', 'codex', 'model']));
-    const low = make('change/' + digest(['old', 'codex', 'other-model']));
-    const medium = make('change/' + digest(['old', 'claude', 'model']));
-    const duplicate = make('change/' + digest(['concept', snapshotId, digest([footprint.key, footprint.summary.toLowerCase()])]));
-    const other = make('unrelated');
-    for (const concept of [high, low, medium, duplicate]) db.prepare('INSERT INTO snapshot_concepts VALUES (?, ?)').run(snapshotId, concept.id);
-    seedSavedChange(db, workspaceId, snapshotId, high.id, duplicate.id, 'high');
-    seedSavedChange(db, workspaceId, snapshotId, low.id, duplicate.id, 'low');
-    seedSavedChange(db, workspaceId, snapshotId, medium.id, duplicate.id, 'medium');
-    db.prepare('INSERT INTO concept_edges VALUES (?, ?, ?)').run(duplicate.id, other.id, '2026-01-01');
-    const evidence = (conceptId: number, depth: Depth, verified: boolean) => recordEvidence(db, { conceptId, workspaceId, snapshotId, depth,
-      status: verified ? 'demonstrated' : 'partial', source: 'check', masteryVerified: verified });
-    evidence(duplicate.id, 'high', true);
-    evidence(high.id, 'high', false);
-    evidence(high.id, 'high', false);
-    evidence(low.id, 'low', true);
+it.each([false, true])('reuses a schema-9 binding after a portability flip (portable first: %s)', portableFirst => {
+  const oldInput = { ...footprint, portable: portableFirst };
+  const id = portableFirst ? upsertConcept(db, { ...oldInput, workspaceId }).id : createFootprint(oldInput);
+  seedSavedChange(pull, 'high', 'saved', oldInput, id);
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: id, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
 
-    migrate(db);
-    migrate(db);
-    const graph = readWorkspaceGraph(db, workspaceId, true);
-    expect(graph.concepts.map(c => c.id)).toEqual([high.id, other.id]);
-    expect(graph.edges).toEqual([{ conceptId: high.id, prerequisiteId: other.id }]);
-    expect(graph.evidence).toMatchObject([{ conceptId: high.id, depth: 'high', status: 'demonstrated' },
-      { conceptId: high.id, depth: 'low', status: 'demonstrated' }]);
-    expect(getGlobalKnowledgeGraph(db).concepts.find(c => c.id === high.id)?.masteredDepth).toBe('low');
-    expect(cachedGeneration(db, 'low')).toMatchObject({ brief: { conceptId: high.id, touched: [{ id: high.id }], recommendation: { conceptId: high.id } } });
-    expect(readLesson(db, { conceptId: high.id, workspaceId, depth: 'low' })).toMatchObject({
-      mastery: { stage: 'understood' }, blocks: [{ text: 'low lesson' }],
-    });
-    expect(readLesson(db, { conceptId: high.id, workspaceId, depth: 'medium' })).toMatchObject({
-      mastery: { stage: 'teaching' }, blocks: [{ text: 'medium lesson' }],
-    });
-    expect(resetEvidence(db, high.id, { workspaceId, depth: 'low' })).toBe(1);
-    expect(getGlobalKnowledgeGraph(db).concepts.find(c => c.id === high.id)?.masteredDepth).toBe('high');
-    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
-  } finally {
-    db.close();
-  }
+  migrate(db);
+  const count = getGlobalKnowledgeGraph(db).concepts.length;
+  expect(regenerate(pull, { ...footprint, portable: !portableFirst })).toMatchObject({ brief: { touched: [{ id }] } });
+  expect(regenerate(pull, oldInput, 'low')).toMatchObject({ brief: { touched: [{ id }] } });
+  expect(getGlobalKnowledgeGraph(db).concepts).toHaveLength(count);
+  expect(getGlobalKnowledgeGraph(db).concepts.find(c => c.id === id)?.masteredDepth).toBe('high');
+});
+
+it('keeps independent released local and portable footprints in their own scopes without adding a third', () => {
+  const local = createFootprint(footprint);
+  const portable = upsertConcept(db, { ...footprint, portable: true, workspaceId }).id;
+  seedSavedChange(pull, 'high', 'local', footprint, local);
+  seedSavedChange(pull, 'low', 'portable', { ...footprint, portable: true }, portable);
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: local, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+  migrate(db);
+
+  expect(regenerate(pull, footprint)).toMatchObject({ brief: { touched: [{ id: local }] } });
+  const count = getGlobalKnowledgeGraph(db).concepts.length;
+  expect(regenerate(pull, { ...footprint, portable: true })).toMatchObject({ brief: { touched: [{ id: portable }] } });
+  expect(getGlobalKnowledgeGraph(db).concepts).toHaveLength(count);
+  expect(getGlobalKnowledgeGraph(db).concepts.find(c => c.id === local)?.masteredDepth).toBe('high');
+  expect(getGlobalKnowledgeGraph(db).concepts.find(c => c.id === portable)?.masteredDepth).toBeNull();
+});
+
+it('keeps original concept and lesson IDs for both providers’ schema-9 briefs', () => {
+  const id = createFootprint(footprint);
+  const codex = seedSavedChange(pull, 'high', 'codex-brief', footprint, id);
+  const claude = seedSavedChange(pull, 'high', 'claude-brief', footprint, id, 'claude');
+  const upgraded = migrate(db);
+  expect(migrate(db)).toBe(upgraded);
+  const saved = { ...pull, workspaceId, depth: 'high' } as const;
+  expect(latestBrief(db, { ...saved, provider: 'codex' })).toMatchObject({ conceptId: codex.conceptId, lessonId: codex.id });
+  expect(latestBrief(db, { ...saved, provider: 'claude' })).toMatchObject({ conceptId: claude.conceptId, lessonId: claude.id });
+  expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+});
+
+it('keeps per-provider mastery after a sibling writes to an upgraded schema-9 profile', () => {
+  const id = createFootprint(footprint);
+  const codex = seedSavedChange(pull, 'high', 'codex-brief', footprint, id);
+  const sibling = seedLesson(codex.conceptId, 'claude-tutoring', 'claude', 'high');
+  const address = { workspaceId, conceptId: codex.conceptId, depth: 'high' } as const;
+  const scope = masteryScope({ ...address, snapshotId }, lessonRevision(codex.id, codex.body));
+  const revision = 'f'.repeat(64);
+  const state = JSON.stringify({ stage: 'skipped', check: null, attempts: 0, correctAnswers: 0, applied: false, cycle: 0, prompts: [] });
+  db.prepare("INSERT INTO lesson_mastery (workspace_id, concept_id, depth, lesson_id, scope, revision, state) VALUES (?, ?, 'high', ?, ?, ?, ?)")
+    .run(workspaceId, codex.conceptId, codex.id, scope, revision, state);
+
+  migrate(db);
+  const pinned = { ...address, lessonId: codex.id };
+  expect(readLesson(db, pinned)).toMatchObject({ blocks: [{ text: 'codex-brief' }, expect.anything()], mastery: { stage: 'skipped', revision } });
+  const siblingAddress = { ...address, lessonId: sibling.id };
+  const siblingState = readLesson(db, siblingAddress);
+  expect(siblingState.mastery.stage).toBe('checking');
+  expect(readerHandlers(db)['reader:skip']({ ...siblingAddress, revision: siblingState.mastery.revision! }))
+    .toMatchObject({ mastery: { stage: 'skipped' } });
+  expect(readLesson(db, pinned).mastery).toMatchObject({ stage: 'skipped', revision });
+  expect(readLesson(db, address).mastery.stage).toBe('skipped');
+  expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+});
+
+it('migrates attributable conversation messages and keeps ambiguous ones in the general history', () => {
+  const id = createFootprint(footprint);
+  const codex = seedSavedChange(pull, 'high', 'codex-brief', footprint, id);
+  const claude = seedSavedChange(pull, 'high', 'claude-brief', footprint, id, 'claude');
+  seedLesson(codex.conceptId, 'claude-tutoring', 'claude', 'high');
+  const history = db.prepare(`INSERT INTO conversations (workspace_id, concept_id, lesson_id, depth, title, created_at, updated_at)
+    VALUES (?, ?, ?, 'high', 'Saved change conversation', '2026-01-01', '2026-01-01')`);
+  const message = db.prepare(`INSERT INTO messages (conversation_id, role, body, created_at) VALUES (?, 'learner', ?, '2026-01-01')`);
+  for (const [lesson, question] of [[codex, 'My Codex question'], [claude, 'My Claude question']] as const)
+    message.run(history.run(workspaceId, lesson.conceptId, lesson.id).lastInsertRowid, JSON.stringify(question));
+
+  migrate(db);
+  const read = (lesson: typeof codex, pinned: boolean) => readLesson(db, {
+    workspaceId, conceptId: lesson.conceptId, depth: 'high', lessonId: pinned ? lesson.id : undefined,
+  }).messages.map(m => m.text);
+  expect(read(codex, true)).toEqual([]);
+  expect(read(codex, false)).toEqual(['My Codex question']);
+  expect(read(claude, true)).toEqual(['My Claude question']);
 });

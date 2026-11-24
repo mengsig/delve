@@ -24,7 +24,7 @@ afterEach(() => db.close());
     expect(findTutorPrerequisite(db, workspace, { key: 'http', title: 'Transport', summary: 'A protocol.' })).toBeNull();
     expect(findTutorPrerequisite(db, workspace, { key: 'tcp', title: 'Transport', summary: 'A protocol.' })?.id).toBe(local.id);
   });
-  it('reuses local and portable concepts without changing their text, and deduplicates', () => {
+  it('reuses an exact scoped key while keeping a matching title and summary on another key separate', () => {
     const target = upsertConcept(db, { key: 'target', title: 'Target', portable: false, workspaceId: workspace });
     const local = upsertConcept(db, { key: 'local', title: '  Shared Name ', summary: 'Existing local', portable: false, workspaceId: workspace });
     upsertConcept(db, { key: 'shared', title: 'Shared Name', portable: true, workspaceId: other });
@@ -35,11 +35,12 @@ afterEach(() => db.close());
       { ...candidate('local', 'Changed'), summary: 'Existing local' },
       { ...candidate('portable', 'Changed'), summary: 'Existing portable' }, candidate('private', 'Private'),
     ]));
-    expect(result.map(item => [item.concept.id, item.candidateKey])).toEqual([[local.id, 'new-key'], [portable.id, 'portable'], [expect.any(Number), 'private']]);
-    expect(result[0]!.concept.summary).toBe('Existing local');
-    expect(result[1]!.concept.summary).toBe('Existing portable');
+    expect(result.map(item => [item.concept.id, item.candidateKey])).toEqual([[expect.any(Number), 'new-key'], [local.id, 'local'], [portable.id, 'portable'], [expect.any(Number), 'private']]);
+    expect(result[0]!.concept.id).not.toBe(local.id);
+    expect(result[1]!.concept.summary).toBe('Existing local');
+    expect(result[2]!.concept.summary).toBe('Existing portable');
     expect(result[2]!.concept.portable).toBe(true);
-    expect(readWorkspaceGraph(db, workspace).edges).toHaveLength(3);
+    expect(readWorkspaceGraph(db, workspace).edges).toHaveLength(4);
   });
 
   it('omits self and cycles without leaking membership and preserves valid siblings', () => {
@@ -90,14 +91,15 @@ afterEach(() => db.close());
     expect(readWorkspaceGraph(db, workspace, true).edges).toEqual([{ conceptId: target.id, prerequisiteId: result[0]!.concept.id }]);
   });
 
-  it('does not reuse legacy aliases or local concepts for portable targets', () => {
+  it('keeps a portable target from reusing a local key with an incompatible released identity link', () => {
     const target = upsertConcept(db, { key: 'target', title: 'Target', portable: true, workspaceId: workspace });
     const legacy = upsertConcept(db, { key: 'old', title: 'Foundation', portable: false, workspaceId: workspace });
     const canonical = upsertConcept(db, { ...candidate('canonical', 'Foundation'), portable: true });
     db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, canonical_concept_id) VALUES (?, ?)').run(legacy.id, canonical.id);
     const result = transaction(db, () => persistTutorPrerequisites(db, workspace, target.id, [candidate('old', 'Foundation')]));
-    expect(result.map(row => row.concept.id)).toEqual([canonical.id]);
-    expect(readWorkspaceGraph(db, workspace).edges).toEqual([{ conceptId: target.id, prerequisiteId: canonical.id }]);
+    expect(result[0]?.concept).toMatchObject({ key: 'old', portable: true });
+    expect(result[0]?.concept.id).not.toBe(canonical.id);
+    expect(readWorkspaceGraph(db, workspace).edges).toEqual([{ conceptId: target.id, prerequisiteId: result[0]!.concept.id }]);
   });
 
   it('rejects inaccessible targets and invalid inputs before making changes', () => {

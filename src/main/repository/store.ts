@@ -15,11 +15,10 @@ import { plainConceptTitle } from '../../shared/plain-language';
 import { cacheModel, selectModel } from '../providers/model';
 import { baselineReply, type ChangeReply, type GraphProposal } from './schemas';
 import { portableConceptLookup } from './portable-concepts';
-import { compatibleDescriptions, compatiblePortableAliases, portableAlias, scopedFingerprint } from '../db/portable-identity';
+import { compatibleDescriptions, compatiblePortableAliases, normalizedConceptName, portableAlias } from '../db/portable-identity';
 import { saveFoundations } from '../tutor/foundation-progress';
-import { findTutorPrerequisite } from '../db/tutor-prerequisites';
-import { changeIdentity, changeTitleKey, findChangeOverview, findCompatibleChangeTitle, findScopedChangeKey, isGeneratedChangeConcept,
-  linkChangeDuplicate, overviewKey, rememberChangeConcept, rememberChangeFootprint, type ChangeConceptScope } from '../db/change-concept-identity';
+import { resolveTutorPrerequisite } from '../db/tutor-prerequisites';
+import { changeIdentity, findChangeOverview, findScopedChangeKey, overviewKey, rememberChangeConcept, type ChangeConceptScope } from '../db/change-concept-identity';
 
 export interface ApprovedSource {
   request: RepoRequest;
@@ -39,6 +38,15 @@ function invalid(message: string): never { throw new DomainError('INVALID_PROPOS
 type ProposalConcept = GraphProposal['concepts'][number];
 type ResolvedConcept = Pick<ProposalConcept, 'key' | 'portable'> & { concept: Concept | null; fingerprint?: string; needsScope?: true };
 
+function baselineFingerprint(input: ProposalConcept): string {
+  assert.ok(input.key && input.summary.trim());
+  assert.ok(input.title.trim());
+  const key = input.portable ? portableAlias(input.key, '') ?? input.key : input.key;
+  const alias = portableAlias(input.key, input.title);
+  const label = alias === null ? normalizedConceptName(input.title) : alias;
+  return digest(['baseline', key, normalizedConceptName(input.summary), label]);
+}
+
 function baselineScope(db: Db, workspaceId: string) {
   const registry = `SELECT c.key, s.fingerprint FROM scoped_proposal_concepts s JOIN concepts c ON c.id = s.concept_id
     LEFT JOIN concept_identity_links l ON l.legacy_concept_id = c.id
@@ -46,7 +54,7 @@ function baselineScope(db: Db, workspaceId: string) {
   const byFingerprint = db.prepare(registry + ' AND s.fingerprint = ?');
   const byKey = db.prepare(registry + ' AND c.key = ?');
   const find = (input: ProposalConcept): ResolvedConcept | null => {
-    const fingerprint = scopedFingerprint(input);
+    const fingerprint = baselineFingerprint(input);
     const prefix = `ws/${workspaceId}/`;
     const owned = byFingerprint.get(workspaceId, fingerprint);
     const row = owned ?? (input.key.startsWith('ambiguous/') ? byKey.get(workspaceId, prefix + input.key) : null);
@@ -64,7 +72,7 @@ function baselineScope(db: Db, workspaceId: string) {
     assert.ok(db.isTransaction);
     const prior = find(input);
     if (prior) return prior;
-    const fingerprint = scopedFingerprint(input);
+    const fingerprint = baselineFingerprint(input);
     const prefix = 'ambiguous/' + fingerprint;
     let key = prefix;
     for (let suffix = 1; getConceptByKey(db, conceptStorageKey(key, false, workspaceId)); suffix++) key = prefix + '-' + suffix;
@@ -83,7 +91,7 @@ function proposalConceptLookup(db: Db, workspaceId: string) {
     if (typeof linked?.key === 'string') {
       const canonical = getConceptByKey(db, linked.key);
       assert.ok(canonical, 'a migrated identity must point to a concept');
-      if (!canonical.portable) return { ...input, key: canonical.key.slice(('ws/' + workspaceId + '/').length), concept: canonical, portable: false };
+      assert.ok(canonical.portable, 'released identity links point to portable concepts');
       if (compatiblePortableAliases(portableAlias(input.key, input.title), portableAlias(canonical.key, canonical.title))
         && compatibleDescriptions(input.summary, canonical.summary)) {
         return { ...input, key: canonical.key, concept: canonical, portable: true };
@@ -91,13 +99,17 @@ function proposalConceptLookup(db: Db, workspaceId: string) {
       return { key: input.key, portable: false, concept: null, needsScope: true };
     }
     if (input.key.startsWith('ambiguous/')) return { key: input.key, portable: false, concept: null, needsScope: true };
+    const localCompatible = local && compatibleDescriptions(local.summary, input.summary)
+      && compatiblePortableAliases(portableAlias(input.key, input.title), portableAlias(input.key, local.title));
     if (input.portable) {
       const resolved = portable(input.key, input.title, input.summary);
       if (resolved.portable) return { ...input, ...resolved };
-      if (local && compatibleDescriptions(local.summary, input.summary) && local.title === input.title) return { ...input, concept: local, portable: false };
+      if (localCompatible) return { ...input, concept: local, portable: false };
       return { ...resolved, portable: false, needsScope: true };
     }
-    return { ...input, concept: local };
+    return local && !localCompatible
+      ? { key: input.key, portable: false, concept: null, needsScope: true }
+      : { ...input, concept: local };
   };
   return lookup;
 }
@@ -117,7 +129,8 @@ function groupBaselineConcepts(db: Db, workspaceId: string, proposal: GraphPropo
   for (const input of proposal.concepts) {
     if (byKey.has(input.key)) invalid('The provider supplied a duplicate concept key.');
     const resolution = scope.find(input) ?? lookup(input);
-    const meaning = resolution.fingerprint ?? (input.portable ? scopedFingerprint(input) : 'local/' + input.key);
+    const meaning = resolution.fingerprint
+      ?? (resolution.concept ? 'id/' + resolution.concept.id : baselineFingerprint(input));
     let group = byMeaning.get(meaning);
     if (!group) {
       group = { input, resolution, dependents: new Set(), local: !resolution.portable };
@@ -171,51 +184,62 @@ function rememberScopedConcept(db: Db, workspaceId: string, fingerprint: string 
   assert.equal(binding.changes, 1, 'a scoped identity cannot be rebound');
 }
 
-function resolveChangeFootprint(db: Db, scope: ChangeConceptScope, overview: Concept, input: ProposalConcept, reply: ChangeReply,
-  lookup: ReturnType<typeof proposalConceptLookup>): ResolvedConcept {
-  assert.ok(db.isTransaction && overview.workspaceId === scope.workspaceId);
-  assert.ok(!overview.portable);
-  const { workspaceId } = scope;
-  const prior = findScopedChangeKey(db, scope, input);
-  const foundation = reply.foundations?.find(f => f.key === input.key && compatibleDescriptions(f.summary, input.summary));
-  const match = prior ?? (foundation && findTutorPrerequisite(db, workspaceId, foundation));
-  const prefix = `ws/${workspaceId}/`;
-  const candidate = match ? { key: match.portable ? match.key : match.key.slice(prefix.length),
-    portable: match.portable, concept: match } : lookup(input);
+function directChangeConcept(db: Db, workspaceId: string, input: ProposalConcept): ResolvedConcept | null {
+  const key = conceptStorageKey(input.key, input.portable, workspaceId);
+  const saved = getConceptByKey(db, key);
   const alias = portableAlias(input.key, input.title);
-  if (reply.overviewConceptKey === input.key && !input.portable && !candidate.portable
-    && compatiblePortableAliases(alias, portableAlias('', overview.title))
-    && (!candidate.concept || isGeneratedChangeConcept(scope.workspaceId, candidate.concept))) {
-    if (candidate.concept) linkChangeDuplicate(db, candidate.concept, overview);
-    return { key: overview.key.slice(prefix.length), portable: false, concept: overview };
-  }
-  if ((candidate.portable || candidate.concept)
-    && compatiblePortableAliases(alias, portableAlias(candidate.key, candidate.concept?.title ?? input.title))) return candidate;
-  const sameMeaning = findCompatibleChangeTitle(db, scope, input);
-  if (sameMeaning) return { key: sameMeaning.key.slice(prefix.length), portable: false, concept: sameMeaning };
-  return { key: 'change/' + digest([scope.change, input.key, input.title, input.summary]), portable: false, concept: null };
+  if (alias === null) return null;
+  assert.ok(!saved || saved.portable === input.portable);
+  if (!saved) return input.portable ? { key: input.key, portable: true, concept: null } : null;
+  const linked = db.prepare('SELECT canonical_concept_id AS id FROM concept_identity_links WHERE legacy_concept_id = ?').get(saved.id);
+  const concept = typeof linked?.id === 'number' ? getConcept(db, linked.id) : saved;
+  assert.ok(concept && (concept.portable || concept.workspaceId === workspaceId));
+  if (!compatibleDescriptions(saved.summary, input.summary) || !compatibleDescriptions(concept.summary, input.summary)
+    || !compatiblePortableAliases(alias, portableAlias(concept.portable ? concept.key : input.key, concept.title))) return null;
+  return { key: concept.portable ? concept.key : input.key, portable: concept.portable, concept };
 }
 
-function bindChangeConcepts(db: Db, scope: ChangeConceptScope, snapshotId: number, reply: ChangeReply, overview: Concept) {
+function resolveChangeFootprint(db: Db, scope: ChangeConceptScope, overview: Concept, input: ProposalConcept, reply: ChangeReply,
+  firstOverview: boolean): ResolvedConcept {
+  assert.ok(db.isTransaction && !overview.portable && overview.workspaceId === scope.workspaceId);
+  assert.ok(input.summary.trim());
+  const { workspaceId } = scope;
+  const prefix = `ws/${workspaceId}/`;
+  const using = (concept: Concept) => ({ key: concept.portable ? concept.key : concept.key.slice(prefix.length), portable: concept.portable, concept });
+  const prior = findScopedChangeKey(db, scope, input);
+  if (prior) return using(prior);
+  const direct = directChangeConcept(db, workspaceId, input);
+  if (direct?.concept) return direct;
+  const foundation = reply.foundations?.find(f => f.key === input.key && compatibleDescriptions(f.summary, input.summary));
+  if (foundation) return using(resolveTutorPrerequisite(db, workspaceId, foundation));
+  if (firstOverview && !input.portable && reply.overviewConceptKey === input.key) return using(overview);
+  if (direct) return direct;
+  const key = 'change/' + digest([scope.change, input.key, normalizedConceptName(input.summary)]);
+  const concept = getConceptByKey(db, prefix + key);
+  assert.ok(!concept || compatibleDescriptions(concept.summary, input.summary));
+  return { key, concept, portable: false };
+}
+
+function bindChangeConcepts(db: Db, scope: ChangeConceptScope, snapshotId: number, reply: ChangeReply, overview: Concept, firstOverview: boolean) {
   assert.ok(db.isTransaction && snapshotId > 0);
   const { workspaceId } = scope;
   assert.equal(overview.workspaceId, workspaceId);
   if (reply.overviewConceptKey && !reply.touched.includes(reply.overviewConceptKey)) invalid('The overview key must identify an affected concept.');
   const mapped = new Map<string, Concept>();
   const bind = db.prepare('INSERT OR IGNORE INTO snapshot_concepts (snapshot_id, concept_id) VALUES (?, ?)');
-  const lookup = proposalConceptLookup(db, workspaceId);
-  const inputs = reply.overviewConceptKey ? reply.concepts.toSorted((a, b) =>
-    Number(b.key === reply.overviewConceptKey) - Number(a.key === reply.overviewConceptKey)) : reply.concepts;
-  for (const input of inputs) {
+  if (reply.overviewConceptKey && !reply.concepts.some(c => c.key === reply.overviewConceptKey && !c.portable)) {
+    invalid('The overview key must identify a local affected concept.');
+  }
+  for (const input of reply.concepts) {
     if (mapped.has(input.key)) invalid('The provider supplied a duplicate concept key.');
-    const { concept: existing, ...resolved } = resolveChangeFootprint(db, scope, overview, input, reply, lookup);
+    const { concept: existing, ...resolved } = resolveChangeFootprint(db, scope, overview, input, reply, firstOverview);
     const reviewed = existing && db.prepare('SELECT 1 FROM workspace_concepts WHERE workspace_id = ? AND concept_id = ? AND on_atlas = 1')
       .get(workspaceId, existing.id);
     const concept = upsertConceptInTransaction(db, { ...resolved, workspaceId,
       title: existing?.title ?? input.title, summary: existing?.summary ?? input.summary }, false);
     // Reading a PR may add a discussion, but cannot move an established concept to a different commit.
     if (!reviewed) bind.run(snapshotId, concept.id);
-    rememberChangeFootprint(db, scope, input, concept);
+    rememberChangeConcept(db, scope, concept, input);
     mapped.set(input.key, concept);
   }
   for (const edge of reply.edges) {
@@ -274,22 +298,16 @@ function recommendation(proposal: GraphProposal, concepts: Map<string, Concept>)
   return { conceptId: target.id, title: target.title, reason: proposal.recommendation.reason };
 }
 
-function saveChangeConcept(db: Db, source: ApprovedSource, reply: ChangeReply, scope: ChangeConceptScope): Concept {
+function saveChangeConcept(db: Db, source: ApprovedSource, reply: ChangeReply, scope: ChangeConceptScope, existing: Concept | null): Concept {
   const { request, preview } = source;
   assert.ok(db.isTransaction);
   assert.notEqual(request.selection.kind, 'baseline');
-  const existing = findChangeOverview(db, scope);
-  const alreadyPlain = existing && db.prepare(`SELECT 1 FROM lessons WHERE depth = 'high' AND (concept_id = :id OR concept_id IN (
-      SELECT legacy_concept_id FROM concept_identity_links WHERE canonical_concept_id = :id)) LIMIT 1`).get({ id: existing.id });
+  const alreadyPlain = existing && db.prepare("SELECT 1 FROM lessons WHERE depth = 'high' AND concept_id = ? LIMIT 1").get(existing.id);
   const title = request.depth === 'high' ? reply.conceptTitle ?? plainConceptTitle(preview.title) : preview.title;
   const key = existing?.key.slice(('ws/' + scope.workspaceId + '/').length) ?? 'change/' + digest([overviewKey, scope.change]);
   const concept = existing && (request.depth !== 'high' || alreadyPlain) ? existing
     : upsertConceptInTransaction(db, { workspaceId: scope.workspaceId, key, portable: false, title, summary: reply.summary }, false);
-  rememberChangeConcept(db, scope, concept, overviewKey);
-  const titleKey = changeTitleKey(title);
-  const duplicate = findCompatibleChangeTitle(db, scope, { key, title, summary: reply.summary });
-  if (duplicate) linkChangeDuplicate(db, duplicate, concept);
-  rememberChangeConcept(db, scope, concept, titleKey);
+  rememberChangeConcept(db, scope, concept);
   return concept;
 }
 
@@ -317,7 +335,14 @@ function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: Ch
   const lesson = saveLessonInTransaction(db, { workspaceId: request.workspaceId, snapshotId, conceptId: change.id, cacheKey,
     depth: request.depth, model: cacheModel(preview.model), provider: request.provider, schemaVersion: document.schema, body: document });
   if (reply.foundations) saveFoundations(db,
-    { workspaceId: request.workspaceId, canonicalConceptId: change.id, depth: request.depth }, lesson.id, reply.foundations);
+    { workspaceId: request.workspaceId, canonicalConceptId: change.id, depth: request.depth }, lesson.id, reply.foundations,
+    new Map(reply.foundations.flatMap(foundation => {
+      const input = reply.concepts.find(item => item.key === foundation.key);
+      if (!input || !compatibleDescriptions(input.summary, foundation.summary)) return [];
+      const concept = concepts.get(input.key);
+      assert.ok(concept);
+      return [[input.key, concept]];
+    })));
   const touchedIds = new Map<string, number>();
   const touched = new Map<number, { id: number; title: string }>();
   for (const key of reply.touched) {
@@ -433,8 +458,9 @@ export function persistGeneration(db: Db, source: ApprovedSource, proposal: Grap
     if (proposal.schema === 'delve.change/1') {
       assert.ok(selection.kind !== 'baseline');
       const scope = { workspaceId, change: changeIdentity(selection.kind, ref, preview.base, preview.commit) };
-      const change = saveChangeConcept(db, source, proposal, scope);
-      concepts = bindChangeConcepts(db, scope, snapshotId, proposal, change);
+      const existing = findChangeOverview(db, scope);
+      const change = saveChangeConcept(db, source, proposal, scope, existing);
+      concepts = bindChangeConcepts(db, scope, snapshotId, proposal, change, existing === null);
       result = { kind: 'change', brief: saveBrief(db, source, snapshotId, proposal, change, concepts) };
     } else {
       concepts = mergeBaseline(db, workspaceId, snapshotId, proposal);

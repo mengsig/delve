@@ -7,7 +7,7 @@ import type { WorkspaceGraph } from '../../shared/graph';
 import { plainConceptTitle } from '../../shared/plain-language';
 import type { FoundationProgress, FoundationStep, ReaderContract } from '../../shared/reader';
 import { transaction, type Db } from '../db/connection';
-import { canonicalConceptId } from '../db/concepts';
+import { canonicalConceptId, type Concept } from '../db/concepts';
 import { listEvidence } from '../db/evidence';
 import { readWorkspaceGraph } from '../db/graph';
 import { persistTutorPrerequisites } from '../db/tutor-prerequisites';
@@ -39,14 +39,15 @@ function answeredProbe(db: Db, conceptId: number): boolean {
   return db.prepare('SELECT 1 FROM evidence WHERE concept_id = ? AND probe_answered = 1 LIMIT 1').get(conceptId) !== undefined;
 }
 
-export function saveFoundations(db: Db, context: FoundationScope, lessonId: number, candidates: readonly Foundation[]): void {
+export function saveFoundations(db: Db, context: FoundationScope, lessonId: number, candidates: readonly Foundation[],
+  bound?: ReadonlyMap<string, Concept>): void {
   assert.ok(db.isTransaction);
   assert.ok(lessonId > 0 && candidates.length <= 4);
   const source = new Map<string, Foundation>();
   for (const candidate of candidates) {
     if (!source.has(candidate.key)) source.set(candidate.key, candidate);
   }
-  const resolved = persistTutorPrerequisites(db, context.workspaceId, context.canonicalConceptId, [...source.values()]);
+  const resolved = persistTutorPrerequisites(db, context.workspaceId, context.canonicalConceptId, [...source.values()], bound);
   const entries = resolved.flatMap(({ concept, candidateKey }) => {
     const content = source.get(candidateKey);
     assert.ok(content, 'every resolved prerequisite comes from a foundation candidate');
@@ -75,12 +76,12 @@ function nextFoundation(db: Db, context: LessonContext, lessonId: number) {
   const entry = entries[index];
   assert.ok(entry && (phase !== 'probe' || !answeredProbe(db, entry.conceptId)));
   assert.ok(index < saved.entries.length && saved.entries.length <= 4);
-  const { title, why, summary } = entry.content;
+  const { title, why, summary, explanation } = entry.content;
   const check = entry.content[phase];
   const revision = createHash('sha256').update(JSON.stringify([lessonId, phase, index, entry])).digest('hex');
   const common = { revision, title, why, position: index + 1, total: saved.entries.length, prompt: check.prompt, options: check.options };
   const step: FoundationStep = phase === 'probe' ? { ...common, phase } : {
-    ...common, phase, explanation: summary, goDeeper: mastery[index] === 'shallower',
+    ...common, phase, explanation: explanation ?? summary, goDeeper: mastery[index] === 'shallower',
   };
   return { step, entry, check, index, entries };
 }

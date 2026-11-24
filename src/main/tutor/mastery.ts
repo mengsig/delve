@@ -64,7 +64,7 @@ function decodeCycle(raw: string): Cycle {
 export function loadMastery(db: Db, context: LessonContext, selected: SelectedLesson, inherited: boolean): Mastery {
   const [requiredCorrectAnswers, maxAttempts] = masteryLimits[context.depth];
   const scope = masteryScope(context, selected.revision);
-  const saved = readMasteryRow(db, context, scope);
+  const saved = readMasteryRow(db, context, selected.id, scope);
   const check = checkIn(selected.document);
   const stage = inherited ? 'understood' : check ? 'checking' : 'teaching';
   const initial: Cycle = { stage, check: inherited ? null : check, attempts: 0, correctAnswers: 0,

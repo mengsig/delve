@@ -96,7 +96,7 @@ function keyFor(lesson: ReaderLesson): number {
 
 it('previews a new topic before creating its workspace and matches the first tokenized turn', () => {
   const input = { title: '  Café   acoustics ', depth: 'low', provider: 'codex' } as const;
-  const preview = previewNewTopic(input);
+  const preview = previewNewTopic(db, input);
   expect(preview).not.toHaveProperty('token');
   expect(preview.prompt).toContain('Café acoustics');
   expect(preview.bytes).toBe(Buffer.byteLength(preview.prompt));

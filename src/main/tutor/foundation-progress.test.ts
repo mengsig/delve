@@ -8,7 +8,7 @@ import { listEvidence, recordEvidence } from '../db/evidence';
 import { getGlobalKnowledgeGraph } from '../db/knowledge';
 import { addWorkspace } from '../db/workspaces';
 import { readLesson, readerHandlers } from '../reader/ipc';
-import { prepareTurn } from './prompt';
+import { prepareTurn, previewNewTopic } from './prompt';
 import { TutorSession } from './session';
 import type { Foundation } from './foundation-content';
 import type { TutorReply } from './provider';
@@ -91,6 +91,33 @@ it('derives and saves foundation links, skips covering proof and unlocks the exp
   expect(nextLesson.foundation).toBeUndefined();
   expect(nextLesson.foundationIntroduction).toMatch(/which you already know\.$/);
   expect(getGlobalKnowledgeGraph(db).concepts.filter(c => c.key === receipt.key)).toHaveLength(1);
+});
+
+it('uses a known foundation identity from the approved topic prompt and skips its mastered probe', async () => {
+  const stable = { ...receipt, key: 'confirming-delivery/v2', summary: 'A reply confirms reception of a pending packet in `dispatchQueue`.' };
+  const known = linked(stable);
+  recordEvidence(db, { conceptId: known.id, depth: 'low', status: 'demonstrated', source: 'check', masteryVerified: true });
+  upsertConcept(db, { ...receipt, key: 'workspace-private', portable: false, workspaceId: request.workspaceId });
+  upsertConcept(db, { ...receipt, key: 'x'.repeat(151), portable: true });
+  upsertConcept(db, { ...receipt, key: 'oversized', summary: 'x'.repeat(601), portable: true });
+
+  const title = 'Acknowledging messages';
+  const preview = previewNewTopic(db, { title, depth: 'high', provider: 'codex' });
+  const next = topic(title);
+  session = new TutorSession(db, async turn => {
+    expect(turn.preview.prompt).toBe(preview.prompt);
+    const { knownFoundations } = JSON.parse(turn.preview.prompt.slice(turn.preview.prompt.lastIndexOf('\n{')));
+    expect(knownFoundations).toEqual([{ key: stable.key, title: receipt.title, summary: stable.summary }]);
+    const [{ key, summary }] = knownFoundations;
+    return { ...opening, foundations: [{ ...receipt, key, summary, explanation: receipt.summary, title: 'Knowing a message arrived' }] };
+  });
+
+  expect(await run(next)).toMatchObject({ foundationIntroduction: 'This builds on Delivery receipts, which you already know.' });
+  expect(read(next)).toBeNull();
+  const graph = getGlobalKnowledgeGraph(db);
+  expect(graph.edges).toContainEqual({ conceptId: next.conceptId, prerequisiteId: known.id });
+  expect(graph.concepts.filter(c => c.key === stable.key)).toHaveLength(1);
+  expect(listEvidence(db, known.id)).toMatchObject([{ depth: 'low', masteryVerified: true }]);
 });
 
 it.each([

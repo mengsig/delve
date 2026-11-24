@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { beginKnowledgeTrip, previousPage, visitRoute, type Route } from './navigation';
+import { beginKnowledgeTrip, previousPage, routeForActivity, routeForTutorJob, visitRoute, type Route } from './navigation';
 
 function knowledgeHistory() {
   return visitRoute({ entries: [{ screen: 'atlas', conceptId: 1 }] }, { screen: 'knowledge' });
@@ -63,5 +63,30 @@ describe('Knowledge return history', () => {
     expect(previousPage(progress)).toEqual(lesson);
     expect(previousPage(lesson)).toEqual(start);
     expect(previousPage(start)).toEqual(start);
+  });
+});
+
+
+describe('recent activity navigation', () => {
+  it.each(['lesson', 'environment'] as const)('restores a pinned %s at its saved depth', kind => {
+    const common = { workspaceId: 'workspace', conceptId: 7, title: 'Lesson', depth: 'low' as const, lessonId: 42 };
+    const entry = kind === 'lesson' ? { ...common, kind } : { ...common, kind, blockKey: 'opening/0' };
+    expect(routeForActivity(entry)).toMatchObject({ screen: 'lesson', conceptId: 7, lessonId: 42, lessonDepth: 'low' });
+    expect(routeForActivity(entry)).toHaveProperty('environment', kind === 'environment' ? 'opening/0' : undefined);
+  });
+
+  it('keeps legacy unpinned activities unpinned', () => {
+    expect(routeForActivity({ kind: 'lesson', workspaceId: 'workspace', conceptId: 7, title: 'Lesson', depth: 'high' }))
+      .toMatchObject({ screen: 'lesson', conceptId: 7, lessonId: undefined, lessonDepth: undefined });
+  });
+});
+
+
+describe('tutor job navigation', () => {
+  it('opens the pinned lesson at the job depth', () => {
+    expect(routeForTutorJob({ workspaceId: 'workspace', conceptId: 7, depth: 'medium', lessonId: 42 }))
+      .toEqual({ screen: 'lesson', conceptId: 7, lessonId: 42, lessonDepth: 'medium' });
+    expect(routeForTutorJob({ workspaceId: 'workspace', conceptId: 7, depth: 'low' }))
+      .toEqual({ screen: 'lesson', conceptId: 7, lessonId: undefined, lessonDepth: undefined });
   });
 });

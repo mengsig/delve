@@ -83,8 +83,8 @@ describe('corroborated change concept identities', () => {
     expect(readWorkspaceGraph(db, workspaceId, true).evidence).toMatchObject([{ conceptId: id, depth: first.request.depth }]);
   });
 
-  it('retains a mapped portable identity when its alias and portability change together', () => {
-    const input = { key: 'transmission-control-protocol', title: 'Transmission Control Protocol',
+  it('retains an exact mapped portable key when its title and portability change', () => {
+    const input = { key: 'tcp', title: 'Transmission Control Protocol',
       summary: 'An ordered stream of bytes.', portable: true };
     const tcp = upsertConcept(db, { ...input, key: 'tcp', workspaceId });
     const approved = source({ kind: 'pr', ref: '42' }, previous);
@@ -109,6 +109,27 @@ describe('corroborated change concept identities', () => {
   });
 });
 
+it('does not reuse a scoped key whose meaning fails the description check', () => {
+  const approved = source({ kind: 'pr', ref: '42' }, previous);
+  const simple = { ...stableChange, overviewConceptKey: null, concepts: [details], touched: [details.key], edges: [],
+    recommendation: { key: details.key, reason: 'Review the policy.' } };
+  const initial = persistGeneration(db, approved, simple);
+  if (initial.kind !== 'change') throw new Error('Expected a change brief.');
+  const oldId = initial.brief.recommendation.conceptId;
+  recordEvidence(db, { workspaceId, conceptId: oldId, depth: 'low', status: 'demonstrated',
+    source: 'check', masteryVerified: true });
+
+  const conflict = { ...simple, concepts: [{ ...details, summary: 'Never retry a failed payment.' }] };
+  const second = persistGeneration(db, { ...approved, cacheKey: 'conflicting' }, conflict);
+  if (second.kind !== 'change') throw new Error('Expected a change brief.');
+  const newId = second.brief.recommendation.conceptId;
+  expect(newId).not.toBe(oldId);
+  expect(persistGeneration(db, { ...approved, cacheKey: 'conflicting-again' }, conflict)).toMatchObject({ brief: { touched: [{ id: newId }] } });
+  const concepts = getGlobalKnowledgeGraph(db).concepts;
+  expect(concepts.find(c => c.id === oldId)?.masteredDepth).toBe('low');
+  expect(concepts.find(c => c.id === newId)?.masteredDepth).toBeNull();
+});
+
 describe('stable change overview and footprint', () => {
   const proposal = stableChange;
   const { title } = affected;
@@ -123,8 +144,8 @@ describe('stable change overview and footprint', () => {
 
     const alternate = { ...high, cacheKey: 'regenerated', preview: { ...high.preview, model: 'another-model' } };
     const regenerated = persistGeneration(db, alternate, { ...proposal, concepts: [
-      { ...affected, summary: 'Preserve data until it is confirmed.' }, { ...details, key: 'retry-rule' },
-    ], touched: [affected.key, 'retry-rule'], edges: [{ concept: affected.key, prerequisite: 'retry-rule' }] });
+      { ...affected, title: 'Saving data for later' }, { ...details, title: 'Trying again' },
+    ] });
     const low = { ...approved, cacheKey: 'deeper', request: { ...approved.request, depth: 'low' as const } };
     const deeper = persistGeneration(db, low, { ...proposal, conceptTitle: null,
       concepts: [{ ...affected, title: 'Retaining pending segments' }, { ...details, title: 'Retry deadline' }],
@@ -138,7 +159,7 @@ describe('stable change overview and footprint', () => {
     expect(lowLesson.blocks).toContainEqual(expect.objectContaining({ text: 'Deeper lesson mechanics.' }));
   });
 
-  it('coalesces a low-first footprint with its later plain overview and projects saved references', () => {
+  it('retains the mastery of a low-first footprint when a later reply claims an established overview', () => {
     const approved = source({ kind: 'pr', ref: '42' }, previous);
     const low = { ...approved, request: { ...approved.request, depth: 'low' as const } };
     const first = persistGeneration(db, low, { ...proposal, conceptTitle: null, overviewConceptKey: null });
@@ -150,9 +171,9 @@ describe('stable change overview and footprint', () => {
     const high = { ...approved, cacheKey: 'high-after-low', request: { ...approved.request, depth: 'high' as const } };
     const { conceptId } = first.brief;
     expect(persistGeneration(db, high, proposal)).toMatchObject({ brief: { conceptId } });
-    expect(cachedGeneration(db, low.cacheKey)).toMatchObject({ brief: { conceptId, recommendation: { conceptId } } });
-    expect(getGlobalKnowledgeGraph(db).concepts.map(concept => concept.title)).toEqual([title, details.title]);
-    expect(readLesson(db, { workspaceId, conceptId, depth: 'low' }).mastery.stage).toBe('understood');
+    expect(cachedGeneration(db, low.cacheKey)).toMatchObject({ brief: { conceptId, recommendation: { conceptId: prior } } });
+    expect(getGlobalKnowledgeGraph(db).concepts.find(c => c.id === prior)?.masteredDepth).toBe('low');
+    expect(readLesson(db, { workspaceId, conceptId, depth: 'low' }).mastery.stage).toBe('teaching');
     expect(readLesson(db, { workspaceId, conceptId, depth: 'high' }).mastery.stage).toBe('teaching');
   });
 });
@@ -369,8 +390,9 @@ describe('change conversations', () => {
     expect(current.changeSuggestions?.medium).toMatchObject({ kind: 'pr', ref: '19', reason: 'Consider the change first.' });
     expect(current.snapshot).toBe(baseline);
     expect(readWorkspaceCoverage(db)).toMatchObject([{ total: 2 }]);
-    expect(result.brief.touched.map(c => c.title)).toEqual(['Routing policy', 'New feature']);
-    expect(readWorkspaceGraph(db, workspaceId, true).concepts).toHaveLength(5);
+    expect(result.brief.touched.map(c => c.title)).toEqual(['PR title', 'New feature']);
+    expect(result.brief.touched[0]?.id).not.toBe(reviewed.concepts.find(c => !c.portable)?.id);
+    expect(readWorkspaceGraph(db, workspaceId, true).concepts).toHaveLength(6);
     expect(readLesson(db, { workspaceId, conceptId: result.brief.conceptId, depth: 'medium' }).source).toBe(previous);
   });
 
@@ -406,6 +428,19 @@ it('requires more than a matching title and summary for an unrecognized alias', 
   expect(graph.concepts[0]!.id).not.toBe(existing.id);
 });
 
+it('uses the provider key to corroborate a familiar portable title', () => {
+  const learned = upsertConcept(db, { key: 'tcp', title: 'TCP', summary: 'A reliable byte stream.', portable: true });
+  const origin = addWorkspace(db, { kind: 'topic', title: 'Byte streams' });
+  recordEvidence(db, { workspaceId: origin.id, conceptId: learned.id, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const input = { key: 'other-protocol', title: learned.title, summary: learned.summary, portable: true };
+  const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [input], edges: [],
+    recommendation: { key: input.key, reason: 'Study this protocol.' } });
+  persistGeneration(db, source({ kind: 'baseline', commit: baseline, paths: ['src/routes.ts'] }, baseline), proposal);
+  const graph = readWorkspaceGraph(db, workspaceId);
+  expect(graph.concepts[0]?.id).not.toBe(learned.id);
+  expect(graph.evidence).toEqual([]);
+});
+
 it.each([
   { key: 'tcp', linked: false, portable: true },
   { key: 'tcp', linked: true, portable: false },
@@ -438,9 +473,9 @@ it.each([
     expect(readWorkspaceGraph(db, workspaceId).concepts).toEqual([scoped]);
 
     const next = source({ kind: 'baseline', commit: previous, paths: ['src/routes.ts'] }, previous);
-    const corroborated = linked ? { ...conflicting, title: 'TCP' }
+    const corroborated = linked || key === 'transport' ? { ...conflicting, title: 'TCP' }
       : { key: 'transmission-control-protocol', title: 'Transmission Control Protocol', summary, portable: true };
-    persistGeneration(db, next, baselineReply.parse({ ...proposal, concepts: linked ? [corroborated] : [conflicting, corroborated],
+    persistGeneration(db, next, baselineReply.parse({ ...proposal, concepts: linked || key === 'transport' ? [corroborated] : [conflicting, corroborated],
       recommendation: { ...proposal.recommendation, key: corroborated.key } }));
     expect(db.prepare('SELECT next_concept FROM repository_generations WHERE cache_key = ?').get(next.cacheKey)?.next_concept).toBe(tcp.id);
     expect(readWorkspaceGraph(db, workspaceId).concepts).toEqual(expect.arrayContaining([scoped,
@@ -564,7 +599,7 @@ it.each([true, false])('resolves aliases within one proposal consistently on cac
 it('does not overwrite an unrelated local at an internally allocated key', () => {
   const original = 'A reliable ordered byte stream';
   const input = { key: 'tcp', title: 'TCP', summary: 'A tropical climate policy for farmers', portable: true };
-  const internal = 'ambiguous/' + digest([input.key, input.summary.toLowerCase()]);
+  const internal = 'ambiguous/' + digest(['baseline', input.key, input.summary.toLowerCase(), 'tcp']);
   upsertConcept(db, { key: 'tcp', title: 'TCP', summary: original, portable: true, workspaceId });
   const occupied = upsertConcept(db, { key: internal, title: 'Unrelated', summary: 'Independent knowledge', portable: false, workspaceId });
   recordEvidence(db, { workspaceId, conceptId: occupied.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });

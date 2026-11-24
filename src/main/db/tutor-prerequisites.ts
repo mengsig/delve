@@ -1,60 +1,52 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { DomainError } from '../../shared/errors';
 import { addPrerequisiteInTransaction, canonicalConceptId, conceptStorageKey, getConcept, getConceptByKey, upsertConceptInTransaction, type Concept } from './concepts';
 import type { Db } from './connection';
-import { compatibleDescriptions, compatiblePortableAliases, normalizedConceptName, portableAlias, scopedFingerprint } from './portable-identity';
+import { compatibleDescriptions, compatiblePortableAliases, normalizedConceptName, portableAlias } from './portable-identity';
 import { canonicalEdges, edgeReachable } from './migration-edges';
 import { getWorkspace } from './workspaces';
 
 type Candidate = { key: string; title: string; summary: string };
 type Selection = { concept: Concept; candidateKey: string };
 
-const variantKey = (candidate: Candidate) => 'foundation/' + scopedFingerprint({ ...candidate, portable: false });
+function variantKey(candidate: Candidate): string {
+  const key = conceptStorageKey(candidate.key, true);
+  const definition = normalizedConceptName(candidate.summary);
+  assert.ok(definition);
+  assert.ok(candidate.title.trim());
+  return 'foundation/' + createHash('sha256').update(JSON.stringify([key, definition])).digest('hex');
+}
 
 export function findTutorPrerequisite(db: Db, workspaceId: string, candidate: Candidate, portableOnly = false): Concept | null {
   const key = conceptStorageKey(candidate.key, true);
-  const localKey = conceptStorageKey(candidate.key, false, workspaceId);
-  const title = normalizedConceptName(candidate.title);
-  const alias = portableAlias(key, title);
-  const local = getConceptByKey(db, localKey);
-  const scopedId = local ? canonicalConceptId(db, local.id) : null;
-  const variant = variantKey(candidate);
-  assert.ok(title.length > 0, 'matching requires a nonblank concept title');
-  const rows = db.prepare(`SELECT c.id, c.key, c.title, c.summary, c.portable FROM concepts c
-    WHERE (c.portable = 1 OR (c.workspace_id = ? AND ? = 0))
-      AND c.key NOT LIKE 'Demo:%'
-      AND NOT EXISTS (SELECT 1 FROM concept_identity_links l WHERE l.legacy_concept_id = c.id)
-    ORDER BY CASE WHEN c.id = ? THEN 0 WHEN c.key = ? OR c.key = ? THEN 1 ELSE 2 END, c.portable, c.id`)
-    .iterate(workspaceId, Number(portableOnly), scopedId, key, variant);
-  for (const row of rows) {
-    assert.ok(typeof row.id === 'number' && Number.isSafeInteger(row.id) && row.id > 0);
-    assert.ok(typeof row.key === 'string' && typeof row.title === 'string' && typeof row.summary === 'string');
-    assert.ok(row.portable === 0 || row.portable === 1);
-    const unscopedKey = row.portable === 1 ? row.key : row.key.slice(`ws/${workspaceId}/`.length);
-    const savedAlias = portableAlias(unscopedKey, row.title);
-    const sameKey = row.id === scopedId || row.key === key || row.key === variant;
-    const sameAlias = Boolean(alias && alias === savedAlias);
-    const sameLocalTitle = row.portable === 0 && normalizedConceptName(row.title) === title;
-    if (!sameKey && !sameAlias && !sameLocalTitle) continue;
-    if (!compatibleDescriptions(candidate.summary, row.summary) || !compatiblePortableAliases(alias, savedAlias)) continue;
-    const match = getConcept(db, row.id);
-    assert.ok(match && (!portableOnly || match.portable));
-    return match;
+  const prefix = `ws/${workspaceId}/`;
+  const alias = portableAlias(key, candidate.title);
+  assert.ok(workspaceId && candidate.title.trim());
+  assert.ok(candidate.summary.trim());
+  const keys = [key, variantKey(candidate)];
+  if (!portableOnly) keys.unshift(prefix + key);
+  for (const storedKey of keys) {
+    const saved = getConceptByKey(db, storedKey);
+    if (!saved || !compatibleDescriptions(candidate.summary, saved.summary)) continue;
+    const concept = getConcept(db, canonicalConceptId(db, saved.id));
+    assert.ok(concept && (concept.portable || concept.workspaceId === workspaceId));
+    if (portableOnly && !concept.portable) continue;
+    const unscoped = concept.portable ? concept.key : concept.key.slice(prefix.length);
+    if (compatibleDescriptions(candidate.summary, concept.summary) &&
+      compatiblePortableAliases(alias, portableAlias(unscoped, concept.title))) return concept;
   }
   return null;
 }
 
-function resolveCandidate(db: Db, workspaceId: string, target: Concept, candidate: Candidate): Concept {
+export function resolveTutorPrerequisite(db: Db, workspaceId: string, candidate: Candidate, portableOnly = false): Concept {
   assert.ok(db.isTransaction);
-  const match = findTutorPrerequisite(db, workspaceId, candidate, target.portable);
+  assert.ok(workspaceId && candidate.summary.trim());
+  const match = findTutorPrerequisite(db, workspaceId, candidate, portableOnly);
   if (match) return match;
-  let key = conceptStorageKey(candidate.key, true);
-  if (getConceptByKey(db, key)) {
-    key = variantKey(candidate);
-    const existing = getConceptByKey(db, key);
-    if (existing) throw new DomainError('CONCEPT_CONFLICT', `Concept key "${key}" is unavailable.`);
-  }
-  assert.notEqual(key, target.key);
+  const preferred = conceptStorageKey(candidate.key, true);
+  const key = getConceptByKey(db, preferred) || portableAlias(preferred, candidate.title) === null ? variantKey(candidate) : preferred;
+  if (getConceptByKey(db, key)) throw new DomainError('CONCEPT_CONFLICT', `Concept key "${key}" is unavailable.`);
   return upsertConceptInTransaction(db, { ...candidate, key, portable: true }, false);
 }
 
@@ -83,7 +75,8 @@ function bottomUp(db: Db, concepts: Selection[]): Selection[] {
   return ordered;
 }
 
-export function persistTutorPrerequisites(db: Db, workspaceId: string, conceptId: number, candidates: readonly Candidate[]): Selection[] {
+export function persistTutorPrerequisites(db: Db, workspaceId: string, conceptId: number, candidates: readonly Candidate[],
+  bound: ReadonlyMap<string, Concept> = new Map()): Selection[] {
   assert.ok(db.isTransaction, 'prerequisite writes require a transaction');
   if (!getWorkspace(db, workspaceId)) throw new DomainError('WORKSPACE_NOT_FOUND', 'That workspace no longer exists.');
   const target = getConcept(db, conceptId);
@@ -93,7 +86,7 @@ export function persistTutorPrerequisites(db: Db, workspaceId: string, conceptId
   const legacy = db.prepare('SELECT 1 FROM concept_identity_links WHERE legacy_concept_id = ?').get(conceptId);
   if (legacy) throw new DomainError('CONCEPT_NOT_FOUND', 'That concept has been replaced.');
   for (const candidate of candidates) {
-    if (typeof candidate.key !== 'string' || typeof candidate.title !== 'string' || !candidate.title.trim() || typeof candidate.summary !== 'string') {
+    if (typeof candidate.key !== 'string' || typeof candidate.title !== 'string' || !candidate.title.trim() || typeof candidate.summary !== 'string' || !candidate.summary.trim()) {
       throw new DomainError('INVALID_CONCEPT', 'A prerequisite needs a title and summary.');
     }
     conceptStorageKey(candidate.key, true);
@@ -105,7 +98,10 @@ export function persistTutorPrerequisites(db: Db, workspaceId: string, conceptId
     if (!target.summary.trim() && conceptStorageKey(candidate.key, true) === targetKey
       && normalizedConceptName(candidate.title) === normalizedConceptName(target.title)
       && compatiblePortableAliases(portableAlias(candidate.key, candidate.title), portableAlias(targetKey, target.title))) continue;
-    const concept = resolveCandidate(db, workspaceId, target, candidate);
+    const linked = bound.get(candidate.key);
+    assert.ok(!linked || linked.portable || !target.portable && linked.workspaceId === workspaceId);
+    const concept = linked ?? resolveTutorPrerequisite(db, workspaceId, candidate, target.portable);
+    if (concept.id === target.id) continue;
     if (seen.has(concept.id)) continue;
     try {
       addPrerequisiteInTransaction(db, target.id, concept.id);

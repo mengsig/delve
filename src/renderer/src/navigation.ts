@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { Depth, Workspace, WorkspaceList } from '../../shared/domain';
+import type { LessonAddress } from '../../shared/reader';
 import type { ChangeRef, LearnIntent } from '../../shared/repository';
 import { call } from './api';
 import { dismissOnboarding, onboardingDismissed, storeDepth, workspaceDepth } from './preferences';
@@ -21,8 +22,13 @@ export type Screen = Route['screen'];
 
 export function routeForActivity(entry: Activity): Route {
   if (entry.kind === 'change') return { screen: 'changes', change: entry.change, title: entry.title };
-  return { screen: 'lesson', conceptId: entry.conceptId, change: entry.change,
+  return { screen: 'lesson', conceptId: entry.conceptId, lessonId: entry.lessonId,
+    lessonDepth: entry.lessonId === undefined ? undefined : entry.depth, change: entry.change,
     environment: entry.kind === 'environment' ? entry.blockKey : undefined };
+}
+
+export function routeForTutorJob({ conceptId, depth, lessonId }: LessonAddress): Route {
+  return { screen: 'lesson', conceptId, lessonId, lessonDepth: lessonId === undefined ? undefined : depth };
 }
 
 function initialRoute(initial: WorkspaceList): Exclude<Route, { screen: 'knowledge' }> {

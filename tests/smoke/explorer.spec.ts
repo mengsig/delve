@@ -278,17 +278,61 @@ test('keeps one Knowledge node when a PR footprint and brief teach the same idea
   await page.getByRole('button', { name: 'Changes', exact: true }).click();
   await pull.click();
   await page.getByLabel('Reading depth').selectOption('low');
-  writeExplanation(directory, { concepts: [concept, { ...newConcept, title: 'Dispatch retry budget',
-    summary: 'The worker can make three delivery attempts.' }] });
+  writeExplanation(directory, { concepts: [concept, { ...newConcept, title: 'Dispatch retry budget' }] });
   await page.getByRole('button', { name: 'Teach me this change' }).click();
   await expect(page.getByRole('heading', { name: 'How it works', exact: true })).toBeVisible();
   const request = JSON.parse(readFileSync(join(directory, 'request.json'), 'utf8'));
   const { learner } = JSON.parse(request.stdin.trimEnd().split('\n').at(-1));
-  expect(learner.changeConcepts).toContainEqual(expect.objectContaining({ key: newConcept.key, title: plainChangeTitle }));
+  expect(learner.changeConcepts).toContainEqual({ key: newConcept.key, title: plainChangeTitle, summary: newConcept.summary, overview: true });
   await verifyChangeKnowledge(page, info, 'pr-knowledge-high-after-low');
+
+  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  await pull.click();
+  const explanation = page.getByRole('tabpanel', { name: 'Explanation' });
+  await explanation.getByText('Provider · Codex', { exact: true }).click();
+  await explanation.getByRole('button', { name: /Claude Code/ }).click();
+  const regenerated = 'The worker tries the delivery again.';
+  writeExplanation(directory, { concepts: [concept, { ...newConcept, title: plainChangeTitle }], conceptTitle: plainChangeTitle,
+    overviewConceptKey: newConcept.key, example: simpleExample, what: regenerated, mechanics: null });
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await expect(page.getByLabel('Lesson transcript')).toContainText(regenerated);
+  await verifyChangeKnowledge(page, info, 'pr-knowledge-high-after-regeneration');
 });
 
-test('opens the selected provider’s saved PR lesson when both providers used the same depth', async ({ desktop: { page, directory } }) => {
+async function resumePinnedTutor(page: Page, directory: string, codex: string, claude: string) {
+  const question = 'Why does the worker wait before trying again?';
+  const answer = 'A short wait gives the network time to recover.';
+  const gate = join(directory, 'gate');
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify({
+    assessment: null, observation: null, recommendation: null, foundations: [],
+    lesson: { schema: 'delve.lesson/1', source: null, blocks: [{ type: 'prose', heading: 'A useful pause', text: answer }] },
+  }));
+  writeFileSync(gate, '');
+  await page.getByRole('button', { name: 'Close preview', exact: true }).click();
+  await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Ask your tutor' }).fill(question);
+  await page.getByRole('button', { name: 'Ask question', exact: true }).click();
+  await page.getByRole('button', { name: 'Allow once and continue' }).click();
+  await page.getByRole('button', { name: 'Continue in background' }).click();
+  const explanation = page.getByRole('tabpanel', { name: 'Explanation' });
+  await explanation.getByText('Provider · Codex', { exact: true }).click();
+  await explanation.getByRole('button', { name: /Claude Code/ }).click();
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  const transcript = page.getByLabel('Lesson transcript');
+  await expect(transcript).toContainText(claude);
+  const activity = page.getByRole('region', { name: 'Tutor activity' });
+  await expect(activity).toContainText('Preparing tutor response');
+  unlinkSync(gate);
+  await expect(activity).toContainText('Tutor response ready');
+  await activity.getByRole('button', { name: 'Open lesson' }).click();
+  await expect(transcript).toContainText(codex);
+  await expect(transcript).toContainText(answer);
+  await expect(transcript).not.toContainText(claude);
+}
+
+test('opens the selected provider’s saved PR lesson when both providers used the same depth', async ({ desktop }) => {
+  let { page } = desktop;
+  const { directory } = desktop;
   createExplorerFixture(directory);
   await mapFixture(page, 'https://github.com/contour/dispatch', directory, true);
   await page.getByRole('option', { name: new RegExp(prTitle) }).click();
@@ -317,6 +361,17 @@ test('opens the selected provider’s saved PR lesson when both providers used t
   await teach.click();
   await expect(transcript).toContainText(codex);
   await expect(transcript).not.toContainText(claude);
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('delve.recent-activity') ?? '[]')[0]);
+  expect(saved).toMatchObject({ kind: 'lesson', depth: 'medium', lessonId: expect.any(Number) });
+  await page.getByRole('button', { name: 'Atlas', exact: true }).click();
+  const id = await workspaceId(page);
+  await page.evaluate(workspace => localStorage.setItem('delve.depth.' + workspace, 'high'), id);
+  page = await desktop.restart();
+  await page.getByRole('button', { name: /Continue lesson/ }).click();
+  await expect(page.getByLabel('Reading depth')).toHaveValue('medium');
+  await expect(page.getByLabel('Lesson transcript')).toContainText(codex);
+  await expect(page.getByLabel('Lesson transcript')).not.toContainText(claude);
+  await resumePinnedTutor(page, directory, codex, claude);
 });
 
 test('draws a low-depth trace once with arrows and discloses technical text at high depth', async ({ desktop: { page, directory } }, info) => {

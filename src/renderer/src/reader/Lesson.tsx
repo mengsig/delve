@@ -16,7 +16,7 @@ import type { ReaderProps } from './ReaderHeader';
 import { ResponseDock } from './ResponseDock';
 import { Transcript } from './Transcript';
 import { useTutor, type LessonTutor } from './Tutor';
-import { lessonKey, useTutorJobs } from './TutorJobs';
+import { lessonKey, lessonViewKey, useTutorJobs } from './TutorJobs';
 import './reader.css';
 import './fieldwork.css';
 
@@ -80,7 +80,7 @@ function Session({ props, initial, title, address, reload }: {
 }) {
   const [body, setBody] = useState(initial);
   const [foundation, completeFoundation] = useState<{ feedback?: string }>();
-  const scope = lessonKey(address) + (address.lessonId === undefined ? '' : '/lesson/' + address.lessonId);
+  const scope = lessonViewKey(address);
   const { jobs, dismiss } = useTutorJobs();
   const candidate = jobs.get(lessonKey(address));
   const job = candidate?.request.lessonId === address.lessonId ? candidate : undefined;

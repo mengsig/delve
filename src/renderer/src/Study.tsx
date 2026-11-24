@@ -42,21 +42,22 @@ function StudyLesson({ route, common, remember, commit, refresh, backTo }: {
   const { depth, workspace, graph } = common;
   const title = graph.concepts.find(concept => concept.id === conceptId)?.title;
   const workspaceId = workspace.id;
+  const lessonId = route.lessonDepth === depth ? route.lessonId : undefined;
   useLayoutEffect(() => {
-    if (title && !environment) remember({ kind: 'lesson', workspaceId, conceptId, depth, title, change });
-  }, [title, environment, remember, workspaceId, conceptId, depth, change]);
+    if (title && !environment) remember({ kind: 'lesson', workspaceId, conceptId, depth, lessonId, title, change });
+  }, [title, environment, remember, workspaceId, conceptId, depth, lessonId, change]);
   function read() {
-    if (title) remember({ kind: 'lesson', workspaceId, conceptId, depth, title, change });
+    if (title) remember({ kind: 'lesson', workspaceId, conceptId, depth, lessonId, title, change });
   }
   function used(blockKey: string, name: string) {
-    remember({ kind: 'environment', workspaceId, conceptId, depth, title: name, blockKey, change });
+    remember({ kind: 'environment', workspaceId, conceptId, depth, lessonId, title: name, blockKey, change });
   }
   function onEvidence(lesson?: ReaderLesson) {
     if (lesson) commit({ workspaceId, conceptId, depth }, lesson);
     else refresh();
   }
   return <EnvironmentActivity.Provider value={{ resumeKey: environment, onUse: used, onRead: read }}>
-    <Lesson {...common} conceptId={conceptId} lessonId={route.lessonDepth === depth ? route.lessonId : undefined} initialQuestion={route.question} initialReview={route.review} onEvidence={onEvidence}
+    <Lesson {...common} conceptId={conceptId} lessonId={lessonId} initialQuestion={route.question} initialReview={route.review} onEvidence={onEvidence}
       onBack={common.backLabel ? common.onBack : () => backTo({ screen: 'atlas', conceptId })}
       onBackToChange={change ? () => backTo({ screen: 'changes', change }) : undefined} />
   </EnvironmentActivity.Provider>;

@@ -12,13 +12,14 @@ export function portableConceptLookup(db: Db) {
     assert.ok(typeof key === 'string' && key.length > 0);
     assert.ok(typeof title === 'string' && title.length > 0);
     titles.add(normalizedConceptName(title));
-    const alias = portableAlias(key, title);
+    const alias = portableAlias(key, '');
     if (alias) byAlias.set(alias, [...(byAlias.get(alias) ?? []), key]);
   }
   return (key: string, title: string, summary: string): { key: string; concept: Concept | null; portable: boolean } => {
     const normalizedKey = key.trim().toLowerCase();
-    const alias = portableAlias(normalizedKey, title);
-    if (alias === null) return { key: normalizedKey, concept: null, portable: false };
+    const alias = portableAlias(normalizedKey, '');
+    const label = portableAlias(normalizedKey, title);
+    if (label === null) return { key: normalizedKey, concept: null, portable: false };
     const keys = new Set([normalizedKey, ...(alias ? byAlias.get(alias) ?? [] : [])]);
     const candidates = [...keys].map(candidate => getConceptByKey(db, candidate)).filter((c): c is Concept => c !== null);
     const pendingKeys = [...keys].filter(candidate => pending.has(candidate) && !candidates.some(concept => concept.key === candidate));
@@ -26,7 +27,7 @@ export function portableConceptLookup(db: Db) {
     if (pendingKey) {
       const candidate = pending.get(pendingKey);
       assert.ok(candidate);
-      if (pendingKeys.length === 1 && candidates.length === 0 && compatiblePortableAliases(alias, candidate.alias)
+      if (pendingKeys.length === 1 && candidates.length === 0 && compatiblePortableAliases(label, candidate.alias)
         && compatibleDescriptions(summary, candidate.summary)) {
         return { key: pendingKey, concept: null, portable: true };
       }
@@ -34,7 +35,7 @@ export function portableConceptLookup(db: Db) {
     }
     if (candidates.length) {
       const [candidate] = candidates;
-      if (candidates.length === 1 && candidate?.portable && compatiblePortableAliases(alias, portableAlias(candidate.key, candidate.title))
+      if (candidates.length === 1 && candidate?.portable && compatiblePortableAliases(label, portableAlias(candidate.key, candidate.title))
         && compatibleDescriptions(summary, candidate.summary)) {
         return { key: candidate.key, concept: candidate, portable: true };
       }
@@ -43,7 +44,7 @@ export function portableConceptLookup(db: Db) {
     if (titles.has(normalizedConceptName(title))) return { key: normalizedKey, concept: null, portable: false };
     const stableKey = alias ?? normalizedKey;
     titles.add(normalizedConceptName(title));
-    pending.set(stableKey, { alias, summary });
+    pending.set(stableKey, { alias: label, summary });
     if (alias) byAlias.set(alias, [stableKey]);
     return { key: stableKey, concept: null, portable: true };
   };

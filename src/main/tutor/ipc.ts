@@ -22,7 +22,7 @@ export const tutorSchemas = {
 
 export function tutorHandlers(db: Db, session: TutorSession): Pick<IpcHandlers, keyof typeof tutorSchemas> {
   return {
-    'tutor:preview-topic': previewNewTopic,
+    'tutor:preview-topic': request => previewNewTopic(db, request),
     'tutor:preview': request => prepareTurn(db, request).preview,
     'tutor:run': request => session.run(request),
     'tutor:cancel': ({ requestId }) => session.cancel(requestId),

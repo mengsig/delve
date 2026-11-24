@@ -14,6 +14,7 @@ import { TUTOR_GENERATION } from '../db/lessons';
 import { cacheModel, selectModel } from '../providers/model';
 import { readChangeWithPatches, readFiles } from './source';
 import { digest, type ApprovedSource } from './store';
+import { proposalConceptKey } from './schemas';
 import { portableKeyGuide } from '../db/portable-identity';
 
 interface SourceMaterial {
@@ -58,26 +59,29 @@ function learningContext(db: Db, request: RepoRequest) {
     : { concepts: [], evidence: [], edges: [] };
   const evidence = new Map(graph.evidence.filter(e => e.depth === request.depth).map(e => [e.conceptId, e.status]));
   const deepest = demonstratedEvidence(graph.evidence);
-  const concepts = graph.concepts.filter(c => !c.key.startsWith('ws/' + request.workspaceId + '/change/')).slice(0, 160)
-    .map(c => {
-      const demonstratedDepth = c.portable ? deepest.get(c.id)?.depth ?? null : null;
-      const known = demonstratedDepth !== null && coversDepth(demonstratedDepth, request.depth);
-      return { key: c.portable ? c.key : c.key.slice(('ws/' + request.workspaceId + '/').length), title: c.title.slice(0, 200),
-        portable: c.portable, evidence: known ? 'demonstrated' : evidence.get(c.id) ?? null, demonstratedDepth, id: c.id };
-    });
+  const prefix = `ws/${request.workspaceId}/`;
+  const concepts = graph.concepts.flatMap(c => {
+    const key = c.portable ? c.key : c.key.startsWith(prefix) ? c.key.slice(prefix.length) : '';
+    if (proposalConceptKey.safeParse(key).data !== key) return [];
+    const demonstratedDepth = c.portable ? deepest.get(c.id)?.depth ?? null : null;
+    const known = demonstratedDepth !== null && coversDepth(demonstratedDepth, request.depth);
+    return [{ key, title: c.title.slice(0, 180), summary: c.summary.length <= 600 ? c.summary : undefined,
+      portable: c.portable, evidence: known ? 'demonstrated' : evidence.get(c.id) ?? null, demonstratedDepth, id: c.id }];
+  }).slice(0, 160);
   const keys = new Map(concepts.map(c => [c.id, c.key]));
   const edges = graph.edges.filter(e => keys.has(e.conceptId) && keys.has(e.prerequisiteId)).slice(0, 320)
     .map(e => ({ concept: keys.get(e.conceptId), prerequisite: keys.get(e.prerequisiteId) }));
   const portable = db.prepare(`SELECT c.key, c.title, c.summary,
     max(CASE e.depth WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END) AS rank
     FROM concepts c LEFT JOIN evidence e ON c.id = e.concept_id AND e.mastery_verified = 1
-    WHERE c.portable = 1 AND c.key NOT LIKE 'Demo:%'
-    GROUP BY c.id ORDER BY rank DESC, c.id LIMIT 200`).all().map(({ key, title, summary, rank }) => {
+    WHERE c.portable = 1 AND c.key NOT LIKE 'Demo:%' AND length(c.summary) BETWEEN 1 AND 600
+    GROUP BY c.id ORDER BY rank DESC, c.id LIMIT 200`).all().flatMap(({ key, title, summary, rank }) => {
     assert.ok(typeof key === 'string' && typeof title === 'string');
     assert.ok(typeof summary === 'string');
     assert.ok(rank === null || typeof rank === 'number' && DEPTHS[rank] !== undefined);
+    if (proposalConceptKey.safeParse(key).data !== key || summary.length > 600) return [];
     const demonstratedDepth = rank === null ? null : DEPTHS[rank]!;
-    return { key, title, summary, demonstratedDepth, known: demonstratedDepth !== null && coversDepth(demonstratedDepth, request.depth) };
+    return [{ key, title: title.slice(0, 180), summary, demonstratedDepth, known: demonstratedDepth !== null && coversDepth(demonstratedDepth, request.depth) }];
   });
   return { mappedConcepts: concepts, prerequisites: edges, portableVocabulary: portable };
 }
@@ -86,9 +90,9 @@ const mapTask = 'Map the approved files into concepts and prerequisite edges. Re
 const changeTask = [
   'Teach what changed, why it matters, and the before and after. At High, set conceptTitle to a plain name for the change and put an everyday analogy in example, before any optional worked example. Otherwise set conceptTitle to null. Keep coverage notes out of the teaching because Delve shows them separately. Describe only behavior supported by the available material.',
   'At Medium and Low explain how the parts interact in mechanics and include a short ordered trace when supported. At Low name important changed files and functions and explain the boundary condition in boundary. Return a short contiguous excerpt copied verbatim from the diff, including patch prefixes. Use null or empty arrays where unavailable or outside the chosen depth.',
-  'List the affected concepts and prerequisite edges. Reuse the same keys for concepts that also belong in foundations. List only directly affected keys in touched. Link those keys to concrete diff spans using the exact file path, side old for removed lines or new for added lines, and inclusive source line numbers. Each span must contain only consecutive changed lines on that side. Return empty spans if unavailable.',
-  'Reuse the keys in changeConcepts for affected ideas already mapped for this change, even when the title or explanation changes with depth.',
-  'Set overviewConceptKey to an affected local concept key only when it teaches the same idea as the brief itself. Otherwise set overviewConceptKey to null.',
+  'List the affected concepts and prerequisite edges. Use exactly the same key and summary in concepts and foundations when they describe the same idea. List only directly affected keys in touched. Link those keys to concrete diff spans using the exact file path, side old for removed lines or new for added lines, and inclusive source line numbers. Each span must contain only consecutive changed lines on that side. Return empty spans if unavailable.',
+  'For an affected idea in changeConcepts, reuse its key and copy its summary verbatim at every depth. Add depth-specific detail in the brief. Use a different key for a different idea, even with a similar title.',
+  'Set overviewConceptKey to the affected local concept key if the concept teaches the same idea as the brief. Reuse the entry marked overview: true for that idea. Keep a single local entry for the brief and its equivalent affected idea. Set overviewConceptKey to null if every affected concept is distinct from the brief.',
   'Recommend studying a feature, a prerequisite, or this change brief itself (key null). Give a specific reason.',
 ].join('\n');
 
@@ -103,7 +107,7 @@ export async function prepareSource(db: Db, path: string | null, workspace: Work
   const instructions = [baseline ? mapTask : changeTask, depthGuide[request.depth],
     ...(request.depth === 'high' ? ['Use plain names for all concept titles, including reused concepts and foundations. Name the idea or behavior without file names, code, or identifiers.'] : []),
     ...(baseline ? [] : [foundationInstructions]),
-    'Classify transferable ideas as portable. Describe each in general terms and give it a stable key independent of the repository. When a portableVocabulary key and summary describe the same idea, reuse both verbatim. Use a different key and your own summary for a different idea with a similar name.',
+    'Classify transferable ideas as portable. Describe each in general terms and give it a stable key independent of the repository. When an entry in mappedConcepts or portableVocabulary describes the same idea, reuse that key and summary verbatim. Use a different key and your own summary for a different idea with a similar name.',
     portableKeyGuide,
     'Make a separate local concept for each repository-specific use of a portable idea. For example, emit tcp as portable and worker-lease-transport as local, with worker-lease-transport requiring tcp. Keep local code and policy in the local summary. A portable concept can only require portable concepts.',
     'Give concepts stable lowercase keys without workspace prefixes. Edges and the recommendation must use keys listed in your response. Avoid loops and duplicate keys.',

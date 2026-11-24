@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { DatabaseSync } from 'node:sqlite';
-import { reconcileSavedChanges } from './migration-change-concepts';
+import { indexSavedChanges } from './migration-change-concepts';
 import { compatibleDescriptions, normalizedConceptName, portableAlias } from './portable-identity';
 
 export interface Migration {
@@ -387,23 +387,20 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     version: 10,
-    name: 'save lesson foundations and probe evidence',
+    name: 'save foundations, change identities, and per-lesson progress',
     sql: `ALTER TABLE evidence ADD COLUMN probe_answered INTEGER NOT NULL DEFAULT 0 CHECK (probe_answered IN (0, 1));
     CREATE TABLE lesson_foundations (
       lesson_id INTEGER PRIMARY KEY REFERENCES lessons ON DELETE CASCADE,
       entries TEXT NOT NULL CHECK (json_valid(entries)),
       phase TEXT NOT NULL CHECK (phase IN ('probe', 'practice', 'done')),
       cursor INTEGER NOT NULL DEFAULT 0 CHECK (cursor BETWEEN 0 AND 4)
-    );`,
-  },
-  {
-    version: 11,
-    name: 'reconcile saved change concept identities',
-    sql: `ALTER TABLE concept_identity_links RENAME COLUMN portable_concept_id TO canonical_concept_id;
+    );
+    ALTER TABLE concept_identity_links RENAME COLUMN portable_concept_id TO canonical_concept_id;
     CREATE TABLE change_concept_keys (
       workspace_id TEXT NOT NULL REFERENCES workspaces ON DELETE CASCADE,
       change_id TEXT NOT NULL CHECK (length(change_id) = 64),
       identity TEXT NOT NULL CHECK (length(identity) > 0),
+      summary TEXT NOT NULL,
       concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
       PRIMARY KEY (workspace_id, change_id, identity, concept_id)
     );
@@ -423,17 +420,27 @@ export const MIGRATIONS: readonly Migration[] = [
       AND (c.depth IS NULL OR c.depth = l.depth)
       AND NOT EXISTS (SELECT 1 FROM lessons other WHERE other.concept_id = l.concept_id AND other.depth = l.depth
         AND other.id <> l.id AND (other.workspace_id = l.workspace_id OR other.workspace_id IS NULL));
-    CREATE TABLE pinned_lesson_mastery (
-      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-      concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+    ALTER TABLE lesson_mastery RENAME TO previous_lesson_mastery;
+    CREATE TABLE lesson_mastery (
+      workspace_id TEXT NOT NULL,
+      concept_id INTEGER NOT NULL,
       depth TEXT NOT NULL CHECK (depth IN ('high', 'medium', 'low')),
+      lesson_id INTEGER REFERENCES lessons ON DELETE CASCADE,
       scope TEXT NOT NULL,
       revision TEXT NOT NULL,
-      state TEXT,
-      lesson_id INTEGER NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
-      PRIMARY KEY (workspace_id, concept_id, depth, lesson_id)
-    );`,
-    afterSql: reconcileSavedChanges,
+      state TEXT CHECK (json_valid(state)),
+      check_attempts INTEGER GENERATED ALWAYS AS (json_extract(state, '$.attempts')),
+      check_streak INTEGER GENERATED ALWAYS AS (json_extract(state, '$.correctAnswers')),
+      FOREIGN KEY (workspace_id, concept_id) REFERENCES workspace_concepts ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX mastery_lesson ON lesson_mastery(workspace_id, concept_id, depth, coalesce(lesson_id, 0));
+    CREATE INDEX mastery_by_lesson ON lesson_mastery(lesson_id) WHERE lesson_id IS NOT NULL;
+    INSERT INTO lesson_mastery (workspace_id, concept_id, depth, lesson_id, scope, revision, state)
+      SELECT workspace_id, concept_id, depth, lesson_id, scope, revision, state FROM previous_lesson_mastery;
+    DROP TABLE previous_lesson_mastery;
+    CREATE INDEX mastery_progress ON lesson_mastery(workspace_id, depth, concept_id, lesson_id,
+      scope, revision, check_attempts, check_streak) WHERE state IS NOT NULL;`,
+    afterSql: indexSavedChanges,
   },
 ];
 

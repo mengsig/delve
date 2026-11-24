@@ -73,7 +73,7 @@ export function tutorSuggestions(db: Db, workspaceId: string, atlas: AtlasConten
     JOIN lesson_mastery lm ON lm.workspace_id = c.workspace_id AND lm.concept_id = c.concept_id AND lm.depth = c.depth
     WHERE c.workspace_id = :workspace AND c.depth = :depth AND m.role = 'tutor' AND json_type(m.body, '$.recommendation') = 'object'
       AND json_extract(lm.state, '$.stage') IN ('understood', 'skipped')
-      AND lm.revision = json_extract(m.body, '$.masteryRevision') AND lm.lesson_id IS c.lesson_id
+      AND lm.revision = json_extract(m.body, '$.masteryRevision') AND lm.lesson_id IS coalesce(m.pinned_lesson_id, c.lesson_id)
     UNION ALL SELECT next_concept, reason, created_at, last_used FROM repository_generations WHERE workspace_id = :workspace AND depth = :depth
     ) SELECT wc.concept_id AS target, candidate.reason FROM candidates candidate
     LEFT JOIN concept_identity_links link ON link.legacy_concept_id = candidate.target

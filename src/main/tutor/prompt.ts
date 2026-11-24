@@ -14,6 +14,7 @@ import { checkResponse, type ResponseToCheck } from './assessment';
 import { foundationInstructions } from './foundation-content';
 import { foundationRecap, readFoundation } from './foundation-progress';
 import { depthGuide } from './language';
+import { knownFoundations } from './vocabulary';
 import {
   canRecommend, hasVerifiedMastery, loadMastery, masteryLimits, needsCheckAdaptation, nextGrade, requireMasteryRevision, type Mastery,
 } from './mastery';
@@ -50,11 +51,11 @@ function formatPreview(request: Pick<TutorRequest, 'provider' | 'depth'>, payloa
   return { model, modelSource, prompt, bytes, files: [] as string[] };
 }
 
-export function previewNewTopic(request: TopicPreviewRequest) {
+export function previewNewTopic(db: Db, request: TopicPreviewRequest) {
   const { name } = resolveWorkspaceSource({ kind: 'topic', title: request.title });
   const [requiredCorrect, maxAttempts] = masteryLimits[request.depth];
   return formatPreview(request, {
-    concept: name, summary: '', depth: request.depth, snapshot: null, knownConcepts: [], prerequisites: [],
+    concept: name, summary: '', depth: request.depth, snapshot: null, knownConcepts: [], knownFoundations: knownFoundations(db), prerequisites: [],
     repositoryUsage: [], prerequisiteTopUps: [], depthTopUp: null, foundationRecap: { known: [], reviewed: [] },
     lesson: null, recentTurns: [], nextConcepts: [],
     mastery: { stage: 'teaching', attempts: 0, maxAttempts, consecutiveCorrect: 0, requiredCorrect,
@@ -135,6 +136,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const payload = {
     concept: context.title.slice(0, 1024), summary: context.summary.slice(0, 8000), depth: context.depth, snapshot: context.snapshot,
     knownConcepts: graph.concepts.filter(c => demonstrated.has(c.id)).slice(0, 100).map(c => c.title.slice(0, 300)),
+    knownFoundations: intent.kind === 'teach' ? knownFoundations(db, graph, { id: context.canonicalConceptId, portable: context.portable }) : undefined,
     prerequisites, repositoryUsage, prerequisiteTopUps, depthTopUp,
     foundationRecap: foundationRecap(db, context, selected.id, graph),
     evidence: evidence && { status: evidence.status, source: evidence.source, note: evidence.note.slice(0, 2000) },

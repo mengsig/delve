@@ -39,6 +39,7 @@ const text = z.string().trim().min(1).max(4000);
 const key = z.string().trim().toLowerCase().pipe(
   z.string().regex(/^[a-z0-9][a-z0-9._/-]{0,149}$/).refine(s => !s.startsWith('ws/') && !s.startsWith('change/')),
 );
+export { key as proposalConceptKey };
 const concept = z.strictObject({ key, title: z.string().trim().min(1).max(180), summary: text, portable: z.boolean() });
 const span = z.strictObject({ key, path: z.string().min(1).max(1024), side: z.enum(['old', 'new']),
   start: z.number().int().positive(), end: z.number().int().positive() });
