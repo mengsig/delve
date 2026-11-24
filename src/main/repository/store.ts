@@ -15,7 +15,7 @@ import { plainConceptTitle } from '../../shared/plain-language';
 import { cacheModel, selectModel } from '../providers/model';
 import { baselineReply, type ChangeReply, type GraphProposal } from './schemas';
 import { portableConceptLookup } from './portable-concepts';
-import { baselineConceptFingerprint, compatibleConceptMeanings, compatiblePortableAliases, compatibleScopedMeanings, portableAlias } from '../db/portable-identity';
+import { baselineConceptFingerprint, compatibleConceptMeanings, compatibleDescriptions, compatiblePortableAliases, compatibleScopedMeanings, portableAlias } from '../db/portable-identity';
 import { findPortableConcept } from '../db/portable-concepts';
 import { saveFoundations } from '../tutor/foundation-progress';
 import { resolveTutorPrerequisite } from '../db/tutor-prerequisites';
@@ -302,6 +302,23 @@ function saveChangeConcept(db: Db, source: ApprovedSource, reply: ChangeReply, s
   return concept;
 }
 
+// A foundation reuses its footprint's concept only when the footprint and that concept both mean the foundation itself.
+function corroboratedFoundations(reply: ChangeReply, concepts: ReadonlyMap<string, Concept>): Map<string, Concept> {
+  const bound = new Map<string, Concept>();
+  for (const foundation of reply.foundations ?? []) {
+    const input = reply.concepts.find(item => item.key === foundation.key);
+    if (!input) continue;
+    const concept = concepts.get(input.key);
+    assert.ok(concept, 'every footprint was saved before its foundations');
+    const sameReply = compatibleDescriptions(input.summary, foundation.summary)
+      && compatiblePortableAliases(portableAlias(input.key, input.title), portableAlias(foundation.key, foundation.title));
+    const saved = { ...concept, key: concept.portable ? concept.key : foundation.key };
+    if (sameReply && compatibleConceptMeanings(foundation, saved)) bound.set(foundation.key, concept);
+  }
+  assert.ok(bound.size <= (reply.foundations?.length ?? 0));
+  return bound;
+}
+
 function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: ChangeReply, change: Concept, concepts: Map<string, Concept>): ChangeBrief {
   const { request, preview, cacheKey } = source;
   assert.ok(db.isTransaction && snapshotId > 0);
@@ -325,15 +342,8 @@ function saveBrief(db: Db, source: ApprovedSource, snapshotId: number, reply: Ch
   ] });
   const lesson = saveLessonInTransaction(db, { workspaceId: request.workspaceId, snapshotId, conceptId: change.id, cacheKey,
     depth: request.depth, model: cacheModel(preview.model), provider: request.provider, schemaVersion: document.schema, body: document });
-  if (reply.foundations) saveFoundations(db,
-    { workspaceId: request.workspaceId, canonicalConceptId: change.id, depth: request.depth }, lesson.id, reply.foundations,
-    new Map(reply.foundations.flatMap(foundation => {
-      const input = reply.concepts.find(item => item.key === foundation.key);
-      if (!input || !compatibleConceptMeanings(input, foundation)) return [];
-      const concept = concepts.get(input.key);
-      assert.ok(concept);
-      return [[input.key, concept]];
-    })));
+  if (reply.foundations) saveFoundations(db, { workspaceId: request.workspaceId, canonicalConceptId: change.id, depth: request.depth },
+    lesson.id, reply.foundations, corroboratedFoundations(reply, concepts));
   const touchedIds = new Map<string, number>();
   const touched = new Map<number, { id: number; title: string }>();
   for (const key of reply.touched) {

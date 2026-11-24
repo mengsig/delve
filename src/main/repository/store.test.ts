@@ -6,7 +6,7 @@ import { recordEvidence, resetEvidence } from '../db/evidence';
 import { readWorkspaceCoverage, readWorkspaceGraph } from '../db/graph';
 import { getGlobalKnowledgeGraph } from '../db/knowledge';
 import { addWorkspace } from '../db/workspaces';
-import { readLesson } from '../reader/ipc';
+import { readLesson, readerHandlers } from '../reader/ipc';
 import { prepareTurn } from '../tutor/prompt';
 import { selectModel } from '../providers/model';
 import { baselineReply, changeReply } from './schemas';
@@ -121,6 +121,49 @@ it('does not bind a foundation to a verified footprint with conflicting aliases'
     .toMatchObject({ foundation: { title: 'HTTP', phase: 'probe' } });
   const { concepts } = getGlobalKnowledgeGraph(db);
   expect(concepts.find(concept => concept.title === 'HTTP')?.masteredDepth).toBeNull();
+});
+
+function foundationFor(input: { key: string; summary: string }, title: string) {
+  const check = (prompt: string, expected: number) => ({ type: 'check', kind: 'prediction', prompt, options: ['One', 'Two', 'Three', 'Four'], expected });
+  return { key: input.key, summary: input.summary, title, why: 'This determines when to read the next message.',
+    probe: check('What arrives first?', 0), practice: check('What arrives next?', 1) };
+}
+
+function openFoundation(approved: ApprovedSource, input: typeof affected, foundationTitle: string) {
+  const result = persistGeneration(db, approved, changeReply.parse({ ...explain(input), foundations: [foundationFor(input, foundationTitle)] }));
+  if (result.kind !== 'change') throw new Error('Expected a saved change.');
+  const address = { workspaceId, conceptId: result.brief.conceptId, depth: 'medium' as const, lessonId: result.brief.lessonId };
+  return { result, address, foundation: readLesson(db, address).foundation };
+}
+
+it('judges an unlabelled footprint’s foundation by its own proof, not a related verified concept', () => {
+  const input = { key: 'transport', title: 'Transport', summary: 'Messages arrive in order.', portable: true };
+  const tcp = upsertConcept(db, { ...input, title: 'TCP', workspaceId });
+  recordEvidence(db, { workspaceId, conceptId: tcp.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const { result, foundation } = openFoundation(source({ kind: 'pr', ref: '42' }, previous), input, 'HTTP');
+  expect(result.brief.touched).toMatchObject([{ id: tcp.id }]);
+  expect(foundation).toMatchObject({ title: 'HTTP', phase: 'probe' });
+  const { concepts } = getGlobalKnowledgeGraph(db);
+  expect(concepts.find(concept => concept.title === 'HTTP')?.masteredDepth).toBeNull();
+  expect(concepts.find(concept => concept.id === tcp.id)?.masteredDepth).toBe('medium');
+});
+
+it('never repeats an answered probe when a corroborated foundation drops its label', () => {
+  const input = { key: 'transport', title: 'TCP', summary: 'Messages arrive in order.', portable: false };
+  const approved = source({ kind: 'pr', ref: '42' }, previous);
+  const plain = persistGeneration(db, { ...approved, cacheKey: 'plain' }, explain(input));
+  if (plain.kind !== 'change') throw new Error('Expected a saved change.');
+  const tcp = plain.brief.touched[0]!.id;
+  const first = openFoundation(approved, input, 'TCP');
+  expect(first.result.brief.touched).toMatchObject([{ id: tcp }]);
+  expect(first.foundation).toMatchObject({ title: 'TCP', phase: 'probe' });
+  const answer = { ...first.address, decision: { revision: first.foundation!.revision, answer: 1 } };
+  expect(readerHandlers(db)['reader:foundation'](answer).step).toMatchObject({ title: 'TCP', phase: 'practice' });
+  const count = getGlobalKnowledgeGraph(db).concepts.length;
+  const again = openFoundation({ ...approved, cacheKey: 'label-free' }, input, 'Ordered delivery');
+  expect(again.result.brief.touched).toMatchObject([{ id: tcp }]);
+  expect(again.foundation).toMatchObject({ title: 'Ordered delivery', phase: 'practice' });
+  expect(getGlobalKnowledgeGraph(db).concepts).toHaveLength(count);
 });
 
 it('reuses a compatible portable key alias from another workspace', () => {
