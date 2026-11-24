@@ -265,6 +265,28 @@ it.each([true, false])('withholds a concept schema 9 shared between distinct key
   expect(listEvidence(db, legacy)).toMatchObject([{ depth: 'high', masteryVerified: true }]);
 });
 
+it.each([true, false])('withholds a portable concept schema 9 chose by title for an unreferenced prerequisite (on atlas: %s)', onAtlas => {
+  const first = { key: 'sending-data', title: 'TCP', summary: 'Messages must arrive in order.', portable: true };
+  const second = { ...first, key: 'handling-requests' };
+  const shared = upsertConcept(db, { ...first, key: 'tcp', workspaceId });
+  if (onAtlas) db.prepare('UPDATE workspace_concepts SET on_atlas = 1 WHERE workspace_id = ? AND concept_id = ?').run(workspaceId, shared.id);
+  else db.prepare('INSERT INTO snapshot_concepts VALUES (?, ?)').run(snapshotId, shared.id);
+  seedSavedChange(pull, 'high', 'saved', first, shared.id);
+  db.prepare("UPDATE repository_generations SET proposal = ? WHERE cache_key = 'saved'").run(JSON.stringify({ concepts: [first, second],
+    edges: [{ concept: first.key, prerequisite: second.key }], touched: [first.key], recommendation: { key: first.key } }));
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: shared.id, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+  migrate(db);
+
+  for (const input of [first, second]) {
+    const result = regenerate(pull, input);
+    if (result.kind !== 'change') throw new Error('Expected a saved change.');
+    const next = result.brief.touched[0]!.id;
+    expect(next).not.toBe(shared.id);
+    expect(listEvidence(db, next)).toEqual([]);
+  }
+  expect(listEvidence(db, shared.id)).toMatchObject([{ depth: 'high', masteryVerified: true }]);
+});
+
 it('stabilizes regeneration when two compatible released bindings both persisted locally', () => {
   const input = { key: 'tcp', title: 'TCP', summary: 'Messages arrive in order.', portable: false };
   const summary = input.summary.toLowerCase();

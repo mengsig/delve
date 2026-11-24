@@ -58,7 +58,7 @@ function compatibleSaved(db: Db, workspaceId: string, input: Footprint, saved: C
 }
 
 function savedFootprint(db: Db, workspaceId: string, snapshotId: number, reference: number | undefined, input: Footprint,
-  collapsed: readonly number[]): Recovered {
+  unreferenced: readonly Concept[]): Recovered {
   assert.ok(db.isTransaction && snapshotId > 0);
   assert.ok(input.key && workspaceId);
   const compatible = (saved: Concept | null) => saved && compatibleSaved(db, workspaceId, input, saved);
@@ -76,9 +76,22 @@ function savedFootprint(db: Db, workspaceId: string, snapshotId: number, referen
     keyDerivedHash(input) ? generated : null];
   const matches = new Map(stable.map(member).filter(concept => concept !== null).map(concept => [concept.id, concept]));
   // Title-derived and collapsed touched concepts may be this footprint's, so they withhold an index but never bind.
-  const possible = [member(generated), ...collapsed.map(id => compatible(getConcept(db, id)))];
+  const possible = [member(generated), ...unreferenced.map(compatible)];
   const claims = new Map([...matches, ...possible.filter(concept => concept !== null).map(concept => [concept.id, concept] as const)]);
   return { bound: matches.size === 1 ? matches.values().next().value! : null, claims: [...claims.values()] };
+}
+
+// Schema 9 also chose portable concepts through a familiar title, inside or outside the snapshot.
+function portablesByTitleAlias(db: Db): Map<string, Concept[]> {
+  const byAlias = new Map<string, Concept[]>();
+  for (const { id } of db.prepare("SELECT id FROM concepts WHERE portable = 1 AND key NOT LIKE 'Demo:%'").iterate()) {
+    assert.ok(typeof id === 'number');
+    const concept = getConcept(db, id);
+    assert.ok(concept?.portable);
+    const alias = portableAlias(concept.key, concept.title);
+    if (typeof alias === 'string') byAlias.set(alias, [...byAlias.get(alias) ?? [], concept]);
+  }
+  return byAlias;
 }
 
 function soleOwners(bindings: readonly Binding[], claims: readonly Claim[]): Binding[] {
@@ -99,6 +112,7 @@ function indexSavedChanges(db: Db): void {
   const overviews = new Map<string, { workspaceId: string; change: string; ids: Set<number> }>();
   const bindings: Binding[] = [];
   const claims: Claim[] = [];
+  const aliased = portablesByTitleAlias(db);
   for (const { workspace_id: workspaceId, kind, ref, snapshot_id: snapshotId, commit_sha: head, result, proposal, next_concept } of rows) {
     assert.ok(typeof workspaceId === 'string' && typeof snapshotId === 'number');
     assert.ok(typeof ref === 'string' && typeof head === 'string' && (kind === 'pr' || kind === 'commit'));
@@ -119,9 +133,11 @@ function indexSavedChanges(db: Db): void {
     if (!parsed.success) continue;
     const ids = attributedFootprints(parsed.data, brief, next_concept);
     const touched = new Set(parsed.data.touched);
-    const collapsed = touched.size === brief.touched.length ? [] : brief.touched.map(concept => concept.id);
+    const collapsed = touched.size === brief.touched.length ? [] : brief.touched.map(concept => getConcept(db, concept.id));
     for (const input of parsed.data.concepts) {
-      const recovered = savedFootprint(db, workspaceId, snapshotId, ids.get(input.key), input, touched.has(input.key) ? collapsed : []);
+      const alias = input.portable ? portableAlias(input.key, input.title) : undefined;
+      const possible = [...touched.has(input.key) ? collapsed : [], ...typeof alias === 'string' ? aliased.get(alias) ?? [] : []];
+      const recovered = savedFootprint(db, workspaceId, snapshotId, ids.get(input.key), input, possible.filter(c => c !== null));
       claims.push(...recovered.claims.map(concept => ({ concept, input })));
       if (recovered.bound && recovered.bound.id !== brief.conceptId) bindings.push({ scope, concept: recovered.bound, input });
     }
