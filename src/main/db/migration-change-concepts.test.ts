@@ -142,7 +142,7 @@ it('recovers a released footprint that was only linked as a prerequisite', () =>
   expect(after.concepts.find(c => c.id === known)?.masteredDepth).toBe('high');
 });
 
-it.each([true, false])('recovers a uniquely attributable title-derived footprint (directly touched: %s)', touched => {
+function seedTitleDerived(touched: boolean) {
   const input = { key: 'sending-data', title: 'TCP', summary: 'Messages must arrive in order.', portable: true };
   upsertConcept(db, { ...input, key: 'tcp', summary: 'This conflicting portable definition already exists.', workspaceId });
   const learned = createFootprint({ ...input, portable: false }, ['tcp', input.summary.toLowerCase()]);
@@ -157,12 +157,28 @@ it.each([true, false])('recovers a uniquely attributable title-derived footprint
   }
   recordEvidence(db, { workspaceId, snapshotId, conceptId: learned, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
   migrate(db);
+  return { input, learned, target };
+}
+
+it('recovers a title-derived footprint through its saved touched reference', () => {
+  const { input, learned } = seedTitleDerived(true);
   const before = getGlobalKnowledgeGraph(db);
-  const result = touched ? regenerate(pull, input) : regenerate(pull, footprint, 'medium', input);
-  expect(result).toMatchObject({ brief: { touched: [{ id: target }] } });
+  expect(regenerate(pull, input)).toMatchObject({ brief: { touched: [{ id: learned }] } });
   const after = getGlobalKnowledgeGraph(db);
   expect(after.concepts).toHaveLength(before.concepts.length);
-  expect(after.edges).toEqual(before.edges);
+  expect(after.concepts.find(c => c.id === learned)?.masteredDepth).toBe('high');
+});
+
+it('keeps a title-derived prerequisite without a saved reference separate and its proof in place', () => {
+  const { input, learned, target } = seedTitleDerived(false);
+  const before = getGlobalKnowledgeGraph(db);
+  const result = regenerate(pull, footprint, 'medium', input);
+  expect(result).toMatchObject({ brief: { touched: [{ id: target }] } });
+  const after = getGlobalKnowledgeGraph(db);
+  const added = after.concepts.filter(c => !before.concepts.some(old => old.id === c.id));
+  expect(added).toHaveLength(1);
+  expect(added[0]).toMatchObject({ title: 'TCP', masteredDepth: null });
+  expect(listEvidence(db, added[0]!.id)).toEqual([]);
   expect(after.concepts.find(c => c.id === learned)?.masteredDepth).toBe('high');
 });
 
@@ -184,6 +200,45 @@ it('keeps competing keys from acquiring proof from a shared title-derived footpr
     expect(listEvidence(db, next)).toEqual([]);
   }
   expect(listEvidence(db, legacy)).toMatchObject([{ depth: 'high', masteryVerified: true }]);
+});
+
+it('counts an explicitly attributed owner whose title omits the shared alias', () => {
+  const first = { key: 'sending-data', title: 'TCP', summary: 'Messages must arrive in order.', portable: true };
+  const second = { ...first, key: 'handling-requests', title: 'Request handling' };
+  const legacy = createFootprint({ ...first, portable: false }, ['tcp', first.summary.toLowerCase()]);
+  seedSavedChange(pull, 'high', 'first', first, legacy);
+  seedSavedChange(commit, 'high', 'second', second, legacy);
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: legacy, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+  migrate(db);
+
+  for (const [selection, input] of [[pull, first], [commit, second]] as const) {
+    const result = regenerate(selection, input);
+    if (result.kind !== 'change') throw new Error('Expected a saved change.');
+    const next = result.brief.touched[0]!.id;
+    expect(next).not.toBe(legacy);
+    expect(listEvidence(db, next)).toEqual([]);
+  }
+  expect(listEvidence(db, legacy)).toMatchObject([{ depth: 'high', masteryVerified: true }]);
+});
+
+it('lets a saved reference, not snapshot membership, decide a released footprint’s owner', () => {
+  const first = { key: 'sending-data', title: 'TCP', summary: 'Messages must arrive in order.', portable: true };
+  const other = { ...first, key: 'handling-requests' };
+  const legacy = createFootprint({ ...first, portable: false }, ['tcp', first.summary.toLowerCase()]);
+  const own = upsertConcept(db, { ...other, portable: false, workspaceId });
+  db.prepare('INSERT INTO snapshot_concepts VALUES (?, ?)').run(snapshotId, own.id);
+  seedSavedChange(pull, 'high', 'first', first, legacy);
+  seedSavedChange(commit, 'high', 'other', other, own.id);
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: legacy, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+  migrate(db);
+
+  const count = getGlobalKnowledgeGraph(db).concepts.length;
+  expect(regenerate(pull, first)).toMatchObject({ brief: { touched: [{ id: legacy }] } });
+  expect(regenerate(commit, other)).toMatchObject({ brief: { touched: [{ id: own.id }] } });
+  const { concepts } = getGlobalKnowledgeGraph(db);
+  expect(concepts).toHaveLength(count);
+  expect(concepts.find(c => c.id === legacy)?.masteredDepth).toBe('high');
+  expect(concepts.find(c => c.id === own.id)?.masteredDepth).toBeNull();
 });
 
 it('stabilizes regeneration when two compatible released bindings both persisted locally', () => {
