@@ -241,6 +241,30 @@ it('lets a saved reference, not snapshot membership, decide a released footprint
   expect(concepts.find(c => c.id === own.id)?.masteredDepth).toBeNull();
 });
 
+it.each([true, false])('withholds a concept schema 9 shared between distinct keys of one brief (both touched: %s)', bothTouched => {
+  const first = { key: 'sending-data', title: 'TCP', summary: 'Messages must arrive in order.', portable: true };
+  const second = { ...first, key: 'handling-requests' };
+  upsertConcept(db, { ...first, key: 'tcp', summary: 'This conflicting portable definition already exists.', workspaceId });
+  const legacy = createFootprint({ ...first, portable: false }, ['tcp', first.summary.toLowerCase()]);
+  seedSavedChange(pull, 'high', 'saved', first, legacy);
+  const touched = bothTouched ? [first.key, second.key] : [first.key];
+  const edges = bothTouched ? [] : [{ concept: first.key, prerequisite: second.key }];
+  db.prepare("UPDATE repository_generations SET proposal = ? WHERE cache_key = 'saved'")
+    .run(JSON.stringify({ concepts: [first, second], edges, touched, recommendation: { key: first.key } }));
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: legacy, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+  migrate(db);
+
+  expect(latestBrief(db, { ...pull, workspaceId, depth: 'high', provider: 'codex' })?.touched).toMatchObject([{ id: legacy }]);
+  for (const input of [first, second]) {
+    const result = regenerate(pull, input);
+    if (result.kind !== 'change') throw new Error('Expected a saved change.');
+    const next = result.brief.touched[0]!.id;
+    expect(next).not.toBe(legacy);
+    expect(listEvidence(db, next)).toEqual([]);
+  }
+  expect(listEvidence(db, legacy)).toMatchObject([{ depth: 'high', masteryVerified: true }]);
+});
+
 it('stabilizes regeneration when two compatible released bindings both persisted locally', () => {
   const input = { key: 'tcp', title: 'TCP', summary: 'Messages arrive in order.', portable: false };
   const summary = input.summary.toLowerCase();

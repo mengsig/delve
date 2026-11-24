@@ -20,7 +20,9 @@ const savedBrief = z.object({ brief: z.object({
 type Footprint = z.infer<typeof savedProposal>['concepts'][number];
 type ArchivedBrief = z.infer<typeof savedBrief>['brief'];
 type ArchivedProposal = z.infer<typeof savedChangeProposal>;
-type Binding = { scope: ChangeConceptScope; concept: Concept; input: Footprint };
+type Claim = { concept: Concept; input: Footprint };
+type Binding = Claim & { scope: ChangeConceptScope };
+type Recovered = { bound: Concept | null; claims: Concept[] };
 
 function attributedFootprints(proposal: ArchivedProposal, brief: ArchivedBrief, next: number): Map<string, number> {
   assert.ok(brief.conceptId > 0);
@@ -55,34 +57,38 @@ function compatibleSaved(db: Db, workspaceId: string, input: Footprint, saved: C
   return compatibleScopedMeanings(input, { ...canonical, key: canonical.portable ? canonical.key : input.key }) ? canonical : null;
 }
 
-function savedFootprint(db: Db, workspaceId: string, snapshotId: number, explicitId: number | undefined, input: Footprint): Concept | null {
+function savedFootprint(db: Db, workspaceId: string, snapshotId: number, reference: number | undefined, input: Footprint,
+  collapsed: readonly number[]): Recovered {
   assert.ok(db.isTransaction && snapshotId > 0);
   assert.ok(input.key && workspaceId);
+  const compatible = (saved: Concept | null) => saved && compatibleSaved(db, workspaceId, input, saved);
   // A saved reference is authoritative: an incompatible one keeps the footprint unbound instead of guessing.
-  if (explicitId !== undefined) {
-    const saved = getConcept(db, explicitId);
-    return saved && compatibleSaved(db, workspaceId, input, saved);
+  if (reference !== undefined) {
+    const concept = compatible(getConcept(db, reference));
+    return { bound: concept, claims: concept ? [concept] : [] };
   }
   const prefix = `ws/${workspaceId}/`;
   const hash = createHash('sha256').update(JSON.stringify(['concept', snapshotId, releasedScopedFingerprint(input)])).digest('hex');
-  const generated = keyDerivedHash(input) ? getConceptByKey(db, prefix + 'change/' + hash) : null;
-  const candidates = [getConceptByKey(db, prefix + input.key), input.portable ? findPortableConcept(db, input) : null, generated];
+  const generated = getConceptByKey(db, prefix + 'change/' + hash);
   const membership = db.prepare('SELECT 1 FROM snapshot_concepts WHERE snapshot_id = ? AND concept_id = ?');
-  const matches = new Map<number, Concept>();
-  for (const saved of candidates) {
-    if (!saved || !membership.get(snapshotId, saved.id)) continue;
-    const concept = compatibleSaved(db, workspaceId, input, saved);
-    if (concept) matches.set(concept.id, concept);
-  }
-  return matches.size === 1 ? matches.values().next().value! : null;
+  const member = (saved: Concept | null) => saved && membership.get(snapshotId, saved.id) ? compatible(saved) : null;
+  const stable = [getConceptByKey(db, prefix + input.key), input.portable ? findPortableConcept(db, input) : null,
+    keyDerivedHash(input) ? generated : null];
+  const matches = new Map(stable.map(member).filter(concept => concept !== null).map(concept => [concept.id, concept]));
+  // Title-derived and collapsed touched concepts may be this footprint's, so they withhold an index but never bind.
+  const possible = [member(generated), ...collapsed.map(id => compatible(getConcept(db, id)))];
+  const claims = new Map([...matches, ...possible.filter(concept => concept !== null).map(concept => [concept.id, concept] as const)]);
+  return { bound: matches.size === 1 ? matches.values().next().value! : null, claims: [...claims.values()] };
 }
 
-function soleOwners(bindings: readonly Binding[]): Binding[] {
+function soleOwners(bindings: readonly Binding[], claims: readonly Claim[]): Binding[] {
   const owners = new Map<number, Set<string>>();
-  for (const { concept, input } of bindings) owners.set(concept.id, (owners.get(concept.id) ?? new Set()).add(ownerKey(input)));
-  const sole = bindings.filter(({ concept }) => owners.get(concept.id)!.size === 1);
-  assert.ok(sole.length <= bindings.length);
-  return sole;
+  for (const { concept, input } of claims) owners.set(concept.id, (owners.get(concept.id) ?? new Set()).add(ownerKey(input)));
+  return bindings.filter(({ concept, input }) => {
+    const keys = owners.get(concept.id);
+    assert.ok(keys && keys.has(ownerKey(input)), 'every bound concept is claimed by its footprint');
+    return keys.size === 1;
+  });
 }
 
 function indexSavedChanges(db: Db): void {
@@ -92,6 +98,7 @@ function indexSavedChanges(db: Db): void {
     WHERE g.kind IN ('pr', 'commit') AND g.schema_version = 'delve.change/1' ORDER BY g.id`).iterate();
   const overviews = new Map<string, { workspaceId: string; change: string; ids: Set<number> }>();
   const bindings: Binding[] = [];
+  const claims: Claim[] = [];
   for (const { workspace_id: workspaceId, kind, ref, snapshot_id: snapshotId, commit_sha: head, result, proposal, next_concept } of rows) {
     assert.ok(typeof workspaceId === 'string' && typeof snapshotId === 'number');
     assert.ok(typeof ref === 'string' && typeof head === 'string' && (kind === 'pr' || kind === 'commit'));
@@ -111,13 +118,16 @@ function indexSavedChanges(db: Db): void {
     const parsed = savedChangeProposal.safeParse(JSON.parse(proposal));
     if (!parsed.success) continue;
     const ids = attributedFootprints(parsed.data, brief, next_concept);
+    const touched = new Set(parsed.data.touched);
+    const collapsed = touched.size === brief.touched.length ? [] : brief.touched.map(concept => concept.id);
     for (const input of parsed.data.concepts) {
-      const concept = savedFootprint(db, workspaceId, snapshotId, ids.get(input.key), input);
-      if (concept && concept.id !== brief.conceptId) bindings.push({ scope, concept, input });
+      const recovered = savedFootprint(db, workspaceId, snapshotId, ids.get(input.key), input, touched.has(input.key) ? collapsed : []);
+      claims.push(...recovered.claims.map(concept => ({ concept, input })));
+      if (recovered.bound && recovered.bound.id !== brief.conceptId) bindings.push({ scope, concept: recovered.bound, input });
     }
   }
   // Schema 9 could route distinct keys to one concept, so a concept claimed under several keys stays unindexed.
-  for (const { scope, concept, input } of soleOwners(bindings)) rememberChangeConcept(db, scope, concept, input);
+  for (const { scope, concept, input } of soleOwners(bindings, claims)) rememberChangeConcept(db, scope, concept, input);
   for (const { ids, ...scope } of overviews.values()) {
     if (ids.size !== 1) continue;
     const overview = getConcept(db, ids.values().next().value!);
