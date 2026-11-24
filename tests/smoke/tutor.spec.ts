@@ -63,6 +63,16 @@ test('skips the topic questions in one action and opens the foundation from the 
   await start(page).click();
   const probe = page.getByRole('region', { name: 'What do you know about Address ranges?' });
   await expect(probe).toBeVisible();
+  writeReply(directory);
+  await page.getByRole('textbox', { name: 'Ask your tutor' }).fill('How do address ranges work?');
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Exact provider request')).toContainText('How do address ranges work?');
+  await expect(dialog.getByLabel('Exact provider request')).not.toContainText('Which addresses are likely to belong');
+  await dialog.getByRole('button', { name: 'Allow once and continue' }).click();
+  await expect(page.getByRole('log')).toContainText('The rule also applies to IPv6.');
+  await expect(probe.getByRole('button', { name: 'Addresses close together' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: explanation.heading })).toHaveCount(0);
   const request = readFileSync(receipt, 'utf8');
   await probe.getByRole('button', { name: 'Skip questions' }).click();
   await expect(page.getByRole('heading', { name: explanation.heading })).toBeVisible();

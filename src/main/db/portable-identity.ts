@@ -10,6 +10,7 @@ const aliases = new Map([
 ]);
 
 type PortableAlias = string | null | undefined;
+export type ConceptMeaning = { key: string; title: string; summary: string };
 
 export function normalizedConceptName(text: string): string {
   return text.normalize('NFKC').toLowerCase().trim().replace(/\s+/gu, ' ');
@@ -37,7 +38,30 @@ export function compatibleDescriptions(left: string, right: string): boolean {
   return first.length > 0 && first === second;
 }
 
-export function scopedFingerprint(input: { key: string; title: string; summary: string; portable: boolean }): string {
+export function compatibleConceptMeanings(left: ConceptMeaning, right: ConceptMeaning): boolean {
+  return compatibleDescriptions(left.summary, right.summary)
+    && compatiblePortableAliases(portableAlias(left.key, left.title), portableAlias(right.key, right.title));
+}
+
+export function compatibleScopedMeanings(input: ConceptMeaning, saved: ConceptMeaning): boolean {
+  assert.ok(input.key);
+  assert.ok(saved.key);
+  if (compatibleConceptMeanings(input, saved)) return true;
+  return input.key === saved.key && portableAlias(input.key, input.title) === null
+    && normalizedConceptName(input.title) === normalizedConceptName(saved.title)
+    && compatibleDescriptions(input.summary, saved.summary);
+}
+
+export function baselineConceptFingerprint(input: ConceptMeaning & { portable: boolean }): string {
+  assert.ok(input.key && input.summary.trim());
+  assert.ok(input.title.trim());
+  const key = input.portable ? portableAlias(input.key, '') ?? input.key : input.key;
+  const alias = portableAlias(input.key, input.title);
+  const label = alias === null ? normalizedConceptName(input.title) : alias;
+  return digestIdentity(['baseline', key, normalizedConceptName(input.summary), label]);
+}
+
+export function releasedScopedFingerprint(input: ConceptMeaning & { portable: boolean }): string {
   const key = input.key.trim().toLowerCase();
   const alias = portableAlias(key, input.title);
   const summary = normalizedConceptName(input.summary);

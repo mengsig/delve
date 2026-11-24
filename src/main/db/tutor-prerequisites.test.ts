@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { addPrerequisite, upsertConcept, upsertConceptInTransaction } from './concepts';
 import { openDatabase, transaction, type Db } from './connection';
 import { seedDemoWorkspaces } from './demo';
+import { listEvidence, recordEvidence } from './evidence';
 import { readWorkspaceGraph } from './graph';
 import { findTutorPrerequisite, persistTutorPrerequisites } from './tutor-prerequisites';
 import { addWorkspace } from './workspaces';
@@ -17,6 +18,20 @@ beforeEach(() => {
   other = addWorkspace(db, { kind: 'topic', title: 'Other' }).id;
 });
 afterEach(() => db.close());
+
+it('links a recognized portable key alias to its verified foundation in another workspace', () => {
+  const known = upsertConcept(db, { ...candidate('queues', 'Queues'), portable: true, workspaceId: other });
+  const target = upsertConcept(db, { ...candidate('target', 'Topic'), portable: false, workspaceId: workspace });
+  recordEvidence(db, { conceptId: known.id, depth: 'low', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const alias = { key: 'queue', title: 'Queue', summary: known.summary };
+  const result = transaction(db, () => persistTutorPrerequisites(db, workspace, target.id, [alias]));
+  expect(result.map(item => item.concept.id)).toEqual([known.id]);
+  const graph = readWorkspaceGraph(db, workspace, true);
+  expect(graph.edges).toContainEqual({ conceptId: target.id, prerequisiteId: known.id });
+  expect(listEvidence(db, known.id)).toMatchObject([{ conceptId: known.id, masteryVerified: true }]);
+  expect(findTutorPrerequisite(db, workspace, { ...alias, summary: 'Deliver newest jobs first.' })).toBeNull();
+  expect(findTutorPrerequisite(db, workspace, { ...alias, title: 'Message queues' })).toBeNull();
+});
 
   it('rejects conflicting descriptions and aliases, including unscoped local keys', () => {
     const local = upsertConcept(db, { key: 'tcp', title: 'Transport', summary: 'A protocol.', portable: false, workspaceId: workspace });

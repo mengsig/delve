@@ -116,7 +116,8 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const context = lessonContext(db, request);
   if (context.demo !== (request.provider === 'demo')) throw new DomainError('PROVIDER_SCOPE', 'Choose a provider for this workspace.');
   const selected = requestedLesson(db, context, false);
-  if (readFoundation(db, context, selected.id)) throw new DomainError('FOUNDATION_PENDING', 'Finish or skip the foundations first.');
+  const foundation = readFoundation(db, context, selected.id);
+  if (foundation && request.intent.kind !== 'ask') throw new DomainError('FOUNDATION_PENDING', 'Finish or skip the foundations first.');
   const mastery = loadMastery(db, context, selected, request.lessonId === undefined && hasVerifiedMastery(db, context));
   const intent = request.intent;
   const needsDiagram = intent.kind === 'ask' && /\b(diagrams?|visual(?:s|ly|i[sz](?:e|ation))?|flowcharts?)\b|\bdraw\s+(?:me\s+)?(?:(?:a|an|the)\s+)?(?:diagram|picture|graph|flow|system trace|this|it)\b/i.test(intent.text);
@@ -127,7 +128,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const graph = readWorkspaceGraph(db, context.workspaceId, true);
   const { demonstrated, prerequisites, repositoryUsage, prerequisiteTopUps, depthTopUp } = prerequisiteContext(graph, context);
   const history = readHistory(db, context).messages.slice(-12);
-  const mayRecommend = intent.kind === 'ask' && canRecommend(mastery)
+  const mayRecommend = !foundation && intent.kind === 'ask' && canRecommend(mastery)
     || response !== null && nextGrade(mastery, response.correct).stage === 'understood';
   const atlasIds = new Set(graph.atlasConceptIds);
   const nextConcepts = mayRecommend ? graph.concepts.filter(c => atlasIds.has(c.id)
@@ -140,7 +141,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
     prerequisites, repositoryUsage, prerequisiteTopUps, depthTopUp,
     foundationRecap: foundationRecap(db, context, selected.id, graph),
     evidence: evidence && { status: evidence.status, source: evidence.source, note: evidence.note.slice(0, 2000) },
-    lesson: selected.document ? JSON.stringify(teachingBlocks(selected.document)).slice(0, 20000) : null,
+    lesson: !foundation && selected.document ? JSON.stringify(teachingBlocks(selected.document)).slice(0, 20000) : null,
     recentTurns: history.map(m => ({ role: m.role, text: m.text.slice(0, 1000), observation: m.observation, reasoningFeedback: m.reasoningFeedback,
       teaching: m.blocks && JSON.stringify(m.blocks).slice(0, 1500), recommendation: mayRecommend ? m.recommendation : undefined })),
     nextConcepts: nextConcepts.map(c => ({ id: c.id, title: c.title.slice(0, 300) })),
@@ -155,7 +156,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
     conceptKey: context.key,
     depth: context.depth, sourceRef: context.workspaceId + '/' + (context.snapshot ?? 'concept') });
   const token = createHash('sha256').update(JSON.stringify([cacheKey, data.modelSource, selected.revision,
-    selected.invalidLatest, mastery.revision, history.at(-1)?.id, data.prompt])).digest('hex');
+    selected.invalidLatest, mastery.revision, foundation?.revision, history.at(-1)?.id, data.prompt])).digest('hex');
   const preview: TutorPreview = { ...data, token };
   assert.equal(context.depth, request.depth);
   const lastPractice = history.findLast(entry => entry.role === 'system' && entry.observation && entry.recommendation);

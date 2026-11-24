@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { DatabaseSync } from 'node:sqlite';
-import { indexSavedChanges } from './migration-change-concepts';
+import { indexSavedConceptKeys } from './migration-concept-keys';
 import { compatibleDescriptions, normalizedConceptName, portableAlias } from './portable-identity';
 
 export interface Migration {
@@ -400,6 +400,7 @@ export const MIGRATIONS: readonly Migration[] = [
       workspace_id TEXT NOT NULL REFERENCES workspaces ON DELETE CASCADE,
       change_id TEXT NOT NULL CHECK (length(change_id) = 64),
       identity TEXT NOT NULL CHECK (length(identity) > 0),
+      title TEXT NOT NULL,
       summary TEXT NOT NULL,
       concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
       PRIMARY KEY (workspace_id, change_id, identity, concept_id)
@@ -440,7 +441,7 @@ export const MIGRATIONS: readonly Migration[] = [
     DROP TABLE previous_lesson_mastery;
     CREATE INDEX mastery_progress ON lesson_mastery(workspace_id, depth, concept_id, lesson_id,
       scope, revision, check_attempts, check_streak) WHERE state IS NOT NULL;`,
-    afterSql: indexSavedChanges,
+    afterSql: indexSavedConceptKeys,
   },
 ];
 

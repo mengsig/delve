@@ -3,11 +3,12 @@ import { createHash } from 'node:crypto';
 import { DomainError } from '../../shared/errors';
 import { addPrerequisiteInTransaction, canonicalConceptId, conceptStorageKey, getConcept, getConceptByKey, upsertConceptInTransaction, type Concept } from './concepts';
 import type { Db } from './connection';
-import { compatibleDescriptions, compatiblePortableAliases, normalizedConceptName, portableAlias } from './portable-identity';
+import { findPortableConcept } from './portable-concepts';
+import { compatibleConceptMeanings, compatibleScopedMeanings, normalizedConceptName, portableAlias, type ConceptMeaning } from './portable-identity';
 import { canonicalEdges, edgeReachable } from './migration-edges';
 import { getWorkspace } from './workspaces';
 
-type Candidate = { key: string; title: string; summary: string };
+type Candidate = ConceptMeaning;
 type Selection = { concept: Concept; candidateKey: string };
 
 function variantKey(candidate: Candidate): string {
@@ -15,28 +16,25 @@ function variantKey(candidate: Candidate): string {
   const definition = normalizedConceptName(candidate.summary);
   assert.ok(definition);
   assert.ok(candidate.title.trim());
-  return 'foundation/' + createHash('sha256').update(JSON.stringify([key, definition])).digest('hex');
+  const alias = portableAlias(key, candidate.title);
+  return 'foundation/' + createHash('sha256').update(JSON.stringify([key, definition, alias === null ? normalizedConceptName(candidate.title) : alias])).digest('hex');
 }
 
 export function findTutorPrerequisite(db: Db, workspaceId: string, candidate: Candidate, portableOnly = false): Concept | null {
-  const key = conceptStorageKey(candidate.key, true);
+  const input = { ...candidate, key: conceptStorageKey(candidate.key, true) };
   const prefix = `ws/${workspaceId}/`;
-  const alias = portableAlias(key, candidate.title);
-  assert.ok(workspaceId && candidate.title.trim());
-  assert.ok(candidate.summary.trim());
-  const keys = [key, variantKey(candidate)];
-  if (!portableOnly) keys.unshift(prefix + key);
-  for (const storedKey of keys) {
-    const saved = getConceptByKey(db, storedKey);
-    if (!saved || !compatibleDescriptions(candidate.summary, saved.summary)) continue;
-    const concept = getConcept(db, canonicalConceptId(db, saved.id));
-    assert.ok(concept && (concept.portable || concept.workspaceId === workspaceId));
-    if (portableOnly && !concept.portable) continue;
-    const unscoped = concept.portable ? concept.key : concept.key.slice(prefix.length);
-    if (compatibleDescriptions(candidate.summary, concept.summary) &&
-      compatiblePortableAliases(alias, portableAlias(unscoped, concept.title))) return concept;
+  assert.ok(workspaceId && input.title.trim());
+  assert.ok(input.summary.trim());
+  const local = !portableOnly && getConceptByKey(db, prefix + input.key);
+  if (local && compatibleConceptMeanings(input, { ...local, key: input.key })) {
+    const canonical = getConcept(db, canonicalConceptId(db, local.id));
+    assert.ok(canonical && (canonical.portable || canonical.workspaceId === workspaceId));
+    if (compatibleConceptMeanings(input, { ...canonical, key: canonical.portable ? canonical.key : input.key })) return canonical;
   }
-  return null;
+  const portable = findPortableConcept(db, input);
+  if (portable) return portable;
+  const variant = getConceptByKey(db, variantKey(input));
+  return variant?.portable && compatibleScopedMeanings(input, { ...variant, key: input.key }) ? variant : null;
 }
 
 export function resolveTutorPrerequisite(db: Db, workspaceId: string, candidate: Candidate, portableOnly = false): Concept {
@@ -97,7 +95,7 @@ export function persistTutorPrerequisites(db: Db, workspaceId: string, conceptId
     const targetKey = target.portable ? target.key : target.key.slice(`ws/${workspaceId}/`.length);
     if (!target.summary.trim() && conceptStorageKey(candidate.key, true) === targetKey
       && normalizedConceptName(candidate.title) === normalizedConceptName(target.title)
-      && compatiblePortableAliases(portableAlias(candidate.key, candidate.title), portableAlias(targetKey, target.title))) continue;
+      && portableAlias(targetKey, candidate.title) !== null) continue;
     const linked = bound.get(candidate.key);
     assert.ok(!linked || linked.portable || !target.portable && linked.workspaceId === workspaceId);
     const concept = linked ?? resolveTutorPrerequisite(db, workspaceId, candidate, target.portable);

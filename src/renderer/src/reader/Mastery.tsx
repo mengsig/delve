@@ -28,14 +28,15 @@ export function LessonRail({ props, mastery, title }: { props: Props; mastery: M
     <div className="path-heading"><b>Your learning path</b><span>{progress.available ? progress.mastered + ' / ' + progress.total + ' mastered' : 'Progress unavailable'}</span></div>
     <ul className="path-concepts" aria-label="Concept mastery">
       {progress.available && progress.concepts.filter(c => c.onAtlas || c.id === props.conceptId || prerequisites.has(c.id)).map(c => {
+        const concept = props.depth === 'high' ? { ...c, title: plainConceptTitle(c.title) } : c;
         const proof = evidence.get(c.id);
         const goDeeper = proof && !coversDepth(proof.depth, props.depth);
         return <li key={c.id} className={c.id === current?.id ? 'active-concept' : undefined} data-state={c.state}>
           <span className="path-symbol" aria-hidden="true">{c.state === 'mastered' ? <Icon name="check" /> :
             c.id === current?.id ? '◎' : c.state === 'locked' ? <Icon name="lock" /> : c.state === 'in-progress' ? '◒' : ''}</span>
-          <div className="path-progress"><ConceptMeter concept={c} current={c.id === current?.id} />
+          <div className="path-progress"><ConceptMeter concept={concept} current={c.id === current?.id} />
             {prerequisites.has(c.id) && <button className="back" onClick={() => props.onLesson(c.id)}>
-              {goDeeper ? 'Go deeper on ' : 'Open '}{c.title}
+              {goDeeper ? 'Go deeper on ' : 'Open '}{concept.title}
             </button>}</div></li>;
       })}
     </ul>
@@ -51,7 +52,7 @@ export function Completion({ props, mastery, tutor, title }: { props: Props; mas
     <div><span className="plate">Lesson complete</span><h3>{title} mastered</h3>
       <p>{mastery.appliedPassed ? 'Your correct checks included a new situation.' : 'Verified at ' + props.depth + ' depth.'}</p></div>
     {next ? <LessonStart workspaceId={props.workspace.id} conceptId={next.id} depth={props.depth} provider={tutor.provider} signedIn={tutor.signedIn}
-      title={next.title} open={props.onLesson} /> : <button className="primary-btn" onClick={props.onProgress}>View progress</button>}
+      title={props.depth === 'high' ? plainConceptTitle(next.title) : next.title} open={props.onLesson} /> : <button className="primary-btn" onClick={props.onProgress}>View progress</button>}
   </section>;
 }
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { getConcept, type Concept } from './concepts';
 import type { Db } from './connection';
-import { compatibleDescriptions } from './portable-identity';
+import { compatibleScopedMeanings, type ConceptMeaning } from './portable-identity';
 
 export type ChangeConceptScope = { workspaceId: string; change: string };
 
@@ -26,30 +26,34 @@ export function findChangeOverview(db: Db, scope: ChangeConceptScope): Concept |
   return overview;
 }
 
-export function findScopedChangeKey(db: Db, scope: ChangeConceptScope, input: { key: string; summary: string; portable: boolean }): Concept | null {
-  const { key, summary, portable } = input;
+export function findScopedChangeKey(db: Db, scope: ChangeConceptScope, input: ConceptMeaning & { portable: boolean }): Concept | null {
+  const { key, portable } = input;
   assert.match(scope.change, /^[a-f0-9]{64}$/);
   assert.ok(scope.workspaceId && key);
-  const rows = db.prepare(`SELECT k.concept_id, k.summary, c.portable FROM change_concept_keys k
-    JOIN concepts c ON c.id = k.concept_id
-    WHERE k.workspace_id = ? AND k.change_id = ? AND k.identity = ?`).all(scope.workspaceId, scope.change, providerKey(key));
-  const compatible = rows.filter(row => typeof row.summary === 'string' && compatibleDescriptions(row.summary, summary));
+  const rows = db.prepare(`SELECT k.concept_id, k.title, k.summary, overview.concept_id AS overview
+    FROM change_concept_keys k LEFT JOIN change_concept_keys overview ON overview.workspace_id = k.workspace_id
+      AND overview.change_id = k.change_id AND overview.identity = 'overview' AND overview.concept_id = k.concept_id
+    WHERE k.workspace_id = ? AND k.change_id = ? AND k.identity = ?`).iterate(scope.workspaceId, scope.change, providerKey(key));
+  const compatible: Concept[] = [];
+  for (const { concept_id, title, summary, overview } of rows) {
+    assert.ok(typeof concept_id === 'number' && typeof summary === 'string' && typeof title === 'string');
+    if (!compatibleScopedMeanings(input, { key, title, summary })) continue;
+    const concept = getConcept(db, concept_id);
+    assert.ok(concept && (concept.portable || concept.workspaceId === scope.workspaceId));
+    const meaning = { key: concept.portable ? concept.key : key, title: concept.title, summary: overview ? summary : concept.summary };
+    if (compatibleScopedMeanings(input, meaning)) compatible.push(concept);
+  }
   // Released profiles can already have an independently saved local and portable concept.
-  const matches = compatible.length > 1 ? compatible.filter(row => row.portable === Number(portable)) : compatible;
-  if (matches.length !== 1) return null;
-  const { concept_id: id } = matches[0]!;
-  assert.ok(typeof id === 'number');
-  const concept = getConcept(db, id);
-  assert.ok(concept && (concept.portable || concept.workspaceId === scope.workspaceId));
-  return concept;
+  const matches = compatible.length > 1 ? compatible.filter(concept => concept.portable === portable) : compatible;
+  return matches.length === 1 ? matches[0]! : null;
 }
 
-export function rememberChangeConcept(db: Db, scope: ChangeConceptScope, concept: Concept, footprint?: { key: string; summary: string }): void {
+export function rememberChangeConcept(db: Db, scope: ChangeConceptScope, concept: Concept, footprint?: ConceptMeaning): void {
   assert.ok(db.isTransaction);
   assert.ok(concept.portable || concept.workspaceId === scope.workspaceId);
-  db.prepare(`INSERT INTO change_concept_keys (workspace_id, change_id, identity, concept_id, summary) VALUES (?, ?, ?, ?, ?)
+  db.prepare(`INSERT INTO change_concept_keys (workspace_id, change_id, identity, concept_id, title, summary) VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT DO NOTHING`).run(scope.workspaceId, scope.change, footprint ? providerKey(footprint.key) : overviewKey, concept.id,
-    footprint?.summary ?? '');
+    footprint?.title ?? '', footprint?.summary ?? '');
 }
 
 export function changeVocabulary(db: Db, scope: ChangeConceptScope) {

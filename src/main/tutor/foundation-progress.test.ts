@@ -93,6 +93,27 @@ it('derives and saves foundation links, skips covering proof and unlocks the exp
   expect(getGlobalKnowledgeGraph(db).concepts.filter(c => c.key === receipt.key)).toHaveLength(1);
 });
 
+it('answers questions without changing or exposing a pending foundation check', async () => {
+  const answer: TutorReply = { ...opening, lesson: { schema: 'delve.lesson/1', blocks: [
+    { type: 'prose', heading: 'A helpful idea', text: 'A receipt can help the sender know what happened.' },
+  ] } };
+  session = new TutorSession(db, vi.fn().mockResolvedValueOnce({ ...opening, foundations: [receipt] }).mockResolvedValue(answer));
+  const initial = (await run()).foundation!;
+  const saved = db.prepare('SELECT * FROM lesson_foundations').get();
+  const evidence = listEvidence(db, linked(receipt).id);
+  const question: TutorRequest = { ...request, intent: { kind: 'ask', text: 'What is a receipt?' } };
+  const preview = prepareTurn(db, question).preview;
+  expect(preview.prompt).not.toContain(probe.prompt);
+  expect(preview.prompt).not.toContain(opening.lesson.blocks[0]!.type === 'analogy' ? opening.lesson.blocks[0]!.text : 'unused');
+  const result = await run(question);
+  expect(result.foundation).toEqual(initial);
+  expect(result.blocks).toEqual([]);
+  expect(result.messages).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'tutor', blocks: answer.lesson.blocks })]));
+  expect(db.prepare('SELECT * FROM lesson_foundations').get()).toEqual(saved);
+  expect(listEvidence(db, linked(receipt).id)).toEqual(evidence);
+  expect(respond(initial.revision, 0).step).toBeNull();
+});
+
 it('uses a known foundation identity from the approved topic prompt and skips its mastered probe', async () => {
   const stable = { ...receipt, key: 'confirming-delivery/v2', summary: 'A reply confirms reception of a pending packet in `dispatchQueue`.' };
   const known = linked(stable);

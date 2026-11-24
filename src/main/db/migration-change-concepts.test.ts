@@ -4,9 +4,11 @@ import type { Depth } from '../../shared/domain';
 import type { ChangeRef, RepoRequest } from '../../shared/repository';
 import { cacheModel, selectModel } from '../providers/model';
 import { readLesson, readerHandlers } from '../reader/ipc';
-import { cachedGeneration, digest, latestBrief, persistGeneration, type ApprovedSource } from '../repository/store';
+import { baselineReply } from '../repository/schemas';
+import { cachedGeneration, digest, latestBrief, persistGeneration, useCachedGeneration, type ApprovedSource } from '../repository/store';
 import { upsertConcept } from './concepts';
-import { recordEvidence } from './evidence';
+import { listEvidence, recordEvidence } from './evidence';
+import { readWorkspaceGraph } from './graph';
 import { getGlobalKnowledgeGraph } from './knowledge';
 import { lessonRevision } from './lesson-selection';
 import { bindSnapshot } from './lessons';
@@ -33,8 +35,8 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-function createFootprint(input: typeof footprint) {
-  const fingerprint = digest([input.key, input.summary.toLowerCase()]);
+function createFootprint(input: typeof footprint, meaning: string[] = [input.key, input.summary.toLowerCase()]) {
+  const fingerprint = digest(meaning);
   const concept = upsertConcept(db, { ...input, workspaceId, key: 'change/' + digest(['concept', snapshotId, fingerprint]) });
   db.prepare('INSERT INTO snapshot_concepts VALUES (?, ?)').run(snapshotId, concept.id);
   return concept.id;
@@ -60,7 +62,7 @@ function seedSavedChange(selection: ChangeRef, depth: Depth, cacheKey: string, a
   db.prepare('INSERT INTO snapshot_concepts VALUES (?, ?)').run(snapshotId, overview.id);
   const lesson = seedLesson(overview.id, cacheKey, provider, depth);
   const result = { kind: 'change', brief: { conceptId: overview.id, commit: head, base, title,
-    touched: [{ id: touchedId, title: affected.title }], recommendation: { conceptId: touchedId, title: affected.title, reason: 'Start here.' } } };
+    trace: [], touched: [{ id: touchedId, title: affected.title }], recommendation: { conceptId: touchedId, title: affected.title, reason: 'Start here.' } } };
   db.prepare(`INSERT INTO repository_generations (cache_key, workspace_id, snapshot_id, kind, ref, depth, provider, model, schema_version,
     result, proposal, next_concept, reason, created_at, last_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'delve.change/1',
     ?, ?, ?, 'Start here.', '2026-01-01', (SELECT coalesce(max(last_used), 0) + 1 FROM repository_generations))`)
@@ -69,11 +71,13 @@ function seedSavedChange(selection: ChangeRef, depth: Depth, cacheKey: string, a
   return { ...lesson, conceptId: overview.id };
 }
 
-function regenerate(selection: ChangeRef, input: typeof footprint, depth: Depth = 'medium') {
-  const source: ApprovedSource = { cacheKey: digest(['regenerated', selection, depth, input]), revision: head,
+function regenerate(selection: ChangeRef, input: typeof footprint, depth: Depth = 'medium', prerequisite?: typeof footprint) {
+  const source: ApprovedSource = { cacheKey: digest(['regenerated', selection, depth, input, prerequisite]), revision: head,
     request: { workspaceId, selection, depth, provider: 'codex' },
     preview: { ...selectModel('codex'), title, commit: head, base, bytes: 1, prompt: 'test', files: [], token: 'test', partial: false } };
-  return persistGeneration(db, source, { schema: 'delve.change/1', concepts: [input], edges: [],
+  const concepts = prerequisite ? [input, prerequisite] : [input];
+  const edges = prerequisite ? [{ concept: input.key, prerequisite: prerequisite.key }] : [];
+  return persistGeneration(db, source, { schema: 'delve.change/1', concepts, edges,
     touched: [input.key], spans: [], summary: 'Review the changes.', what: 'The behavior changes.',
     why: 'This keeps data current.', before: 'The old behavior.', after: 'The new behavior.', trace: [], excerpt: [],
     mechanics: null, boundary: null, recommendation: { key: input.key, reason: 'Read about the change.' } });
@@ -98,6 +102,82 @@ it('keeps released footprints with the same key and title but conflicting descri
   expect(cachedGeneration(db, 'dns-brief')).toMatchObject({ brief: { touched: [{ id: dnsId }] } });
   expect(cachedGeneration(db, 'page-brief')).toMatchObject({ brief: { touched: [{ id: pageId }] } });
   expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+});
+
+it('keeps released alias contradictions from lending mastery to another meaning of the same key', () => {
+  const old = { key: 'tcp', title: 'HTTP', summary: 'Messages must arrive in order.', portable: true };
+  const contradictory = createFootprint({ ...old, portable: false }, ['tcp', 'http', old.summary.toLowerCase()]);
+  seedSavedChange(pull, 'high', 'contradictory', old, contradictory);
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: contradictory, depth: 'low', status: 'demonstrated', source: 'check', masteryVerified: true });
+
+  migrate(db);
+  const next = regenerate(pull, { ...old, title: 'TCP' });
+  if (next.kind !== 'change') throw new Error('Expected a saved change.');
+  const correct = next.brief.touched[0]!.id;
+  expect(correct).not.toBe(contradictory);
+  expect(regenerate(pull, old, 'low')).toMatchObject({ brief: { touched: [{ id: contradictory }] } });
+  const { concepts } = getGlobalKnowledgeGraph(db);
+  expect(concepts.find(c => c.id === contradictory)?.masteredDepth).toBe('low');
+  expect(concepts.find(c => c.id === correct)?.masteredDepth).toBeNull();
+});
+
+it('recovers a released footprint that was only linked as a prerequisite', () => {
+  const prerequisite = { ...footprint, key: 'positive-replies', title: 'Positive replies', summary: 'A reply confirms delivery.' };
+  const target = createFootprint(footprint);
+  const known = createFootprint(prerequisite);
+  seedSavedChange(pull, 'high', 'saved', footprint, target);
+  const edges = [{ concept: footprint.key, prerequisite: prerequisite.key }];
+  db.prepare("UPDATE repository_generations SET proposal = ? WHERE cache_key = 'saved'")
+    .run(JSON.stringify({ concepts: [footprint, prerequisite], edges, touched: [footprint.key] }));
+  db.prepare('INSERT INTO concept_edges VALUES (?, ?, ?)').run(target, known, '2026-01-01');
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: known, depth: 'high', status: 'demonstrated', source: 'check', masteryVerified: true });
+
+  migrate(db);
+  const before = getGlobalKnowledgeGraph(db);
+  expect(regenerate(pull, footprint, 'medium', prerequisite)).toMatchObject({ brief: { touched: [{ id: target }] } });
+  const after = getGlobalKnowledgeGraph(db);
+  expect(after.concepts).toHaveLength(before.concepts.length);
+  expect(after.edges.filter(edge => edge.conceptId === target)).toEqual([{ conceptId: target, prerequisiteId: known }]);
+  expect(after.concepts.find(c => c.id === known)?.masteredDepth).toBe('high');
+});
+
+it.each(['tcp', 'sending-data'])('preserves the schema-9 baseline binding for %s without relying on its title', key => {
+  const target = { key, title: 'TCP', summary: 'Messages arrive in order.', portable: true };
+  const sender = { ...footprint, key: 'sender', title: 'Local sender' };
+  const releasedFingerprint = digest(['tcp', target.summary.toLowerCase()]);
+  const scoped = upsertConcept(db, { ...target, key: 'ambiguous/' + releasedFingerprint, portable: false, workspaceId });
+  const local = upsertConcept(db, { ...sender, workspaceId });
+  db.prepare('INSERT INTO scoped_proposal_concepts VALUES (?, ?, ?)').run(workspaceId, releasedFingerprint, scoped.id);
+  const member = db.prepare('INSERT INTO snapshot_concepts VALUES (?, ?)');
+  member.run(snapshotId, scoped.id);
+  member.run(snapshotId, local.id);
+  db.prepare('INSERT INTO concept_edges VALUES (?, ?, ?)').run(scoped.id, local.id, '2026-01-01');
+  recordEvidence(db, { workspaceId, snapshotId, conceptId: scoped.id, depth: 'medium', status: 'demonstrated', source: 'check', masteryVerified: true });
+  const proposal = baselineReply.parse({ schema: 'delve.map/1', concepts: [target, sender],
+    edges: [{ concept: target.key, prerequisite: sender.key }], recommendation: { key: target.key, reason: 'Study the sender.' } });
+  const source = (commit: string): ApprovedSource => ({ cacheKey: commit, revision: commit,
+    request: { workspaceId, selection: { kind: 'baseline', commit, paths: ['web.ts'] }, depth: 'medium', provider: 'codex' },
+    preview: { ...selectModel('codex'), title, commit, bytes: 1, prompt: 'test', files: [], token: 'test', partial: false } });
+  db.prepare(`INSERT INTO repository_generations (cache_key, workspace_id, snapshot_id, kind, ref, depth, provider, model, schema_version,
+    result, proposal, next_concept, reason, created_at, last_used) VALUES (?, ?, ?, 'baseline', ?, 'medium', 'codex', ?, 'delve.map/1',
+    '{"kind":"baseline"}', ?, ?, 'Study the sender.', '2026-01-01', 1)`)
+    .run(head, workspaceId, snapshotId, head, cacheModel(selectModel('codex').model), JSON.stringify(proposal), scoped.id);
+
+  migrate(db);
+  expect(useCachedGeneration(db, source(head))).toEqual({ kind: 'baseline' });
+  persistGeneration(db, source(base), proposal);
+  const lookUp = db.prepare('SELECT next_concept FROM repository_generations WHERE cache_key = ?');
+  expect(lookUp.get(head)?.next_concept).toBe(scoped.id);
+  expect(lookUp.get(base)?.next_concept).toBe(scoped.id);
+  const graph = readWorkspaceGraph(db, workspaceId);
+  expect(graph.concepts).toHaveLength(2);
+  expect(graph.edges).toEqual([{ conceptId: scoped.id, prerequisiteId: local.id }]);
+  expect(listEvidence(db, scoped.id)).toMatchObject([{ conceptId: scoped.id, masteryVerified: true }]);
+  const different = 'c'.repeat(40);
+  const differentKey = key === 'tcp' ? 'sending-data' : 'tcp';
+  persistGeneration(db, source(different), { ...proposal, concepts: [{ ...target, key: differentKey }, sender],
+    edges: [{ concept: differentKey, prerequisite: sender.key }], recommendation: { ...proposal.recommendation, key: differentKey } });
+  expect(lookUp.get(different)?.next_concept).not.toBe(scoped.id);
 });
 
 it.each([false, true])('keeps a saved footprint for both PR and head commit scopes (commit saved first: %s)', commitFirst => {

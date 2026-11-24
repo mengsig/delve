@@ -6,7 +6,7 @@ import { LatestInstrumentLink, LessonInstruments } from '../lab/Environment';
 import { call } from '../api';
 import { Icon } from '../Icon';
 import { errorMessage, useRead } from '../useRead';
-import { Conversation, LessonBlocks } from './Conversation';
+import { Composer, Conversation, LessonBlocks } from './Conversation';
 import { FoundationActivity } from './FoundationActivity';
 import { LessonHeading, LessonNotes } from './LessonNotes';
 import { useLessonDraft } from './LessonDraft';
@@ -15,7 +15,7 @@ import { LessonRail } from './Mastery';
 import type { ReaderProps } from './ReaderHeader';
 import { ResponseDock } from './ResponseDock';
 import { Transcript } from './Transcript';
-import { useTutor, type LessonTutor } from './Tutor';
+import { TutorReview, TutorSettings, TutorTurnStatus, useTutor, type LessonTutor } from './Tutor';
 import { lessonKey, lessonViewKey, useTutorJobs } from './TutorJobs';
 import './reader.css';
 import './fieldwork.css';
@@ -104,10 +104,19 @@ function Session({ props, initial, title, address, reload }: {
   } };
   if (body.foundation) return <div className="field-lesson">
     <LessonHeading props={props} title={title} />
-    <FoundationActivity address={address} initial={body.foundation} onComplete={async completion => {
-      commit(await call('reader:lesson', address));
-      completeFoundation(completion);
-    }} />
+    <div className="lesson-columns"><article className="reader-thread" aria-label="Lesson and conversation">
+      <Thread body={body} tutor={tutor} scope={scope} />
+      <FoundationActivity address={address} initial={body.foundation} onComplete={async completion => {
+        commit(await call('reader:lesson', address));
+        completeFoundation(completion);
+      }} />
+      <section className="response-dock" aria-label="Lesson response">
+        <TutorTurnStatus tutor={tutor} onBackground={props.onBackToChange ?? props.onBack} reload={refresh} />
+        <TutorReview tutor={tutor} />
+        {!tutor.signedIn && !tutor.detection.checking && <TutorSettings tutor={tutor} />}
+        <Composer tutor={tutor} draft={draft.question} setDraft={question => change({ question })} />
+      </section>
+    </article><LessonRail props={props} title={title} mastery={body.mastery} /></div>
   </div>;
   return <div className="field-lesson"><EnvironmentActivity.Provider value={lessonActivity}>
     <LessonInstruments address={address} body={body} onLesson={commit}>
