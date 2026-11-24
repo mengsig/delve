@@ -1,5 +1,7 @@
 import { useEffect, useId, useMemo, useRef, type RefObject } from 'react';
+import type { Depth } from '../../../shared/domain';
 import type { GlobalKnowledgeGraph } from '../../../shared/knowledge';
+import { containsTechnicalText } from '../../../shared/plain-language';
 import { fitViewport, revealPoint, useMapCamera, type Size, type Viewport } from './map-camera';
 import { drawGraph, prepareDrawData } from './map-drawing';
 import { stateName, type NodeState } from './map-geometry';
@@ -11,6 +13,7 @@ import './map.css';
 
 interface Props {
   graph: GlobalKnowledgeGraph;
+  depth: Depth;
   selected: number | null;
   visible: Set<number>;
   focus: Set<number> | null;
@@ -84,12 +87,12 @@ function useDrawing(canvas: RefObject<HTMLCanvasElement | null>, data: ReturnTyp
   }, []);
 }
 
-function MapPreview({ concept, state, keyboard, prerequisites }: {
-  concept: GlobalKnowledgeGraph['concepts'][number] | undefined; state: NodeState | undefined; keyboard: boolean; prerequisites: string[];
+function MapPreview({ concept, state, keyboard, prerequisites, depth }: {
+  concept: GlobalKnowledgeGraph['concepts'][number] | undefined; state: NodeState | undefined; keyboard: boolean; prerequisites: string[]; depth: Depth;
 }) {
   const text = concept && <div className="knowledge-map-tip">
     <div><strong>{concept.title}</strong><span>{stateName[state ?? 'locked']}</span></div>
-    {concept.summary && <p>{concept.summary}</p>}
+    {concept.summary && (depth !== 'high' || !containsTechnicalText(concept.summary)) && <p>{concept.summary}</p>}
     {prerequisites.length > 0 && <p>Builds on {prerequisites.join(', ')}.</p>}
     {concept.bridge && <p>Shared across {concept.memberships.map(w => w.workspaceName).join(', ')}.</p>}
   </div>;
@@ -106,7 +109,7 @@ function MapCompass() {
   </svg>;
 }
 
-function AreaMap({ graph, selected, visible, focus, onSelect, cameras, states, areaKey, global }: Props) {
+function AreaMap({ graph, selected, visible, focus, onSelect, cameras, states, areaKey, global, depth }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const instructions = useId();
   const { concepts, edges } = graph;
@@ -140,7 +143,7 @@ function AreaMap({ graph, selected, visible, focus, onSelect, cameras, states, a
       data-dragging={interaction.dragging || undefined} data-hover={preview !== null || undefined}
       {...interaction.handlers} onKeyDown={interaction.onKeyDown} onFocus={interaction.onFocus} onBlur={interaction.onBlur} />
     <MapCompass />
-    <MapPreview concept={concept} prerequisites={prerequisites} state={preview === null ? undefined : states.get(preview)}
+    <MapPreview concept={concept} prerequisites={prerequisites} depth={depth} state={preview === null ? undefined : states.get(preview)}
       keyboard={interaction.preview?.keyboard ?? false} />
     {points.length > 12 && camera.view.scale < labelThreshold && <span className="knowledge-map-zoom-hint">Zoom in to see concept names</span>}
     <div className="knowledge-map-tools" role="group" aria-label="Map controls">

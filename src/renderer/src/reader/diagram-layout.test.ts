@@ -2,6 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { TeachingBlock } from './Blocks';
+import { Diagram } from './Diagram';
 import { layoutDiagram } from './diagram-layout';
 
 describe('lesson diagrams', () => {
@@ -16,9 +17,21 @@ describe('lesson diagrams', () => {
     }));
     const [visual] = markup.split('class="sr-only"');
     expect(visual?.match(/class="lesson-diagram-node"/g)).toHaveLength(3);
+    expect(visual?.match(/role="listitem"/g)).toHaveLength(3);
     expect(visual).toMatch(/>Run<.*>groups<.*>Agent<.*>works on<.*>Task</);
     expect(markup).toContain('Run to Agent (groups)');
     expect(markup).toContain('Agent to Task (works on)');
+  });
+
+  it('renders an implicit sequence once with visual arrows and accessible order', () => {
+    const markup = renderToStaticMarkup(createElement(Diagram, { nodes: ['First step', 'Second step', 'Third step'] }));
+    expect(markup).toContain('role="list" aria-label="Steps in order"');
+    expect(markup.match(/role="listitem"/g)).toHaveLength(3);
+    expect(markup.match(/class="lesson-diagram-direct" aria-hidden="true"/g)).toHaveLength(2);
+    for (const step of ['First step', 'Second step', 'Third step']) {
+      expect(markup.split(step)).toHaveLength(2);
+    }
+    expect(markup).not.toContain('aria-label="Connections"');
   });
 
   it('routes cycles, parallel edges, and loops while keeping the isolated node', () => {

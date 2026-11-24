@@ -8,6 +8,7 @@ import { observationSchema, recommendationSchema } from '../reader/conversation'
 import type { PreparedTurn } from './prompt';
 import { demoTurn } from './sample';
 import { assertFreshCheck, canRecommend, checkIn, nextGrade } from './mastery';
+import { foundationsJsonSchema, foundationsSchema } from './foundation-content';
 
 const metadata = z.strictObject({
   observation: observationSchema.nullable(),
@@ -15,10 +16,14 @@ const metadata = z.strictObject({
   assessment: z.boolean().nullable(),
 });
 
-export type TutorReply = z.infer<typeof metadata> & { lesson: Document; reasoningFeedback?: string };
+export type TutorReply = z.infer<typeof metadata> & {
+  lesson: Document;
+  reasoningFeedback?: string;
+  foundations?: z.infer<typeof foundationsSchema>;
+};
 export type Generate = (turn: PreparedTurn, signal: AbortSignal) => Promise<TutorReply>;
 
-const replySchema = metadata.extend({ lesson: documentGenerationSchema });
+const replySchema = metadata.extend({ lesson: documentGenerationSchema, foundations: foundationsSchema.optional() });
 const reasonedReply = replySchema.extend({ reasoningFeedback: observationSchema });
 const json = z.toJSONSchema(metadata, { target: 'draft-7', override: ({ jsonSchema }) => {
   delete jsonSchema.minLength;
@@ -28,7 +33,8 @@ const json = z.toJSONSchema(metadata, { target: 'draft-7', override: ({ jsonSche
   delete jsonSchema.exclusiveMinimum;
 } });
 const replyJsonSchema = { type: 'object', additionalProperties: false,
-  required: [...json.required!, 'lesson'], properties: { ...json.properties, lesson: documentJsonSchema } };
+  required: [...json.required!, 'lesson', 'foundations'],
+  properties: { ...json.properties, lesson: documentJsonSchema, foundations: foundationsJsonSchema } };
 
 const reasonedJsonSchema = { ...replyJsonSchema, required: [...replyJsonSchema.required, 'reasoningFeedback'],
   properties: { ...replyJsonSchema.properties, reasoningFeedback: { type: 'string' } } };
@@ -59,9 +65,11 @@ function invalidReply(message: string): never {
 export function validateTurn(turn: PreparedTurn, output: TutorReply): TutorReply {
   const { intent } = turn.request;
   if (Buffer.byteLength(JSON.stringify(output)) > 128 * 1024) invalidReply('The response exceeds the lesson size limit.');
-  const parsed = metadata.extend({ lesson: documentSchema, reasoningFeedback: observationSchema.optional() }).safeParse(output);
+  const parsed = metadata.extend({ lesson: documentSchema, reasoningFeedback: observationSchema.optional(),
+    foundations: foundationsSchema.optional() }).safeParse(output);
   if (!parsed.success) invalidReply('The tutor returned invalid teaching content or feedback.');
   const reply = parsed.data;
+  if (intent.kind !== 'teach' && reply.foundations?.length) invalidReply('Foundations belong only to an opening lesson.');
   if (Boolean(turn.response?.reasoning?.trim()) !== Boolean(reply.reasoningFeedback)) {
     invalidReply('The tutor must address the learner’s supplied reasoning separately from the choice.');
   }

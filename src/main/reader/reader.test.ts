@@ -7,6 +7,7 @@ import { listEvidence } from '../db/evidence';
 import { bindSnapshot, saveLesson } from '../db/lessons';
 import { addWorkspace, listWorkspaces } from '../db/workspaces';
 import { readerHandlers, readerSchemas } from './ipc';
+import { prepareTurn } from '../tutor/prompt';
 
 let db: Db;
 let address: LessonAddress;
@@ -34,6 +35,60 @@ describe('stored lesson reader', () => {
     expect(lesson.messages).toEqual([]);
   });
 
+  it('opens the requested saved lesson at the same depth and keeps its check on refresh', () => {
+    const first = save('codex', [{ type: 'check', prompt: 'Codex check?', options: ['Yes', 'No'], expected: 0 }]);
+    const second = saveLesson(db, { ...address, cacheKey: 'claude', provider: 'claude', model: 'saved', schemaVersion: 'delve.lesson/1',
+      body: { schema: 'delve.lesson/1', blocks: [{ type: 'check', prompt: 'Claude check?', options: ['Yes', 'No'], expected: 1 }] } });
+    const read = readerHandlers(db)['reader:lesson'];
+    const selected = { ...address, lessonId: first.id };
+    expect(readerSchemas['reader:lesson'].safeParse(selected).success).toBe(true);
+    expect(read(selected).mastery.activeCheck?.prompt).toBe('Codex check?');
+    expect(read(selected).mastery.activeCheck?.prompt).toBe('Codex check?');
+    const other = { ...address, lessonId: second.id };
+    expect(read(other).mastery.activeCheck?.prompt).toBe('Claude check?');
+    const intent = { kind: 'answer' as const, revision: read(selected).mastery.revision!, answer: 0 };
+    expect(prepareTurn(db, { ...selected, provider: 'codex', intent }).response).toMatchObject({ prompt: 'Codex check?', correct: true });
+    expect(() => prepareTurn(db, { ...other, provider: 'codex', intent })).toThrow(/question changed/i);
+    const handlers = readerHandlers(db);
+    handlers['reader:message']({ ...selected, text: 'Codex question' });
+    handlers['reader:message']({ ...other, text: 'Claude question' });
+    expect(read(selected).messages.map(message => message.text)).toEqual(['Codex question']);
+    expect(read(other).messages.map(message => message.text)).toEqual(['Claude question']);
+    handlers['reader:skip']({ ...selected, revision: read(selected).mastery.revision! });
+    handlers['reader:skip']({ ...other, revision: read(other).mastery.revision! });
+    expect(read(selected).mastery.stage).toBe('skipped');
+    expect(read(other).mastery.stage).toBe('skipped');
+    expect(() => read({ ...selected, depth: 'low' })).toThrow(/reopen/i);
+    const unrelated = upsertConcept(db, { key: 'other', title: 'Other', portable: true, workspaceId: address.workspaceId });
+    expect(() => read({ ...selected, conceptId: unrelated.id })).toThrow(/reopen/i);
+  });
+
+  it('accepts canonical aliases and rejects a lesson from another workspace', () => {
+    const check = { type: 'check', prompt: 'Alias question?', options: ['One', 'Two'], expected: 1 };
+    const saved = save('alias', [{ type: 'prose', heading: 'Alias', text: 'Alias lesson' }, check]);
+    const handlers = readerHandlers(db);
+    const read = handlers['reader:lesson'];
+    handlers['reader:skip']({ ...address, revision: read(address).mastery.revision! });
+    const canonical = upsertConcept(db, { key: 'canonical', title: 'Canonical', portable: true, workspaceId: address.workspaceId });
+    const snapshotId = bindSnapshot(db, address.workspaceId, 'abcd001');
+    saveLesson(db, { ...address, conceptId: canonical.id, snapshotId, cacheKey: 'current', schemaVersion: 'delve.lesson/1',
+      provider: 'claude', model: 'saved', body: { schema: 'delve.lesson/1', blocks: [check] } });
+    db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, canonical_concept_id) VALUES (?, ?)')
+      .run(address.conceptId, canonical.id);
+    const current = { ...address, conceptId: canonical.id };
+    expect(read(current).mastery.stage).toBe('checking');
+    expect(read({ ...current, lessonId: saved.id })).toMatchObject({
+      blocks: [expect.objectContaining({ text: 'Alias lesson' }), expect.objectContaining({ prompt: 'Alias question?' })],
+      mastery: { stage: 'skipped' },
+    });
+    const workspace = addWorkspace(db, { kind: 'topic', title: 'Other topic' });
+    upsertConcept(db, { key: 'canonical', title: 'Canonical', portable: true, workspaceId: workspace.id });
+    expect(() => read({ ...address, workspaceId: workspace.id, conceptId: canonical.id, lessonId: saved.id })).toThrow(/reopen/i);
+  });
+
+});
+
+describe('reader progress and history', () => {
   it('binds skip to the displayed mastery revision, without awarding evidence', () => {
     const check = { type: 'check', prompt: 'Which point?', options: ['Near', 'Far'], expected: 1 };
     save('one', [check]);

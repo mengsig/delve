@@ -70,7 +70,7 @@ export function TeachingBlock({ block, blockIndex, messageId = null }: { block: 
     case 'comparison': return <Comparison block={block} />;
     case 'diagram': return <Diagram nodes={block.nodes} edges={block.edges} />;
     case 'code': return <CodeExcerpt block={block} />;
-    case 'trace': return <section className="chapter"><h3>Trace</h3><Steps steps={block.steps} /></section>;
+    case 'trace': return <Diagram nodes={block.steps} label="Trace" />;
     case 'environment': return <Environment block={block} blockIndex={blockIndex} messageId={messageId} />;
     case 'unknown': return <section className="chapter"><h3>Unsupported lesson block</h3><p>This version of Delve cannot display “{block.name}”.</p></section>;
   }

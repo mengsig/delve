@@ -99,7 +99,8 @@
 .path-concepts { flex: 1; overflow: auto; list-style: none; margin: 0; padding: 0 10px 8px; }
 .path-concepts li { display: flex; align-items: center; gap: 11px; min-height: 44px; padding: 6px 9px; border: 1px solid transparent; border-radius: 9px; }
 .path-concepts .active-concept { position: sticky; top: 0; bottom: 0; z-index: 1; border-color: var(--rule); background: var(--soft); }
-.path-concepts .learning-meter { flex: 1; font-size: 13px; font-weight: 650; --meter-height: 3px; }
+.path-progress { flex: 1; min-width: 0; }
+.path-concepts .learning-meter { font-size: 13px; font-weight: 650; --meter-height: 3px; }
 .path-concepts .learning-meter-label span:last-child { font-weight: 400; }
 .path-symbol { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border: 1px solid var(--rule); border-radius: 50%; color: var(--dim); }
 .path-symbol svg { width: 13px; height: 13px; }

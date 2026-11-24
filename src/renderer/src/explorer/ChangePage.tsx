@@ -16,6 +16,7 @@ interface Props extends Pick<ReaderProps, 'workspace' | 'depth' | 'graph' | 'onL
   change: ChangeRef;
   historyVersion: number;
   onAtlas: (id: number) => void;
+  onEvidence: () => void;
   openedJob?: ChangeJob;
 }
 
@@ -43,7 +44,7 @@ function ChangeDetailStatus({ read }: { read: DetailRead }) {
   </div>;
 }
 
-export function ChangePage({ workspace, change, depth, graph, onLesson, onAtlas, historyVersion, openedJob }: Props) {
+export function ChangePage({ workspace, change, depth, graph, onLesson, onAtlas, onEvidence, historyVersion, openedJob }: Props) {
   const [tab, setTab] = useState<ChangeTab>('Explanation');
   const read = useChangeDetail(workspace.id, change, historyVersion);
   const detail = read.result.status === 'ready' ? read.result.value : undefined;
@@ -62,10 +63,11 @@ export function ChangePage({ workspace, change, depth, graph, onLesson, onAtlas,
     <ChangeDetailStatus read={read} />
     <ChangeTabs selected={tab} onSelect={selectTab} />
     <section className="change-panel" id="change-panel" role="tabpanel" aria-labelledby={tabId(tab)} tabIndex={0}>
-      {tab === 'Explanation' && <ChangeExplanation description={detail?.description} lesson={lesson} onLesson={onLesson} />}
+      {tab === 'Explanation' && <ChangeExplanation description={detail?.description} lesson={lesson}
+        workspaceId={workspace.id} depth={depth} onLesson={onLesson} onEvidence={onEvidence} />}
       {tab === 'Files changed' && (detail ? <ChangeFiles detail={detail} brief={brief} onConcept={onAtlas} />
         : <p className="panel-message">{read.result.status === 'loading' ? 'Loading file patches…' : 'The source diff is unavailable.'}</p>)}
-      {tab === 'Concepts' && <ChangeConcepts brief={brief} atlasIds={atlasIds} onAtlas={onAtlas} />}
+      {tab === 'Concepts' && <ChangeConcepts brief={brief} atlasIds={atlasIds} depth={depth} onAtlas={onAtlas} />}
     </section>
   </>;
 }

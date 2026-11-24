@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Topic and change lessons check unfamiliar foundations first and save what you demonstrate for later lessons.
+
+### Changed
+- High-depth explanations and concept cards use everyday language. Lessons open with a connection to a known or practised foundation when available, and use an everyday analogy. Answer feedback opens with a short verdict and the key idea.
+- Skip foundation questions in one action and revisit foundations from the learning path. Deeper practice builds on the depth already demonstrated.
+
+### Fixed
+- Regenerating a change lesson reuses confirmed concept keys and definitions. The Knowledge map, finder and area mastery use the same concept total.
+- Topic and change previews include saved identities for the tutor to reuse. Upgrades from 0.1.1 preserve saved concepts, lessons and mastery. Prerequisite edits preserve visible links, and saved briefs, recent activity and tutor jobs reopen the selected provider lesson at its saved depth.
+- Change lessons judge each foundation by its own proof, so a related learned concept no longer skips it and an answered question is not asked again. Upgrades leave a saved concept unlinked when more than one key may own it, and a change footprint that names none of its key's conflicting saved meanings gets its own concept.
+- Questions remain available while you work through foundations. High-depth learning paths use plain titles for prerequisites and the next lesson.
+- Change briefs keep usable diff links when some suggested lines fall outside the approved diff. Sequential diagrams show each step once with arrows between steps.
+
 ## [0.1.1] - 2026-11-23
 
 ### Added

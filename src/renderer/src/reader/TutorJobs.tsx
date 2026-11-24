@@ -1,10 +1,12 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { LessonAddress, TutorRequest, UnreadableTutorJob } from '../../../shared/reader';
+import { lessonKey, type LessonAddress, type TutorRequest, type UnreadableTutorJob } from '../../../shared/reader';
 import { preferredProvider, PROVIDER_LABELS } from '../preferences';
 import { errorMessage } from '../useRead';
 import { useQueue, type TutorJob } from './TutorQueue';
 
-export { lessonKey } from '../../../shared/reader';
+export { lessonKey };
+export const lessonViewKey = (address: LessonAddress) =>
+  lessonKey(address) + (address.lessonId === undefined ? '' : '/lesson/' + address.lessonId);
 export const tutorName = (provider: TutorRequest['provider']) => provider === 'demo' ? 'the offline tutor' : PROVIDER_LABELS[provider];
 
 export interface ReadingPosition {
@@ -40,7 +42,7 @@ export function useBackgroundTutorCompletion(refresh: () => void) {
   const { jobs, visible } = useTutorJobs();
   const previous = useRef(new Set<string>());
   useEffect(() => {
-    const ready = new Set([...jobs.values()].filter(job => job.phase === 'ready' && job.key !== visible
+    const ready = new Set([...jobs.values()].filter(job => job.phase === 'ready' && lessonViewKey(job.request) !== visible
       && job.request.intent.kind !== 'ask').map(job => job.id));
     if ([...ready].some(id => !previous.current.has(id))) refresh();
     previous.current = ready;
@@ -108,11 +110,11 @@ function UnreadableJobNotice({ job }: { job: UnreadableTutorJob }) {
 
 export function TutorJobStatus({ onOpen }: { onOpen: (address: LessonAddress) => void | Promise<void> }) {
   const { jobs, visible, openError, setOpenError, saved, dismissError } = useTutorJobs();
-  const notices = [...jobs.values()].filter(job => job.key !== visible);
-  async function open({ request: { workspaceId, conceptId, depth } }: TutorJob) {
+  const notices = [...jobs.values()].filter(job => lessonViewKey(job.request) !== visible);
+  async function open({ request: { workspaceId, conceptId, depth, lessonId } }: TutorJob) {
     setOpenError('');
     try {
-      await onOpen({ workspaceId, conceptId, depth });
+      await onOpen({ workspaceId, conceptId, depth, lessonId });
     } catch (cause) {
       setOpenError('Could not open the lesson. ' + errorMessage(cause));
     }

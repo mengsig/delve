@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import type { DatabaseSync } from 'node:sqlite';
+import { indexSavedConceptKeys } from './migration-concept-keys';
 import { compatibleDescriptions, normalizedConceptName, portableAlias } from './portable-identity';
 
 export interface Migration {
@@ -7,6 +8,7 @@ export interface Migration {
   name: string;
   sql: string;
   registerFunctions?: (db: DatabaseSync) => void;
+  afterSql?: (db: DatabaseSync) => void;
 }
 
 function registerPortableIdentity(db: DatabaseSync): void {
@@ -383,6 +385,64 @@ export const MIGRATIONS: readonly Migration[] = [
       UPDATE tutor_jobs SET version = lower(hex(randomblob(16))) WHERE rowid = NEW.rowid;
     END;`,
   },
+  {
+    version: 10,
+    name: 'save foundations, change identities, and per-lesson progress',
+    sql: `ALTER TABLE evidence ADD COLUMN probe_answered INTEGER NOT NULL DEFAULT 0 CHECK (probe_answered IN (0, 1));
+    CREATE TABLE lesson_foundations (
+      lesson_id INTEGER PRIMARY KEY REFERENCES lessons ON DELETE CASCADE,
+      entries TEXT NOT NULL CHECK (json_valid(entries)),
+      phase TEXT NOT NULL CHECK (phase IN ('probe', 'practice', 'done')),
+      cursor INTEGER NOT NULL DEFAULT 0 CHECK (cursor BETWEEN 0 AND 4)
+    );
+    ALTER TABLE concept_identity_links RENAME COLUMN portable_concept_id TO canonical_concept_id;
+    CREATE TABLE change_concept_keys (
+      workspace_id TEXT NOT NULL REFERENCES workspaces ON DELETE CASCADE,
+      change_id TEXT NOT NULL CHECK (length(change_id) = 64),
+      identity TEXT NOT NULL CHECK (length(identity) > 0),
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
+      PRIMARY KEY (workspace_id, change_id, identity, concept_id)
+    );
+    CREATE INDEX change_concept_keys_concept ON change_concept_keys (concept_id);
+    UPDATE repository_generations AS g SET result = json_set(g.result, '$.brief.lessonId', l.id)
+    FROM lessons l WHERE g.kind <> 'baseline' AND l.cache_key = g.cache_key
+      AND l.workspace_id = g.workspace_id AND l.snapshot_id = g.snapshot_id AND l.depth = g.depth
+      AND l.provider = g.provider AND l.model = g.model AND l.schema_version = 'delve.lesson/1'
+      AND l.concept_id = g.result ->> '$.brief.conceptId';
+    ALTER TABLE messages ADD COLUMN pinned_lesson_id INTEGER REFERENCES lessons(id) ON DELETE SET NULL;
+    CREATE INDEX messages_by_pinned_lesson ON messages(pinned_lesson_id);
+    UPDATE messages AS m SET pinned_lesson_id = l.id
+    FROM conversations c JOIN lessons l ON l.id = c.lesson_id
+    JOIN repository_generations g ON g.cache_key = l.cache_key
+    WHERE m.conversation_id = c.id AND g.kind <> 'baseline' AND g.result ->> '$.brief.lessonId' = l.id
+      AND c.workspace_id = l.workspace_id AND c.concept_id = l.concept_id
+      AND (c.depth IS NULL OR c.depth = l.depth)
+      AND NOT EXISTS (SELECT 1 FROM lessons other WHERE other.concept_id = l.concept_id AND other.depth = l.depth
+        AND other.id <> l.id AND (other.workspace_id = l.workspace_id OR other.workspace_id IS NULL));
+    ALTER TABLE lesson_mastery RENAME TO previous_lesson_mastery;
+    CREATE TABLE lesson_mastery (
+      workspace_id TEXT NOT NULL,
+      concept_id INTEGER NOT NULL,
+      depth TEXT NOT NULL CHECK (depth IN ('high', 'medium', 'low')),
+      lesson_id INTEGER REFERENCES lessons ON DELETE CASCADE,
+      scope TEXT NOT NULL,
+      revision TEXT NOT NULL,
+      state TEXT CHECK (json_valid(state)),
+      check_attempts INTEGER GENERATED ALWAYS AS (json_extract(state, '$.attempts')),
+      check_streak INTEGER GENERATED ALWAYS AS (json_extract(state, '$.correctAnswers')),
+      FOREIGN KEY (workspace_id, concept_id) REFERENCES workspace_concepts ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX mastery_lesson ON lesson_mastery(workspace_id, concept_id, depth, coalesce(lesson_id, 0));
+    CREATE INDEX mastery_by_lesson ON lesson_mastery(lesson_id) WHERE lesson_id IS NOT NULL;
+    INSERT INTO lesson_mastery (workspace_id, concept_id, depth, lesson_id, scope, revision, state)
+      SELECT workspace_id, concept_id, depth, lesson_id, scope, revision, state FROM previous_lesson_mastery;
+    DROP TABLE previous_lesson_mastery;
+    CREATE INDEX mastery_progress ON lesson_mastery(workspace_id, depth, concept_id, lesson_id,
+      scope, revision, check_attempts, check_streak) WHERE state IS NOT NULL;`,
+    afterSql: indexSavedConceptKeys,
+  },
 ];
 
 function assertOrdered(migrations: readonly Migration[]): void {
@@ -411,6 +471,7 @@ export function migrate(db: DatabaseSync, migrations: readonly Migration[] = MIG
     try {
       migration.registerFunctions?.(db);
       db.exec(migration.sql);
+      migration.afterSql?.(db);
       db.exec(`PRAGMA user_version = ${migration.version}`);
       db.exec('COMMIT');
     } catch (error) {

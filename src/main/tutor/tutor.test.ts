@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ReaderLesson, TutorIntent, TutorRequest } from '../../shared/reader';
 import { addPrerequisite, upsertConcept } from '../db/concepts';
@@ -35,13 +36,17 @@ const opening: TutorReply = {
   lesson: { schema: 'delve.lesson/1', blocks: [explanation, check] }, assessment: null, recommendation: null, observation: null,
 };
 
+function tutorFixture(database: Db) {
+  const workspaceId = addWorkspace(database, { kind: 'topic', title: 'Networking' }).id;
+  const concept = upsertConcept(database, { key: 'routing', title: 'Routing', workspaceId, portable: true });
+  const request: TutorRequest = { workspaceId, conceptId: concept.id, depth: 'medium', provider: 'codex', intent: { kind: 'teach' } };
+  return { request, session: new TutorSession(database, async () => opening) };
+}
+
 beforeEach(() => {
   vi.stubEnv('CODEX_HOME', join(tmpdir(), `delve-missing-${randomUUID()}`));
   db = openDatabase(':memory:');
-  const workspaceId = addWorkspace(db, { kind: 'topic', title: 'Networking' }).id;
-  const concept = upsertConcept(db, { key: 'routing', title: 'Routing', workspaceId, portable: true });
-  request = { workspaceId, conceptId: concept.id, depth: 'medium', provider: 'codex', intent: { kind: 'teach' } };
-  session = new TutorSession(db, async () => opening);
+  ({ request, session } = tutorFixture(db));
 });
 
 it('uses the Codex config model unless an explicit override wins, and binds the preview to its source', async () => {
@@ -91,7 +96,7 @@ function keyFor(lesson: ReaderLesson): number {
 
 it('previews a new topic before creating its workspace and matches the first tokenized turn', () => {
   const input = { title: '  Café   acoustics ', depth: 'low', provider: 'codex' } as const;
-  const preview = previewNewTopic(input);
+  const preview = previewNewTopic(db, input);
   expect(preview).not.toHaveProperty('token');
   expect(preview.prompt).toContain('Café acoustics');
   expect(preview.bytes).toBe(Buffer.byteLength(preview.prompt));
@@ -117,6 +122,7 @@ it('previews the exact UTF-8 prompt, chosen depth, known prerequisites and most 
   session = new TutorSession(db, generate);
   const preview = prepareTurn(db, request).preview;
   expect(preview.prompt).toContain('IP addresses');
+  expect(preview.prompt).toMatch(/"foundationRecap":\s*\{\s*"known":\s*\[\s*"IP addresses"\s*\]/);
   expect(preview.prompt).toContain('"depth": "medium"');
   expect(preview.files).toEqual([]);
   expect(preview.prompt).toContain('Chose the default route despite a subnet match.');
@@ -389,8 +395,12 @@ it('refuses dismissal of an unreadable active job and lets its turn commit', asy
 });
 
 it('assigns dismissal identities to existing version 8 tutor jobs', () => {
-  db.exec('DROP TRIGGER tutor_jobs_version_insert; DROP TRIGGER tutor_jobs_version_update; '
-    + 'ALTER TABLE tutor_jobs DROP COLUMN version; PRAGMA user_version = 8;');
+  session.close();
+  db.close();
+  db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  expect(migrate(db, MIGRATIONS.slice(0, 8))).toBe(8);
+  ({ request, session } = tutorFixture(db));
   saveUnreadableJob();
   expect(migrate(db)).toBe(MIGRATIONS.length);
   const identity = unreadableIdentity();
@@ -426,7 +436,7 @@ it('the offline provider reteaches a miss, offers fresh applied checks and recom
   expect(asked.messages[1]?.blocks?.some(b => b.type === 'diagram')).toBe(true);
   expect(asked.mastery).toEqual(lesson.mastery);
   const wrong = await run({ kind: 'answer', revision: lesson.mastery.revision!, answer: 0 });
-  expect(wrong.messages.at(-1)).toMatchObject({ text: expect.stringContaining('incorrect'),
+  expect(wrong.messages.at(-1)).toMatchObject({ text: expect.stringMatching(/^Not quite — /),
     observation: expect.stringContaining('first to report') });
   expect(wrong.messages.at(-1)?.recommendation).toBeUndefined();
   expect(readWorkspaceGraph(db, workspaceId).suggestions).toBeUndefined();

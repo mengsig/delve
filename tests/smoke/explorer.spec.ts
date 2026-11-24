@@ -157,6 +157,261 @@ async function verifyRememberedApproval(page: Page, directory: string) {
   await depth.selectOption('medium');
 }
 
+const receiptProbe = { type: 'check', kind: 'prediction',
+  prompt: 'A package goes missing. What tells the sender it never arrived?',
+  options: ['No confirmation comes back', 'The package gets heavier', 'A second package appears', 'The address changes'], expected: 0 };
+const receiptPractice = { ...receiptProbe, prompt: 'The recipient signs for a package. What can the sender do now?',
+  options: ['Send another package', 'Stop waiting for confirmation', 'Erase the address', 'Change the contents'], expected: 1 };
+const reviewFoundations = [{
+  key: 'delivery-confirmation', title: 'Delivery confirmation',
+  summary: 'A confirmation tells the sender that a message arrived. Think of signing for a package.',
+  why: 'This change depends on knowing whether the first delivery made it.', probe: receiptProbe, practice: receiptPractice,
+}, {
+  key: 'temporary-failures', title: 'Temporary failures', summary: 'A temporary problem can clear on its own.',
+  why: 'Trying again can help when a problem clears.',
+  probe: { ...receiptProbe, prompt: 'A road is blocked for a minute. When might you get through?',
+    options: ['After the road clears', 'Before leaving home', 'When the road is longer', 'Never'], expected: 0 },
+  practice: { ...receiptPractice, prompt: 'A phone call drops in a tunnel. What should you try after getting out?',
+    options: ['Wait in the tunnel', 'Call again', 'Remove the number', 'Turn off the phone'], expected: 1 },
+}];
+const secondPr = 'Retry transient failure in dispatch.ts';
+const plainChangeTitle = 'Give a failed delivery another chance';
+const simpleExample = 'Think of calling a friend back after a dropped call. A second try might get through.';
+
+async function answerChangeFoundations(page: Page, info: TestInfo) {
+  const probe = page.getByRole('region', { name: 'What do you know about Delivery confirmation?' });
+  await expect(probe).toContainText('Quick questions · 1 of 2');
+  await expect(probe.getByRole('heading')).toBeFocused();
+  await expect(probe.getByRole('textbox')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toHaveCount(0);
+  await evidence(page, info, 'foundation-probe');
+  await probe.getByRole('button', { name: 'A second package appears' }).click();
+  const second = page.getByRole('region', { name: 'What do you know about Temporary failures?' });
+  await expect(second).toContainText('Quick questions · 2 of 2');
+  await second.getByRole('button', { name: 'After the road clears' }).click();
+  const practice = page.getByRole('region', { name: 'A quick look at Delivery confirmation' });
+  await expect(practice).toContainText('Think of signing for a package.');
+  await expect(practice.getByRole('button', { name: 'Skip to lesson' })).toBeVisible();
+  await evidence(page, info, 'foundation-practice');
+  await practice.getByRole('button', { name: 'Stop waiting for confirmation' }).click();
+  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Lesson transcript')).toContainText('This builds on Delivery confirmation, which you just went through.');
+  await expect(page.getByLabel('Lesson transcript').getByText(simpleExample, { exact: true })).toBeVisible();
+  await evidence(page, info, 'high-depth-lesson');
+}
+
+test('checks unfamiliar foundations before a high-depth PR and remembers them for the next PR', async ({ desktop: { page, directory } }, info) => {
+  createExplorerFixture(directory);
+  const fixture = join(directory, 'github.json');
+  const { pr, files } = JSON.parse(readFileSync(fixture, 'utf8'));
+  writeFileSync(fixture, JSON.stringify({ pr, files, additionalPrs: [{ ...pr, number: 43, title: secondPr }] }));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mapFixture(page, 'https://github.com/contour/dispatch', directory, true);
+  await page.getByRole('option', { name: new RegExp(prTitle) }).click();
+  await page.getByLabel('Reading depth').selectOption('high');
+  writeExplanation(directory, { foundations: reviewFoundations, example: simpleExample, conceptTitle: plainChangeTitle,
+    recommendation: { key: null, reason: 'See what happens when a delivery gets another chance.' },
+    what: 'When a delivery fails, the worker can try again.', why: 'A short outage is less likely to lose a delivery.',
+    mechanics: null, summary: 'A failed delivery gets another chance.' });
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await answerChangeFoundations(page, info);
+  await page.getByRole('button', { name: '← Back to change brief' }).click();
+  const explanation = page.getByRole('tabpanel', { name: 'Explanation' });
+  const details = explanation.getByText('Evidence', { exact: true });
+  await expect(details).toBeVisible();
+  await expect(explanation.getByText(/Partial coverage/)).toBeHidden();
+  await details.click();
+  await expect(explanation.getByText(/Partial coverage/)).toBeVisible();
+  await evidence(page, info, 'high-depth-brief');
+  await page.getByRole('option', { name: new RegExp(secondPr) }).click();
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Lesson transcript').getByText(/which you already know\./)).toBeVisible();
+  await expect(page.getByText(/Quick questions/)).toHaveCount(0);
+  await expect(page.getByText(/Foundation lesson/)).toHaveCount(0);
+  await page.getByRole('button', { name: 'Atlas', exact: true }).click();
+  const guide = page.getByLabel('Field guide');
+  const suggestion = guide.getByRole('button', { name: new RegExp(plainChangeTitle) });
+  await expect(suggestion).toBeVisible();
+  await expect(guide.getByText(secondPr, { exact: true })).toBeHidden();
+  await guide.getByText('Source title', { exact: true }).click();
+  await expect(guide.getByText(secondPr, { exact: true })).toBeVisible();
+  await suggestion.click();
+  await expect(page.getByRole('heading', { name: secondPr, exact: true })).toBeVisible();
+  await page.getByLabel('Reading depth').selectOption('low');
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  const deeper = page.getByRole('region', { name: 'Go deeper on Delivery confirmation' });
+  await expect(deeper).toBeVisible();
+  await evidence(page, info, 'after-go-deeper');
+  await deeper.getByRole('button', { name: 'Skip to lesson' }).click();
+  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+});
+
+async function verifyChangeKnowledge(page: Page, info: TestInfo, screenshot: string) {
+  await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Knowledge map' })).toBeVisible();
+  await page.getByLabel('Learning depth').selectOption('high');
+  const finder = page.getByRole('button', { name: 'Find a concept' });
+  if (await finder.getAttribute('aria-expanded') === 'false') await finder.click();
+  const matches = page.getByLabel('Matching concepts');
+  await expect(matches.getByRole('button', { name: plainChangeTitle, exact: true })).toHaveCount(1);
+  await expect(matches.getByRole('status')).toHaveText('2 matches');
+  await expect(page.locator('.knowledge-area-bar')).toContainText('2 concepts');
+  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveAttribute('aria-valuetext', '0 of 2');
+  await evidence(page, info, screenshot);
+}
+
+test('keeps one Knowledge node when a PR footprint and brief teach the same idea', async ({ desktop: { page, directory } }, info) => {
+  createExplorerFixture(directory);
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await mapFixture(page, 'https://github.com/contour/dispatch', directory, true);
+  const pull = page.getByRole('option', { name: new RegExp(prTitle) });
+  await pull.click();
+  await page.getByLabel('Reading depth').selectOption('high');
+  writeExplanation(directory, { concepts: [concept, { ...newConcept, title: plainChangeTitle }], conceptTitle: plainChangeTitle,
+    overviewConceptKey: newConcept.key,
+    example: simpleExample, what: 'When a delivery fails, the worker can try again.', mechanics: null });
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+  await verifyChangeKnowledge(page, info, 'pr-knowledge-high');
+
+  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  await pull.click();
+  await page.getByLabel('Reading depth').selectOption('low');
+  writeExplanation(directory, { concepts: [concept, { ...newConcept, title: 'Dispatch retry budget' }] });
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await expect(page.getByRole('heading', { name: 'How it works', exact: true })).toBeVisible();
+  const request = JSON.parse(readFileSync(join(directory, 'request.json'), 'utf8'));
+  const { learner } = JSON.parse(request.stdin.trimEnd().split('\n').at(-1));
+  expect(learner.changeConcepts).toContainEqual({ key: newConcept.key, title: plainChangeTitle, summary: newConcept.summary, overview: true });
+  await verifyChangeKnowledge(page, info, 'pr-knowledge-high-after-low');
+
+  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  await pull.click();
+  const explanation = page.getByRole('tabpanel', { name: 'Explanation' });
+  await explanation.getByText('Provider · Codex', { exact: true }).click();
+  await explanation.getByRole('button', { name: /Claude Code/ }).click();
+  const regenerated = 'The worker tries the delivery again.';
+  writeExplanation(directory, { concepts: [concept, { ...newConcept, title: plainChangeTitle }], conceptTitle: plainChangeTitle,
+    overviewConceptKey: newConcept.key, example: simpleExample, what: regenerated, mechanics: null });
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await expect(page.getByLabel('Lesson transcript')).toContainText(regenerated);
+  await verifyChangeKnowledge(page, info, 'pr-knowledge-high-after-regeneration');
+});
+
+async function resumePinnedTutor(page: Page, directory: string, codex: string, claude: string) {
+  const question = 'Why does the worker wait before trying again?';
+  const answer = 'A short wait gives the network time to recover.';
+  const gate = join(directory, 'gate');
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify({
+    assessment: null, observation: null, recommendation: null, foundations: [],
+    lesson: { schema: 'delve.lesson/1', source: null, blocks: [{ type: 'prose', heading: 'A useful pause', text: answer }] },
+  }));
+  writeFileSync(gate, '');
+  await page.getByRole('button', { name: 'Close preview', exact: true }).click();
+  await page.getByRole('button', { name: 'Ask tutor', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Ask your tutor' }).fill(question);
+  await page.getByRole('button', { name: 'Ask question', exact: true }).click();
+  await page.getByRole('button', { name: 'Allow once and continue' }).click();
+  await page.getByRole('button', { name: 'Continue in background' }).click();
+  const explanation = page.getByRole('tabpanel', { name: 'Explanation' });
+  await explanation.getByText('Provider · Codex', { exact: true }).click();
+  await explanation.getByRole('button', { name: /Claude Code/ }).click();
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  const transcript = page.getByLabel('Lesson transcript');
+  await expect(transcript).toContainText(claude);
+  const activity = page.getByRole('region', { name: 'Tutor activity' });
+  await expect(activity).toContainText('Preparing tutor response');
+  unlinkSync(gate);
+  await expect(activity).toContainText('Tutor response ready');
+  await activity.getByRole('button', { name: 'Open lesson' }).click();
+  await expect(transcript).toContainText(codex);
+  await expect(transcript).toContainText(answer);
+  await expect(transcript).not.toContainText(claude);
+}
+
+test('opens the selected provider’s saved PR lesson when both providers used the same depth', async ({ desktop }) => {
+  let { page } = desktop;
+  const { directory } = desktop;
+  createExplorerFixture(directory);
+  await mapFixture(page, 'https://github.com/contour/dispatch', directory, true);
+  await page.getByRole('option', { name: new RegExp(prTitle) }).click();
+  await page.getByLabel('Reading depth').selectOption('medium');
+  const codex = 'Codex explains the retry budget.';
+  const claude = 'Claude explains how delivery retries work.';
+  const transcript = page.getByLabel('Lesson transcript');
+  const teach = page.getByRole('button', { name: 'Teach me this change', exact: true });
+  const explanation = page.getByRole('tabpanel', { name: 'Explanation' });
+  const provider = explanation.getByRole('group', { name: 'Brief provider' });
+  const back = page.getByRole('button', { name: '← Back to change brief' });
+
+  writeExplanation(directory, { what: codex });
+  await teach.click();
+  await expect(transcript).toContainText(codex);
+  await back.click();
+  await explanation.getByText('Provider · Codex', { exact: true }).click();
+  await provider.getByRole('button', { name: /Claude Code/ }).click();
+  writeExplanation(directory, { what: claude });
+  await teach.click();
+  await expect(transcript).toContainText(claude);
+  await back.click();
+  await explanation.getByText('Provider · Claude Code', { exact: true }).click();
+  await provider.getByRole('button', { name: /Codex/ }).click();
+  await expect(explanation).toContainText(codex);
+  await teach.click();
+  await expect(transcript).toContainText(codex);
+  await expect(transcript).not.toContainText(claude);
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('delve.recent-activity') ?? '[]')[0]);
+  expect(saved).toMatchObject({ kind: 'lesson', depth: 'medium', lessonId: expect.any(Number) });
+  await page.getByRole('button', { name: 'Atlas', exact: true }).click();
+  const id = await workspaceId(page);
+  await page.evaluate(workspace => localStorage.setItem('delve.depth.' + workspace, 'high'), id);
+  page = await desktop.restart();
+  await page.getByRole('button', { name: /Continue lesson/ }).click();
+  await expect(page.getByLabel('Reading depth')).toHaveValue('medium');
+  await expect(page.getByLabel('Lesson transcript')).toContainText(codex);
+  await expect(page.getByLabel('Lesson transcript')).not.toContainText(claude);
+  await resumePinnedTutor(page, directory, codex, claude);
+});
+
+test('draws a low-depth trace once with arrows and discloses technical text at high depth', async ({ desktop: { page, directory } }, info) => {
+  createExplorerFixture(directory);
+  await page.setViewportSize({ width: 1280, height: 850 });
+  await mapFixture(page, 'https://github.com/contour/dispatch', directory, true);
+  await page.getByRole('option', { name: new RegExp(prTitle) }).click();
+  await page.getByLabel('Reading depth').selectOption('low');
+  const summary = 'The worker retries a failed delivery in dispatch.ts.';
+  const trace = ['Try the delivery.', 'Wait for a reply.', 'Retry after a temporary failure.'] as const;
+  const technical = { ...newConcept, title: 'Retry budget in dispatch.ts', summary };
+  writeExplanation(directory, { summary, trace, concepts: [concept, technical], foundations: [reviewFoundations[0]] });
+  await page.getByRole('button', { name: 'Teach me this change' }).click();
+  await page.getByRole('button', { name: 'Skip questions' }).click();
+  await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
+  await expect(page.getByText(/Foundation lesson/)).toHaveCount(0);
+  await evidence(page, info, 'after-pr-skip');
+  await page.getByRole('button', { name: '← Back to change brief' }).click();
+  const diagram = page.getByLabel('Change brief').getByRole('figure', { name: 'Diagram' });
+  const steps = diagram.getByRole('list', { name: 'Steps in order' });
+  await expect(steps.getByRole('listitem')).toHaveText(trace);
+  await expect(diagram.getByText(trace[1], { exact: true })).toHaveCount(1);
+  await expect(diagram.getByRole('list', { name: 'Connections' })).toHaveCount(0);
+  await expect(diagram.locator('.lesson-diagram-direct')).toHaveCount(2);
+  expect(await diagram.locator('.lesson-diagram-direct').first().evaluate(node => getComputedStyle(node, '::after').borderRightWidth)).toBe('1px');
+  await diagram.screenshot({ path: info.outputPath('after-diagram.png') });
+
+  await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  await page.getByLabel('Learning depth').selectOption('high');
+  await page.getByRole('button', { name: 'Find a concept' }).click();
+  await page.getByRole('searchbox', { name: 'Search' }).fill('Retry budget in dispatch.ts');
+  await page.getByLabel('Matching concepts').getByRole('button', { name: 'Retry budget', exact: true }).click();
+  const guide = page.getByLabel('Concept guide');
+  await expect(guide.getByRole('heading', { name: 'Retry budget', exact: true })).toBeVisible();
+  await expect(guide.getByText(summary, { exact: true })).toBeHidden();
+  await guide.screenshot({ path: info.outputPath('after-knowledge-card.png') });
+  await guide.getByText('Technical details', { exact: true }).click();
+  await expect(guide.getByText(summary, { exact: true })).toBeVisible();
+});
+
 test('keeps commit history usable when GitHub has no PRs or needs sign-in', async ({ desktop }) => {
   const { directory, page } = desktop;
   const { path } = createExplorerFixture(directory);

@@ -22,6 +22,7 @@ export function LessonRecovery({ body, tutor }: {
 }
 
 export function openingIntent(body: ReaderLesson): TutorIntent | null {
+  if (body.foundation) return null;
   if (body.mastery.needsAdaptation && body.mastery.revision) return { kind: 'adapt', revision: body.mastery.revision };
   if (body.invalidLatest) return null;
   if (!body.reused && !body.revision && !body.blocks.length) return { kind: 'teach' };

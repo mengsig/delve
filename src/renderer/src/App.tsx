@@ -6,7 +6,7 @@ import { call } from './api';
 import { ContinueActivity, WorkspaceBar } from './atlas/WorkspaceBar';
 import { paletteCommands } from './commands';
 import { Header } from './Header';
-import { routeForActivity, useDesktopNavigation, type DesktopNavigation, type Route, type Screen } from './navigation';
+import { routeForActivity, routeForTutorJob, useDesktopNavigation, type DesktopNavigation, type Route, type Screen } from './navigation';
 import { atlasView, workspaceDepth, type AtlasView } from './preferences';
 import { useRecentActivity } from './recentActivity';
 import { ReadState } from './ReadState';
@@ -82,7 +82,7 @@ function DesktopJobs({ nav }: { nav: DesktopNavigation }) {
     } catch (cause) { nav.setError(errorMessage(cause)); }
   }
   return <>
-    <TutorJobStatus onOpen={({ workspaceId, conceptId, depth }) => nav.select(workspaceId, { screen: 'lesson', conceptId }, depth)} />
+    <TutorJobStatus onOpen={address => nav.select(address.workspaceId, routeForTutorJob(address), address.depth)} />
     <MapJobStatus onOpen={job => void openJob(job, false)} onReview={job => void openJob(job, true)} />
   </>;
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Depth, Workspace } from '../../../shared/domain';
 import type { GlobalKnowledgeGraph, KnowledgeMembership } from '../../../shared/knowledge';
+import { plainConceptTitle } from '../../../shared/plain-language';
 import { call } from '../api';
 import { Icon } from '../Icon';
 import { buildLearningProgress } from '../progress/model';
@@ -8,7 +9,7 @@ import { useProviderDetection } from '../SetupProvider';
 import { ReadState } from '../ReadState';
 import { useBackgroundTutorCompletion } from '../reader/TutorJobs';
 import { errorMessage, useRead } from '../useRead';
-import { graphInArea, mapPlaces, mapWorkspaces, neighbourhood, suggestedLesson, visibleConcepts, type LearningArea } from './areas';
+import { areaSummary, graphInArea, mapPlaces, mapWorkspaces, neighbourhood, suggestedLesson, visibleConcepts, type LearningArea } from './areas';
 import { Finder } from './Finder';
 import { AreaProgress, Inspector } from './Inspector';
 import { KnowledgeMap } from './KnowledgeMap';
@@ -42,6 +43,19 @@ export function Knowledge(props: Props) {
   const read = useCallback(() => call('knowledge:read', view.demo ? { demo: true } : null), [view.demo]);
   const { result, refresh } = useRead(read);
   useBackgroundTutorCompletion(refresh);
+  const saved = result.status === 'ready' ? result.value : undefined;
+  const presentation = useMemo(() => {
+    if (!saved) return undefined;
+    const technicalTitles = new Map<number, string>();
+    if (props.depth !== 'high') return { graph: saved, technicalTitles };
+    const concepts = saved.concepts.map(concept => {
+      const title = plainConceptTitle(concept.title);
+      if (title === concept.title) return concept;
+      technicalTitles.set(concept.id, concept.title);
+      return { ...concept, title };
+    });
+    return { graph: { ...saved, concepts }, technicalTitles };
+  }, [saved, props.depth]);
   useEffect(() => { historyView.save(view); }, [historyView, view]);
   const update = (patch: Partial<KnowledgeView>) => setView(previous => ({ ...previous, ...patch }));
   function updateFilters(patch: Partial<Filters>) {
@@ -57,15 +71,15 @@ export function Knowledge(props: Props) {
     setFailure('');
     void props.onOpen(workspace, id, target, depth).catch(cause => setFailure(errorMessage(cause)));
   };
-  if (result.status !== 'ready') return <ReadState label="Knowledge" retry={refresh} message={result.status === 'error' ? result.message : undefined} />;
-  const graph = result.value;
+  if (!presentation) return <ReadState label="Knowledge" retry={refresh} message={result.status === 'error' ? result.message : undefined} />;
+  const { graph, technicalTitles } = presentation;
   const hasConcepts = graph.concepts.length > 0;
   return <section className="knowledge">
     <MapHeading back={view.demo ? toggleDemo : props.onBack} backLabel={view.demo ? '← Personal knowledge' : props.backLabel}
       demo={view.demo} depth={props.depth} onDepth={props.onDepth} finder={view.finder}
       toggleFinder={hasConcepts ? () => update({ finder: !view.finder }) : undefined} />
     {failure && <p role="alert">{failure}</p>}
-    {hasConcepts ? <AreaPage graph={graph} activeId={active?.id} depth={props.depth} view={view} update={update}
+    {hasConcepts ? <AreaPage graph={graph} technicalTitles={technicalTitles} activeId={active?.id} depth={props.depth} view={view} update={update}
       historyView={historyView} updateFilters={updateFilters} onOpen={onOpen} onProgress={props.onProgress} refresh={refresh} />
       : <div className="knowledge-empty"><Icon name="atlas" /><h2>Your knowledge, connected</h2>
         <p>Add a topic or map a repository to see your concepts.</p><button className="primary-btn" onClick={props.onAdd}>Add a workspace</button>
@@ -76,6 +90,7 @@ export function Knowledge(props: Props) {
 interface AreaProps extends KnowledgeActions {
   historyView: Props['historyView'];
   graph: GlobalKnowledgeGraph;
+  technicalTitles: ReadonlyMap<number, string>;
   activeId?: string;
   depth: Depth;
   view: KnowledgeView;
@@ -113,9 +128,9 @@ interface ContentsProps extends AreaProps {
   retryProgress: () => void;
 }
 
-function useMapModel({ local, activeId, areas, view }: ContentsProps) {
+function useMapModel({ local, activeId, areas, view, technicalTitles }: ContentsProps) {
   const places = useMemo(() => mapPlaces(local, areas, activeId), [local, areas, activeId]);
-  const visible = useMemo(() => visibleConcepts(local, places, view.filters), [local, places, view.filters]);
+  const visible = useMemo(() => visibleConcepts(local, places, view.filters, technicalTitles), [local, places, view.filters, technicalTitles]);
   const suggestion = useMemo(() => suggestedLesson(areas, places, visible, activeId), [areas, places, visible, activeId]);
   const selected = view.selected !== null && visible.has(view.selected) ? view.selected : suggestion;
   const focus = useMemo(() => view.focused && selected !== null ? neighbourhood(local, selected) : null, [local, view.focused, selected]);
@@ -158,13 +173,15 @@ function AreaContents(props: ContentsProps) {
         graph={graph} concepts={learned} group={view.filters.group}
         setGroup={group => updateFilters({ group })} onSelect={select} onOpen={open} />
         : <div className="knowledge-map-slot"><div inert={!model.visible.size}><KnowledgeMap cameras={historyView.cameras} areaKey={areaKey}
-          global={workspace === anyWorkspace} graph={local} visible={model.visible} states={model.states} selected={model.selected} onSelect={select} focus={model.focus} /></div>
+          depth={depth} global={workspace === anyWorkspace} graph={local} visible={model.visible} states={model.states}
+          selected={model.selected} onSelect={select} focus={model.focus} /></div>
           {!model.visible.size && <div className="knowledge-no-matches"><Icon name="frame" /><h2>No matching concepts</h2><p>Try another name, state or verified depth.</p><button onClick={clear}>Clear filters</button></div>}</div>}
       {!view.list && <Legend transfers={local.links.length > 0} />}
     </section><aside className="knowledge-detail" aria-label="Concept guide">
       <GuideSummary {...props} model={model} />
       {model.chosen && model.place ? <Inspector key={model.chosen.id} concept={model.chosen} place={model.place} graph={graph}
-        depth={depth} suggested={model.selected === model.suggestion} demo={view.demo} detection={props.detection} details={view.details}
+        depth={depth} technicalTitle={props.technicalTitles.get(model.chosen.id)}
+        suggested={model.selected === model.suggestion} demo={view.demo} detection={props.detection} details={view.details}
         setDetails={details => update({ details })} focused={view.focused} focus={() => update({ selected: model.selected, focused: !view.focused })}
         onOpen={open} select={select} refresh={props.refresh} />
         : <EndOfPath {...props} model={model} />}
@@ -174,12 +191,8 @@ function AreaContents(props: ContentsProps) {
   </>;
 }
 
-function GuideSummary({ model, areas, workspace }: ContentsProps & { model: Model }) {
-  const area = model.place ? model.place.area : areas.find(a => a.workspaceId === workspace);
-  const guided = area ? [] : [...model.places.values()].filter(place => place.progress.onAtlas);
-  const mastered = area?.progress.mastered ?? guided.filter(place => place.state === 'mastered').length;
-  return <AreaProgress name={area?.workspaceName ?? 'All workspaces'} mastered={mastered} total={area?.progress.total ?? guided.length}
-    available={area ? area.progress.available : areas.every(a => a.progress.available)} />;
+function GuideSummary({ model, local, areas, workspace }: ContentsProps & { model: Model }) {
+  return <AreaProgress {...areaSummary(local, areas, model.places, workspace)} />;
 }
 
 function EndOfPath({ model, areas, activeId, retryProgress, onProgress }: ContentsProps & { model: Model }) {

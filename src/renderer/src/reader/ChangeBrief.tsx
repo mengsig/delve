@@ -14,8 +14,10 @@ export function BriefChapters({ brief }: { brief: ChangeBrief }) {
         <div className="note"><strong>After</strong><p>{brief.after}</p></div>
       </div>
     </section>
+    {brief.example && <section className="chapter"><h3>An everyday analogy</h3><p>{brief.example}</p></section>}
     {brief.trace.length > 0 && <Diagram nodes={brief.trace} />}
     {brief.excerpt.length > 0 && <CodeExcerpt block={{ type: 'code', source: 'Approved diff', lines: brief.excerpt }} />}
-    {brief.partial && <p className="repository-notice" role="status">Partial coverage. {brief.coverageNote ?? 'This brief uses the available portion of the diff.'}</p>}
+    {brief.partial && <details className="repository-notice"><summary>Evidence</summary>
+      <p>Partial coverage. {brief.coverageNote ?? 'This brief uses the available portion of the diff.'}</p></details>}
   </article>;
 }

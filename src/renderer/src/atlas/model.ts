@@ -1,6 +1,7 @@
 import type { Depth } from '../../../shared/domain';
 import { coversDepth, deepestEvidence } from '../../../shared/evidence-depth';
 import type { GraphConcept, GraphEvidence, WorkspaceGraph } from '../../../shared/graph';
+import { plainConceptTitle } from '../../../shared/plain-language';
 
 export interface AtlasConcept extends GraphConcept {
   prerequisites: AtlasConcept[];
@@ -51,7 +52,8 @@ export function buildAtlas(graph: WorkspaceGraph, depth: Depth): AtlasModel {
   const byId = new Map<number, AtlasConcept>();
   for (const concept of graph.concepts) {
     if (byId.has(concept.id)) throw new Error('Duplicate concept in workspace graph: ' + concept.id);
-    byId.set(concept.id, { ...concept, prerequisites: [], dependents: [], layer: 0 });
+    const title = depth === 'high' ? plainConceptTitle(concept.title) : concept.title;
+    byId.set(concept.id, { ...concept, title, prerequisites: [], dependents: [], layer: 0 });
   }
   for (const { conceptId, prerequisiteId } of graph.edges) {
     const concept = byId.get(conceptId);

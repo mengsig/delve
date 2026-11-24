@@ -9,31 +9,32 @@ import { lessonCacheKey, TUTOR_GENERATION } from '../db/lessons';
 import { cacheModel as modelCacheKey, selectModel } from '../providers/model';
 import { readHistory, teachingBlocks } from '../reader/conversation';
 import { resolveWorkspaceSource } from '../db/workspaces';
-import { lessonContext, storedLesson } from '../reader/stored-lesson';
+import { lessonContext, requestedLesson } from '../reader/stored-lesson';
 import { checkResponse, type ResponseToCheck } from './assessment';
+import { foundationInstructions } from './foundation-content';
+import { foundationRecap, readFoundation } from './foundation-progress';
+import { depthGuide } from './language';
+import { knownFoundations } from './vocabulary';
 import {
   canRecommend, hasVerifiedMastery, loadMastery, masteryLimits, needsCheckAdaptation, nextGrade, requireMasteryRevision, type Mastery,
 } from './mastery';
 
-export const depthGuide = {
-  high: 'Teach what this is and why it matters in plain language.',
-  medium: 'Explain how the parts interact, at the module or technique level.',
-  low: 'Work through protocol, implementation details or exact technique and boundary conditions.',
-};
-
 const instructions = [
   'You are Delve, a conversational tutor. Return a delve.lesson/1 document inside the requested response.',
-  'Use only the chosen depth. For teach, explain the concept with an analogy, worked example or labelled visual, then end with exactly one check.',
+  'Use only the chosen depth. For teach, explain the concept with a concrete example, then end with exactly one check. At high depth, use an analogy block before any optional worked example.',
+  foundationInstructions,
+  'Supply foundations only for teach. For every other intent return an empty foundations list.',
   'For ask, answer directly with teaching blocks and leave the active check unchanged. Do not append a check.',
   'When visualRequired is true, use a diagram block with concise labels and explicit edges to show the relationships.',
-  'For answer, copy the trusted check.correct flag into assessment. In observation, explain specifically why the selected answer works or fails against the supplied reference.',
-  'If the learner supplied reasoning, use reasoningFeedback to address the specific argument it makes and explain what works or needs correction, even when their choice earns credit. When another check is due, use that reasoning to choose a useful new situation. An empty reason needs only feedback on the choice.',
+  'For answer, copy the trusted check.correct flag into assessment. Start observation with one short plain sentence giving the key idea that makes the choice work or fail. Add at most one short sentence if needed. Delve adds the verdict, so omit phrases such as “Right” or “Not quite.”',
+  'If the learner supplied reasoning, address it in one short sentence in reasoningFeedback. When the choice is right and its reasoning needs a correction, begin with “Your reasoning needs a correction” and give the correction in that same sentence. When another check is due, use the reasoning to choose a new situation. At high depth, use plain words and no internal names throughout the feedback.',
   'Follow mastery.afterAnswer. If it says checking, end with one fresh applied check. If it says understood or review, return teaching only and no check.',
   'For review, reteach using a different example and end with one fresh applied check. Set assessment to null except on answer turns.',
   'For adapt, return only one fresh applied check in lesson.blocks. Use the legacy check as a guide to its objective and difficulty. Set observation, recommendation and assessment to null.',
   'Every new check must be kind prediction with exactly four distinct plausible options and a zero-based integer expected index. Ask the learner to predict an outcome or choose an action in a concrete situation. Vary the task, conditions and phrasing compared with mastery.previousQuestions. Do not give away the new answer in preceding teaching.',
   'Keep recommendation null until the learner reaches understood or skipped. Then you may give a specific next step with a reason, choosing a targetId from nextConcepts or null for practice within this concept.',
   'Use the recent turns and prerequisites to adjust your approach and reuse demonstrated concepts as building blocks.',
+  'Use foundationRecap to connect to ideas the learner already knows or reviewed. Delve names a foundation at the start of the saved opening, so focus the teaching on how the main idea depends on it.',
   'Follow repositoryUsage, prerequisiteTopUps, and depthTopUp when supplied. Teach and assess repository application and the missing detail. Every check, including an adapted check, must test that application or new detail.',
   'When hands-on practice helps, add an environment block with a readable fallback. Use a built-in config where appropriate: lease-handoff@1 parameters {taskId, initialGeneration, deadlineTicks}, camera-exposure@1 parameters {initialShutter, initialIso}, or network-builder@1 parameters {clientPort, proxyInputPort, proxyOutputPort, servicePort, initialLinks}.',
   'Set the environment block pack field to null when providing config. For example, lease parameters can be {"taskId":"042","initialGeneration":7,"deadlineTicks":3}; camera parameters can be {"initialShutter":125,"initialIso":200}; network parameters can be {"clientPort":"client.out","proxyInputPort":"proxy.in","proxyOutputPort":"proxy.out","servicePort":"service.in","initialLinks":[]}.',
@@ -50,12 +51,13 @@ function formatPreview(request: Pick<TutorRequest, 'provider' | 'depth'>, payloa
   return { model, modelSource, prompt, bytes, files: [] as string[] };
 }
 
-export function previewNewTopic(request: TopicPreviewRequest) {
+export function previewNewTopic(db: Db, request: TopicPreviewRequest) {
   const { name } = resolveWorkspaceSource({ kind: 'topic', title: request.title });
   const [requiredCorrect, maxAttempts] = masteryLimits[request.depth];
   return formatPreview(request, {
-    concept: name, summary: '', depth: request.depth, snapshot: null, knownConcepts: [], prerequisites: [],
-    repositoryUsage: [], prerequisiteTopUps: [], depthTopUp: null, lesson: null, recentTurns: [], nextConcepts: [],
+    concept: name, summary: '', depth: request.depth, snapshot: null, knownConcepts: [], knownFoundations: knownFoundations(db), prerequisites: [],
+    repositoryUsage: [], prerequisiteTopUps: [], depthTopUp: null, foundationRecap: { known: [], reviewed: [] },
+    lesson: null, recentTurns: [], nextConcepts: [],
     mastery: { stage: 'teaching', attempts: 0, maxAttempts, consecutiveCorrect: 0, requiredCorrect,
       appliedPassInStreak: false, previousQuestions: [] },
     intent: 'teach', visualRequired: false, check: null,
@@ -113,8 +115,10 @@ function prerequisiteContext(graph: ReturnType<typeof readWorkspaceGraph>, conte
 export function prepareTurn(db: Db, request: TutorRequest) {
   const context = lessonContext(db, request);
   if (context.demo !== (request.provider === 'demo')) throw new DomainError('PROVIDER_SCOPE', 'Choose a provider for this workspace.');
-  const selected = storedLesson(db, context);
-  const mastery = loadMastery(db, context, selected, hasVerifiedMastery(db, context));
+  const selected = requestedLesson(db, context, false);
+  const foundation = readFoundation(db, context, selected.id);
+  if (foundation && request.intent.kind !== 'ask') throw new DomainError('FOUNDATION_PENDING', 'Finish or skip the foundations first.');
+  const mastery = loadMastery(db, context, selected, request.lessonId === undefined && hasVerifiedMastery(db, context));
   const intent = request.intent;
   const needsDiagram = intent.kind === 'ask' && /\b(diagrams?|visual(?:s|ly|i[sz](?:e|ation))?|flowcharts?)\b|\bdraw\s+(?:me\s+)?(?:(?:a|an|the)\s+)?(?:diagram|picture|graph|flow|system trace|this|it)\b/i.test(intent.text);
   if (intent.kind === 'review') requireMasteryRevision(mastery, intent.revision, ['teaching', 'review', 'understood', 'skipped']);
@@ -124,7 +128,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const graph = readWorkspaceGraph(db, context.workspaceId, true);
   const { demonstrated, prerequisites, repositoryUsage, prerequisiteTopUps, depthTopUp } = prerequisiteContext(graph, context);
   const history = readHistory(db, context).messages.slice(-12);
-  const mayRecommend = intent.kind === 'ask' && canRecommend(mastery)
+  const mayRecommend = !foundation && intent.kind === 'ask' && canRecommend(mastery)
     || response !== null && nextGrade(mastery, response.correct).stage === 'understood';
   const atlasIds = new Set(graph.atlasConceptIds);
   const nextConcepts = mayRecommend ? graph.concepts.filter(c => atlasIds.has(c.id)
@@ -133,9 +137,11 @@ export function prepareTurn(db: Db, request: TutorRequest) {
   const payload = {
     concept: context.title.slice(0, 1024), summary: context.summary.slice(0, 8000), depth: context.depth, snapshot: context.snapshot,
     knownConcepts: graph.concepts.filter(c => demonstrated.has(c.id)).slice(0, 100).map(c => c.title.slice(0, 300)),
+    knownFoundations: intent.kind === 'teach' ? knownFoundations(db, graph, { id: context.canonicalConceptId, portable: context.portable }) : undefined,
     prerequisites, repositoryUsage, prerequisiteTopUps, depthTopUp,
+    foundationRecap: foundationRecap(db, context, selected.id, graph),
     evidence: evidence && { status: evidence.status, source: evidence.source, note: evidence.note.slice(0, 2000) },
-    lesson: selected.document ? JSON.stringify(teachingBlocks(selected.document)).slice(0, 20000) : null,
+    lesson: !foundation && selected.document ? JSON.stringify(teachingBlocks(selected.document)).slice(0, 20000) : null,
     recentTurns: history.map(m => ({ role: m.role, text: m.text.slice(0, 1000), observation: m.observation, reasoningFeedback: m.reasoningFeedback,
       teaching: m.blocks && JSON.stringify(m.blocks).slice(0, 1500), recommendation: mayRecommend ? m.recommendation : undefined })),
     nextConcepts: nextConcepts.map(c => ({ id: c.id, title: c.title.slice(0, 300) })),
@@ -150,7 +156,7 @@ export function prepareTurn(db: Db, request: TutorRequest) {
     conceptKey: context.key,
     depth: context.depth, sourceRef: context.workspaceId + '/' + (context.snapshot ?? 'concept') });
   const token = createHash('sha256').update(JSON.stringify([cacheKey, data.modelSource, selected.revision,
-    selected.invalidLatest, mastery.revision, history.at(-1)?.id, data.prompt])).digest('hex');
+    selected.invalidLatest, mastery.revision, foundation?.revision, history.at(-1)?.id, data.prompt])).digest('hex');
   const preview: TutorPreview = { ...data, token };
   assert.equal(context.depth, request.depth);
   const lastPractice = history.findLast(entry => entry.role === 'system' && entry.observation && entry.recommendation);

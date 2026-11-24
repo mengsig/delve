@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { DomainError } from '../../shared/errors';
 import { nowIso, transaction, type Db } from './connection';
+import { canonicalEdges, edgeReachable, projectedEdges } from './migration-edges';
+import { matchesDemo } from './demo-fixtures';
+import { listWorkspaces } from './workspaces';
 
 const CONCEPT_KEY = /^[a-z0-9][a-z0-9._/-]{0,199}$/;
 
@@ -57,6 +60,14 @@ export function getConcept(db: Db, id: number): Concept | null {
   return row ? toConcept(row) : null;
 }
 
+export function canonicalConceptId(db: Db, id: number): number {
+  assert.ok(Number.isSafeInteger(id) && id > 0);
+  const row = db.prepare('SELECT canonical_concept_id AS id FROM concept_identity_links WHERE legacy_concept_id = ?').get(id);
+  if (!row) return id;
+  assert.ok(typeof row.id === 'number' && row.id !== id);
+  return row.id;
+}
+
 function requireConcept(db: Db, id: number): Concept {
   const concept = getConcept(db, id);
   if (!concept) throw new DomainError('CONCEPT_NOT_FOUND', `Concept ${id} does not exist.`);
@@ -97,17 +108,32 @@ export function upsertConceptInTransaction(db: Db, input: ConceptInput, onAtlas 
 
 /** True when `from` already (transitively) requires `to`. */
 function requires(db: Db, from: number, to: number): boolean {
-  const row = db
-    .prepare(
-      `WITH RECURSIVE reach (id) AS (
-         SELECT prerequisite_id FROM concept_edges WHERE concept_id = ?
-         UNION
-         SELECT e.prerequisite_id FROM concept_edges e JOIN reach r ON e.concept_id = r.id
-       )
-       SELECT 1 AS found FROM reach WHERE id = ? LIMIT 1`,
-    )
-    .get(from, to);
-  return row !== undefined;
+  assert.ok(Number.isSafeInteger(from) && from > 0);
+  assert.ok(Number.isSafeInteger(to) && to > 0);
+  if (db.prepare('SELECT 1 FROM concept_identity_links LIMIT 1').get()) {
+    return edgeReachable(canonicalEdges(db), from, to) || visibleProjectionRequires(db, from, to);
+  }
+  return db.prepare(`WITH RECURSIVE reach (id) AS (
+    SELECT prerequisite_id FROM concept_edges WHERE concept_id = ?
+    UNION SELECT e.prerequisite_id FROM concept_edges e JOIN reach r ON e.concept_id = r.id
+  ) SELECT 1 FROM reach WHERE id = ? LIMIT 1`).get(from, to) !== undefined;
+}
+
+function visibleProjectionRequires(db: Db, from: number, to: number): boolean {
+  assert.ok(Number.isSafeInteger(from) && from > 0);
+  assert.ok(Number.isSafeInteger(to) && to > 0);
+  const globalIds = [new Set<number>(), new Set<number>()];
+  for (const workspace of listWorkspaces(db).workspaces) {
+    const all = new Set(listWorkspaceConcepts(db, workspace.id, true).map(concept => concept.id));
+    const global = globalIds[Number(matchesDemo(workspace))]!;
+    for (const id of all) global.add(id);
+    if (all.has(from) && all.has(to)) {
+      if (edgeReachable(projectedEdges(db, all, workspace.id), from, to)) return true;
+      const atlas = new Set(listWorkspaceConcepts(db, workspace.id).map(concept => concept.id));
+      if (atlas.has(from) && atlas.has(to) && edgeReachable(projectedEdges(db, atlas, workspace.id), from, to)) return true;
+    }
+  }
+  return globalIds.some(ids => ids.has(from) && ids.has(to) && edgeReachable(projectedEdges(db, ids), from, to));
 }
 
 function assertEdgeScope(concept: Concept, prerequisite: Concept): void {
@@ -126,6 +152,8 @@ export function addPrerequisite(db: Db, conceptId: number, prerequisiteId: numbe
 
 export function addPrerequisiteInTransaction(db: Db, conceptId: number, prerequisiteId: number): void {
   assert.ok(db.isTransaction, 'edge writes require a transaction');
+  conceptId = canonicalConceptId(db, conceptId);
+  prerequisiteId = canonicalConceptId(db, prerequisiteId);
   if (conceptId === prerequisiteId) throw new DomainError('CYCLE', 'A concept cannot require itself.');
   const concept = requireConcept(db, conceptId);
   const prerequisite = requireConcept(db, prerequisiteId);

@@ -42,28 +42,29 @@ function StudyLesson({ route, common, remember, commit, refresh, backTo }: {
   const { depth, workspace, graph } = common;
   const title = graph.concepts.find(concept => concept.id === conceptId)?.title;
   const workspaceId = workspace.id;
+  const lessonId = route.lessonDepth === depth ? route.lessonId : undefined;
   useLayoutEffect(() => {
-    if (title && !environment) remember({ kind: 'lesson', workspaceId, conceptId, depth, title, change });
-  }, [title, environment, remember, workspaceId, conceptId, depth, change]);
+    if (title && !environment) remember({ kind: 'lesson', workspaceId, conceptId, depth, lessonId, title, change });
+  }, [title, environment, remember, workspaceId, conceptId, depth, lessonId, change]);
   function read() {
-    if (title) remember({ kind: 'lesson', workspaceId, conceptId, depth, title, change });
+    if (title) remember({ kind: 'lesson', workspaceId, conceptId, depth, lessonId, title, change });
   }
   function used(blockKey: string, name: string) {
-    remember({ kind: 'environment', workspaceId, conceptId, depth, title: name, blockKey, change });
+    remember({ kind: 'environment', workspaceId, conceptId, depth, lessonId, title: name, blockKey, change });
   }
   function onEvidence(lesson?: ReaderLesson) {
     if (lesson) commit({ workspaceId, conceptId, depth }, lesson);
     else refresh();
   }
   return <EnvironmentActivity.Provider value={{ resumeKey: environment, onUse: used, onRead: read }}>
-    <Lesson {...common} conceptId={conceptId} initialQuestion={route.question} initialReview={route.review} onEvidence={onEvidence}
+    <Lesson {...common} conceptId={conceptId} lessonId={lessonId} initialQuestion={route.question} initialReview={route.review} onEvidence={onEvidence}
       onBack={common.backLabel ? common.onBack : () => backTo({ screen: 'atlas', conceptId })}
       onBackToChange={change ? () => backTo({ screen: 'changes', change }) : undefined} />
   </EnvironmentActivity.Provider>;
 }
 
-function StudyChanges({ route, common, remember, visit }: {
-  route: ChangeRoute; common: ReaderProps; remember: Props['remember']; visit: DesktopNavigation['visit'];
+function StudyChanges({ route, common, remember, visit, refresh }: {
+  route: ChangeRoute; common: ReaderProps; remember: Props['remember']; visit: DesktopNavigation['visit']; refresh: WorkspaceStudy['refresh'];
 }) {
   const { workspace, graph, depth } = common;
   const { change, title, job } = route;
@@ -75,9 +76,9 @@ function StudyChanges({ route, common, remember, visit }: {
     } else if (demo) remember({ kind: 'change', workspaceId: workspace.id, depth,
       change: { kind: 'pr', ref: '184' }, title: 'Reject late worker results' });
   }, [change, title, workspace.id, depth, demo, remember]);
-  return <Changes {...common} onAdd={() => visit({ screen: 'setup' })} selected={change} openedJob={job?.kind === 'change' ? job : undefined}
+  return <Changes {...common} onAdd={() => visit({ screen: 'setup' })} selected={change} openedJob={job?.kind === 'change' ? job : undefined} onEvidence={refresh}
     onSelect={(selection?: ChangeRef, label?: string) => visit({ screen: 'changes', change: selection, title: label }, true)}
-    onLesson={conceptId => visit({ screen: 'lesson', conceptId, change: change ?? (demo ? { kind: 'pr', ref: '184' } : undefined) })}
+    onLesson={(conceptId, lessonId) => visit({ screen: 'lesson', conceptId, lessonId, lessonDepth: depth, change: change ?? (demo ? { kind: 'pr', ref: '184' } : undefined) })}
     onAtlas={id => visit({ screen: 'atlas', focus: change ? { id, change } : undefined })} />;
 }
 
@@ -92,10 +93,10 @@ function StudyPage({ props, fullGraph }: { props: Props; fullGraph: NonNullable<
   const returnToKnowledge = route.screen === 'lesson' || route.screen === 'progress' ? nav.returnToKnowledge : undefined;
   const common: ReaderProps = { workspace, graph, depth, view, onDepth: changeDepth,
     onBack: returnToKnowledge ?? toAtlas, backLabel: returnToKnowledge ? '← Back to Knowledge' : undefined,
-    onLesson: openLesson, onProgress: () => visit({ screen: 'progress', conceptId: activeConceptId }) };
+    onLesson: id => openLesson(id), onProgress: () => visit({ screen: 'progress', conceptId: activeConceptId }) };
   if (route.screen === 'lesson') return <StudyLesson key={route.conceptId} route={route} common={common} remember={remember}
     commit={study.commit} refresh={study.refresh} backTo={nav.backTo} />;
-  if (route.screen === 'changes') return <StudyChanges route={route} common={common} remember={remember} visit={visit} />;
+  if (route.screen === 'changes') return <StudyChanges route={route} common={common} remember={remember} visit={visit} refresh={study.refresh} />;
   if (route.screen === 'progress') return <Progress {...common} progress={study.progress} currentId={route.conceptId}
     workspaces={nav.list.workspaces} onSelect={onSelect} onExplore={toAtlas} onEvidence={study.refresh} />;
   const atlas = route.screen === 'atlas' ? route : undefined;

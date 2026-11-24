@@ -127,6 +127,36 @@ describe('saved activity provenance', () => {
   });
 });
 
+it('uses only the selected saved lesson’s instrument messages within the same snapshot and depth', () => {
+  const snapshotId = bindSnapshot(db, address.workspaceId, '1111aaaa');
+  const makeRequest = (provider: 'codex' | 'claude', fallback: string) => {
+    const document = documentSchema.parse({ schema: 'delve.lesson/1', blocks: [{ ...block, fallback }] });
+    const saved = saveLesson(db, { ...address, snapshotId, provider, cacheKey: provider, model: 'model',
+      schemaVersion: document.schema, body: document });
+    const pinned = { ...address, lessonId: saved.id };
+    const context = lessonContext(db, pinned);
+    const [message] = transaction(db, () => appendEntries(db, context, saved.id, [{ role: 'tutor', text: '', lesson: document }]));
+    expect(context.snapshotId).toBe(snapshotId);
+    expect(readLesson(db, pinned).messages.map(entry => entry.id)).toEqual([message!.id]);
+    return { ...pinned, revision: readLesson(db, pinned).revision, messageId: message!.id, blockIndex: 0 };
+  };
+  const codex = makeRequest('codex', 'Codex activity');
+  const claude = makeRequest('claude', 'Claude activity');
+  const labs = new LabHost(db);
+  expect(labs.open(claude).manifest.fallback).toBe('Claude activity');
+  const opened = labs.open(codex);
+  expect(opened.manifest.fallback).toBe('Codex activity');
+  expect(() => labs.open({ ...claude, messageId: codex.messageId })).toThrow(/no longer available/);
+  expect(() => labs.open({ ...codex, messageId: claude.messageId })).toThrow(/no longer available/);
+  expect(listEvidence(db, address.conceptId)).toEqual([]);
+  for (let seq = 1; seq < 4; seq++) labs.input({ session: opened.session, seq, input: { type: 'advance' } });
+  const completed = labs.input({ session: opened.session, seq: 4, input: { type: 'reject' } });
+  expect(completed.lesson?.messages[0]?.id).toBe(codex.messageId);
+  expect(completed.lesson?.messages.at(-1)).toMatchObject({ role: 'system', text: 'Activity practice saved.' });
+  expect(readLesson(db, claude).messages.map(entry => entry.id)).toEqual([claude.messageId]);
+  expect(listEvidence(db, address.conceptId)).toMatchObject([{ source: 'environment', snapshotId }]);
+});
+
 describe('activity assessment', () => {
   it('keeps completed learning when a later activity is practised', () => {
     recordEvidence(db, { ...address, status: 'demonstrated', source: 'check', note: 'Completed checks.' });

@@ -15,6 +15,7 @@ interface Props extends ReaderProps {
   openedJob?: ChangeJob;
   onSelect: (change?: ChangeRef, title?: string) => void;
   onAtlas: (id: number) => void;
+  onEvidence: () => void;
 }
 
 export function Changes(props: Props) {

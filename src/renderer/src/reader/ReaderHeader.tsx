@@ -8,7 +8,7 @@ export interface ReaderProps {
   onDepth: (depth: Depth) => void;
   onBack: () => void;
   backLabel?: string;
-  onLesson: (id: number) => void;
+  onLesson: (id: number, lessonId?: number) => void;
   onProgress: () => void;
   view: 'contour' | 'folio';
 }

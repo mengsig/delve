@@ -91,7 +91,7 @@ test('counts fresh consent clicks and uses the saved choice and reason through c
   expect(JSON.parse(readFileSync(join(directory, 'request.json'), 'utf8')).stdin).toContain(why);
   await expect(page.getByRole('log')).toContainText(why);
   await expect(page.getByRole('log')).toContainText('A run identifies the group of agents.');
-  await expect(page.getByRole('log')).toContainText('Correction');
+  await expect(page.getByRole('log')).toContainText('Not quite');
 
   reply(directory, [{ type: 'prose', heading: 'The relationships', text: 'Compare the roles.' },
     { type: 'diagram', nodes: ['Run', 'Agent'], edges: [{ from: 0, to: 1, label: 'groups' }] }]);

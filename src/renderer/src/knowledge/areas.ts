@@ -30,6 +30,15 @@ export interface Place {
   state: ProgressState;
 }
 
+export function areaSummary(graph: GlobalKnowledgeGraph, areas: LearningArea[], places: ReadonlyMap<number, Place>, workspace: string) {
+  return {
+    name: areas.find(area => area.workspaceId === workspace)?.workspaceName ?? 'All workspaces',
+    mastered: graph.concepts.filter(concept => places.get(concept.id)?.state === 'mastered').length,
+    total: graph.concepts.length,
+    available: areas.every(area => area.progress.available),
+  };
+}
+
 export function mapPlaces(graph: GlobalKnowledgeGraph, areas: LearningArea[], preferred?: string) {
   const places = new Map<number, Place>();
   const byWorkspace = new Map(areas.map(area => [area.workspaceId, area]));
@@ -51,9 +60,9 @@ export function mapPlaces(graph: GlobalKnowledgeGraph, areas: LearningArea[], pr
   return places;
 }
 
-function matches(concept: KnowledgeConcept, state: ProgressState | undefined, filters: Filters, query: string) {
+function matches(concept: KnowledgeConcept, state: ProgressState | undefined, filters: Filters, query: string, originalTitle = '') {
   if (filters.depth && filters.depth !== concept.masteredDepth) return false;
-  if (query && !(concept.title + ' ' + concept.summary).toLocaleLowerCase().includes(query)) return false;
+  if (query && ![concept.title, concept.summary, originalTitle].join(' ').toLocaleLowerCase().includes(query)) return false;
   if (filters.state === 'verified') return concept.masteredDepth !== null;
   if (filters.state === 'skipped' && concept.masteryState !== 'skipped') return false;
   if (filters.state === 'unstarted' && concept.masteryState !== 'not-started') return false;
@@ -61,9 +70,10 @@ function matches(concept: KnowledgeConcept, state: ProgressState | undefined, fi
   return true;
 }
 
-export function visibleConcepts(graph: GlobalKnowledgeGraph, places: ReadonlyMap<number, Place>, filters: Filters) {
+export function visibleConcepts(graph: GlobalKnowledgeGraph, places: ReadonlyMap<number, Place>, filters: Filters,
+  originalTitles?: ReadonlyMap<number, string>) {
   const query = filters.query.trim().toLocaleLowerCase();
-  return new Set(graph.concepts.filter(c => matches(c, places.get(c.id)?.state, filters, query)).map(c => c.id));
+  return new Set(graph.concepts.filter(c => matches(c, places.get(c.id)?.state, filters, query, originalTitles?.get(c.id))).map(c => c.id));
 }
 
 export function suggestedLesson(areas: LearningArea[], places: ReadonlyMap<number, Place>, visible: Set<number>, preferred?: string) {

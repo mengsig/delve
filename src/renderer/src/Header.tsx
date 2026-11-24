@@ -63,7 +63,8 @@ export function Header({ screen, lab, workspace, head, progress, go, openSwitche
       </button>)}
     </nav>
     <div className="shell-location">{primaryViews.some(link => link.screen === screen) && screen !== 'knowledge' ? null : lab ? 'Study / Lab' : locations[screen]}</div>
-    {workspace && <div className="shell-mastery"><WorkspaceMeter progress={progress} /></div>}
+    {workspace && <div className="shell-mastery"><WorkspaceMeter progress={progress}
+      label={screen === 'knowledge' ? 'Workspace mastery · Atlas' : undefined} /></div>}
     <div className="row window-tools">
       <button className="tool" onClick={() => go('setup')} aria-label="Add a workspace" title="Add a workspace">+</button>
       <ThemeButton />

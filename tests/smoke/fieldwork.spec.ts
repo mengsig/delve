@@ -22,7 +22,7 @@ for (const explain of [false, true]) {
         await page.keyboard.insertText('B still holds the current lease.');
       }
       await check(page).click();
-      await expect(page.getByRole('log')).toContainText('✓ Correct check');
+      await expect(page.getByRole('log')).toContainText('Right —');
     });
     await expect(rail(page).getByRole('meter', { name: 'Worker leases' })).toHaveJSProperty('value', 1);
     await expect(page.getByRole('meter', { name: /Workspace mastery/ })).toHaveJSProperty('value', 2);

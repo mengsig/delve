@@ -14,14 +14,15 @@ function Message({ message }: { message: ReaderMessage }) {
   const teaching = message.blocks?.length ? <div className="lesson-blocks">{message.blocks.map((block, index) =>
     block.type !== 'check' && <TeachingBlock key={index} block={block} blockIndex={index} messageId={message.id} />)}</div> : null;
   const graded = message.correct !== undefined;
+  const formatted = graded && /^(?:Right|Partly right|Not quite) — /.test(message.text);
   return <div className={'reader-message reader-message-' + message.role}>
     <span className="eyebrow">{label}</span>
-    {message.text && !graded && <p>{message.text}</p>}
-    {message.observation && <p className="reader-observation">{message.observation}</p>}
-    {message.reasoningFeedback && <p>{message.reasoningFeedback}</p>}
+    {message.text && (!graded || formatted) && <p className={formatted ? 'reader-observation' : undefined}>{message.text}</p>}
+    {!formatted && message.observation && <p className="reader-observation">{message.observation}</p>}
+    {!formatted && message.reasoningFeedback && <p>{message.reasoningFeedback}</p>}
     {graded && teaching ? <details className="reply-details"><summary>Explore the explanation</summary>
       {teaching}</details> : teaching}
-    {message.correct !== undefined && <span className="check-result" data-correct={message.correct}>
+    {graded && !formatted && <span className="check-result" data-correct={message.correct}>
       {message.correct ? '✓ Correct check' : '↺ Correction'}</span>}
   </div>;
 }

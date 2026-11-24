@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { KnowledgeConcept, GlobalKnowledgeGraph } from '../../../shared/knowledge';
 import { buildLearningProgress, type StudyGraph } from '../progress/model';
-import { graphInArea, mapPlaces, neighbourhood, suggestedLesson, visibleConcepts, type LearningArea } from './areas';
+import { areaSummary, graphInArea, mapPlaces, neighbourhood, suggestedLesson, visibleConcepts, type LearningArea } from './areas';
 import { anyWorkspace } from './view';
 
 const alpha = { workspaceId: 'alpha', workspaceName: 'Alpha' };
@@ -24,6 +24,22 @@ function area(workspace: typeof alpha): LearningArea {
 }
 
 describe('scoped knowledge recommendations', () => {
+  it('summarizes the full area population including change-only and shared concepts', () => {
+    const first = area(alpha);
+    const second = area(beta);
+    first.progress.byId.get(1)!.state = 'mastered';
+    first.progress.byId.get(3)!.state = 'mastered';
+    const areas = [first, second];
+    const places = mapPlaces(graph, areas, alpha.workspaceId);
+    expect(areaSummary(graph, areas, places, anyWorkspace)).toEqual({ name: 'All workspaces', mastered: 2, total: 3, available: true });
+    const betaGraph = graphInArea(graph, beta.workspaceId);
+    expect(areaSummary(betaGraph, [second], mapPlaces(betaGraph, [second]), beta.workspaceId))
+      .toEqual({ name: 'Beta', mastered: 0, total: 1, available: true });
+    second.progress.available = false;
+    expect(areaSummary(graph, areas, places, anyWorkspace).available).toBe(false);
+    expect(visibleConcepts(graph, places, { ...filters, query: 'change' }).size).toBe(1);
+    expect(areaSummary(graph, areas, places, anyWorkspace).total).toBe(3);
+  });
   it('uses the chosen area’s prerequisites and excludes change-only concepts from next lessons', () => {
     const first = area(alpha);
     const places = mapPlaces(graph, [first], alpha.workspaceId);

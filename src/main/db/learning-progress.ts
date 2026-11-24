@@ -17,17 +17,17 @@ const latestByScopeSql = [':workspace', 'NULL'].flatMap(workspace => ['m.snapsho
 
 const progressSql = `WITH workspace_snapshot AS MATERIALIZED (${workspaceSnapshotIdSql(':workspace')}),
   scoped_mastery AS MATERIALIZED (
-    SELECT m.concept_id, coalesce(link.portable_concept_id, m.concept_id) AS canonical_id, m.depth, m.scope, m.revision, m.lesson_id,
+    SELECT m.concept_id, coalesce(link.canonical_concept_id, m.concept_id) AS canonical_id, m.depth, m.scope, m.revision, m.lesson_id,
       coalesce(m.check_attempts, json_extract(m.state, '$.attempts')) AS attempts,
       coalesce(m.check_streak, json_extract(m.state, '$.correctAnswers')) AS streak,
-      coalesce((${conceptSnapshotIdSql(':workspace', 'coalesce(link.portable_concept_id, m.concept_id)')}), (SELECT * FROM workspace_snapshot)) AS snapshot_id
+      coalesce((${conceptSnapshotIdSql(':workspace', 'coalesce(link.canonical_concept_id, m.concept_id)')}), (SELECT * FROM workspace_snapshot)) AS snapshot_id
     FROM lesson_mastery m LEFT JOIN concept_identity_links link ON link.legacy_concept_id = m.concept_id
     WHERE m.workspace_id = :workspace AND m.depth = :depth AND m.state IS NOT NULL
   )
   SELECT m.concept_id AS conceptId, m.canonical_id AS canonicalId, m.scope, m.revision, m.lesson_id AS lessonId, m.attempts, m.streak,
     m.snapshot_id AS snapshotId, s.commit_sha AS snapshot,
     EXISTS (SELECT 1 FROM concept_identity_links link JOIN concepts c ON c.id = link.legacy_concept_id
-      WHERE link.portable_concept_id = m.canonical_id AND c.workspace_id = :workspace) AS hasAlias, (
+      WHERE link.canonical_concept_id = m.canonical_id AND c.workspace_id = :workspace) AS hasAlias, (
       SELECT json_array(id, document_revision) FROM (${latestByScopeSql})
       ORDER BY created_at DESC, id DESC LIMIT 1
     ) AS selected FROM scoped_mastery m LEFT JOIN snapshots s ON s.id = m.snapshot_id`;

@@ -8,36 +8,45 @@ import { getWorkspace } from '../db/workspaces';
 import { isDemoWorkspace } from '../db/demo';
 import { addMessage, readHistory } from './conversation';
 import { publicBlocks } from './document';
-import { lessonContext, selectLesson } from './stored-lesson';
+import { lessonContext, requestedLesson } from './stored-lesson';
 import { canRecommend, hasVerifiedMastery, loadMastery, publicMastery, requireMasteryRevision, saveMastery } from '../tutor/mastery';
+import { answerFoundation, foundationIntroduction, readFoundation } from '../tutor/foundation-progress';
 
-export const address = z.strictObject({ workspaceId: z.uuid(), conceptId: z.int().positive(), depth: z.enum(DEPTHS) });
+export const address = z.strictObject({ workspaceId: z.uuid(), conceptId: z.int().positive(), depth: z.enum(DEPTHS), lessonId: z.int().positive().optional() });
 export const readerSchemas = {
   'reader:lesson': address,
   'reader:start-topic': z.strictObject({ workspaceId: z.uuid() }),
   'reader:message': address.extend({ text: z.string().trim().min(1).max(4000) }),
   'reader:skip': address.extend({ revision: z.string().regex(/^[a-f0-9]{64}$/) }),
+  'reader:foundation': address.extend({
+    decision: z.strictObject({ revision: z.string().regex(/^[a-f0-9]{64}$/), answer: z.int().min(0).max(3).nullable() }).optional(),
+  }),
 };
 
 function lessonState(db: Db, address: LessonAddress, loadDemo: boolean) {
   const context = lessonContext(db, address);
-  const inherited = hasVerifiedMastery(db, context);
-  const selected = selectLesson(db, context, loadDemo && !inherited);
+  const inherited = address.lessonId === undefined && hasVerifiedMastery(db, context);
+  const selected = requestedLesson(db, context, loadDemo && !inherited);
   return { context, selected, mastery: loadMastery(db, context, selected, inherited) };
 }
 
 export function readLesson(db: Db, address: LessonAddress): ReaderLesson {
   const { context, selected, mastery } = lessonState(db, address, true);
+  const foundation = readFoundation(db, context, selected.id);
+  const introduction = foundation ? undefined : foundationIntroduction(db, context, selected.id);
   const { messages, earlierMessages } = readHistory(db, context);
-  return { reused: mastery.stage === 'understood', blocks: selected.document ? publicBlocks(selected.document) : [],
+  return { reused: mastery.stage === 'understood', blocks: !foundation && selected.document ? publicBlocks(selected.document) : [],
     revision: selected.revision, invalidLatest: selected.invalidLatest, source: selected.source, mastery: publicMastery(mastery),
+    ...(foundation ? { foundation } : {}),
+    ...(introduction ? { foundationIntroduction: introduction } : {}),
     messages: canRecommend(mastery) ? messages : messages.map(({ recommendation: _recommendation, ...message }) => message),
     earlierMessages };
 }
 
 function skipLesson(db: Db, request: ReaderContract['reader:skip']['request']): ReaderLesson {
   transaction(db, () => {
-    const { context, mastery } = lessonState(db, request, false);
+    const { context, selected, mastery } = lessonState(db, request, false);
+    if (readFoundation(db, context, selected.id)) throw new DomainError('FOUNDATION_PENDING', 'Finish or skip the foundations first.');
     requireMasteryRevision(mastery, request.revision, ['teaching', 'checking', 'review']);
     saveMastery(db, context, mastery, { stage: 'skipped', check: null });
   });
@@ -62,10 +71,18 @@ export function readerHandlers(db: Db): Handlers {
       return upsertConcept(db, { key: 'topic', workspaceId, title: workspace.name, portable: false }).id;
     },
     'reader:lesson': request => readLesson(db, request),
+    'reader:foundation': request => {
+      const { context, selected } = lessonState(db, request, false);
+      const lessonId = selected.id;
+      if (request.decision) return answerFoundation(db, context, lessonId, request.decision);
+      const step = readFoundation(db, context, lessonId);
+      const introduction = step ? undefined : foundationIntroduction(db, context, lessonId);
+      return introduction ? { step, foundationIntroduction: introduction } : { step };
+    },
     'reader:skip': request => skipLesson(db, request),
     'reader:message': request => {
       const context = lessonContext(db, request);
-      const selected = selectLesson(db, context);
+      const selected = requestedLesson(db, context);
       return addMessage(db, context, selected.id, request.text);
     },
   };

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DEPTHS } from '../../shared/domain';
 
 const base = z.object({ workspaceId: z.string().min(1), title: z.string().min(1), depth: z.enum(DEPTHS) });
-const concept = base.extend({ conceptId: z.number().int().positive() });
+const concept = base.extend({ conceptId: z.number().int().positive(), lessonId: z.number().int().positive().optional() });
 const reference = z.object({ kind: z.enum(['pr', 'commit']), ref: z.string().min(1) });
 const activity = z.discriminatedUnion('kind', [
   concept.extend({ kind: z.literal('lesson'), change: reference.optional() }),

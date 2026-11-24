@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DEPTHS, PROVIDER_IDS } from '../../shared/domain';
+import { foundationsSchema } from '../tutor/foundation-content';
 
 export const commitRef = z.string().regex(/^[0-9a-f]{7,64}$/i);
 export const prRef = z.string().regex(/^[1-9][0-9]{0,9}$/);
@@ -38,6 +39,7 @@ const text = z.string().trim().min(1).max(4000);
 const key = z.string().trim().toLowerCase().pipe(
   z.string().regex(/^[a-z0-9][a-z0-9._/-]{0,149}$/).refine(s => !s.startsWith('ws/') && !s.startsWith('change/')),
 );
+export { key as proposalConceptKey };
 const concept = z.strictObject({ key, title: z.string().trim().min(1).max(180), summary: text, portable: z.boolean() });
 const span = z.strictObject({ key, path: z.string().min(1).max(1024), side: z.enum(['old', 'new']),
   start: z.number().int().positive(), end: z.number().int().positive() });
@@ -49,6 +51,8 @@ const graph = z.strictObject({
 export const baselineReply = graph.extend({ schema: z.literal('delve.map/1') });
 export const changeReply = graph.extend({ schema: z.literal('delve.change/1'), concepts: z.array(concept).max(60),
   recommendation: z.strictObject({ key: key.nullable(), reason: text }), summary: text, what: text, why: text, before: text, after: text,
+  conceptTitle: concept.shape.title.nullable().optional(), overviewConceptKey: key.nullable().optional(),
+  example: text.nullable().optional(), foundations: foundationsSchema.optional(),
   spans: z.array(span).max(128).default([]), touched: z.array(key).max(60), mechanics: text.nullable(), boundary: text.nullable(), trace: z.array(z.string().trim().min(1).max(160)).max(8),
   excerpt: z.array(z.string().max(2000)).max(16) });
 export type GraphProposal = z.infer<typeof baselineReply> | z.infer<typeof changeReply>;

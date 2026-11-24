@@ -46,6 +46,47 @@ test('opens the first block from home in two actions, including first-use consen
   await expect(page.getByRole('dialog', { name: 'Review what will be sent' })).toHaveCount(0);
 });
 
+test('skips the topic questions in one action and opens the foundation from the learning path', async ({ desktop: { page, directory } }, info) => {
+  const receipt = join(directory, 'request.json');
+  const reply = { ...envelope, lesson: { schema: 'delve.lesson/1', source: null, blocks: [explanation, check] },
+    foundations: [{
+      key: 'address-ranges', title: 'Address ranges', why: 'A route can cover a group of addresses.',
+      summary: 'An address range groups addresses together, like houses on one block.',
+      probe: { ...check, prompt: 'Which addresses are likely to belong in the same range?',
+        options: ['Addresses close together', 'The newest addresses', 'All addresses', 'Addresses chosen at random'], expected: 0 },
+      practice: { ...check, prompt: 'Which range is more specific if both match an address?',
+        options: ['A range with more addresses', 'A range with fewer addresses', 'The newest range', 'The oldest range'], expected: 1 },
+    }] };
+  writeFileSync(join(directory, 'reply.json'), JSON.stringify(reply));
+  await add(page).click();
+  await typeTopic(page, 'IP routing');
+  await start(page).click();
+  const probe = page.getByRole('region', { name: 'What do you know about Address ranges?' });
+  await expect(probe).toBeVisible();
+  writeReply(directory);
+  await page.getByRole('textbox', { name: 'Ask your tutor' }).fill('How do address ranges work?');
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Exact provider request')).toContainText('How do address ranges work?');
+  await expect(dialog.getByLabel('Exact provider request')).not.toContainText('Which addresses are likely to belong');
+  await dialog.getByRole('button', { name: 'Allow once and continue' }).click();
+  await expect(page.getByRole('log')).toContainText('The rule also applies to IPv6.');
+  await expect(probe.getByRole('button', { name: 'Addresses close together' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: explanation.heading })).toHaveCount(0);
+  const request = readFileSync(receipt, 'utf8');
+  await probe.getByRole('button', { name: 'Skip questions' }).click();
+  await expect(page.getByRole('heading', { name: explanation.heading })).toBeVisible();
+  await expect(page.getByText(/Foundation lesson/)).toHaveCount(0);
+  expect(readFileSync(receipt, 'utf8')).toBe(request);
+  const path = page.getByLabel('Concept mastery');
+  const link = path.getByRole('button', { name: 'Open Address ranges' });
+  await expect(link).toBeVisible();
+  await expect(link.locator('..').getByRole('meter')).toHaveAttribute('aria-valuetext', 'Ready');
+  await page.screenshot({ path: info.outputPath('after-skip.png') });
+  await link.click();
+  await expect(page.getByRole('heading', { name: 'Address ranges', exact: true }).first()).toBeVisible();
+});
+
 test.describe('first run', () => {
   test.use({ firstRun: true });
 
@@ -113,7 +154,10 @@ test('shows the exact opening request before sending, then cancels, retries and 
   await exerciseAnswerRecovery(page, gate);
   await expect(page.getByRole('log')).toContainText('You recognized prefix specificity.');
   await expect(page.getByRole('log')).toContainText('A smaller destination range makes the match more specific.');
-  await expect(page.getByRole('log')).toContainText('Choose /24');
+  await page.getByRole('log').getByText('Explore the explanation', { exact: true }).click();
+  const trace = page.getByRole('log').getByRole('figure', { name: 'Trace' });
+  await expect(trace.getByRole('listitem')).toHaveText(['Match destination', 'Compare lengths', 'Choose /24']);
+  await expect(trace.locator('.lesson-diagram-direct')).toHaveCount(2);
   await expect(page.getByRole('heading', { name: 'A /20 and a /28 match. Which wins, and why?' })).toBeVisible();
   expect(JSON.parse(readFileSync(receipt, 'utf8')).stdin).toBe(exactAnswer);
   await expect(page.getByRole('meter', { name: 'Correct checks in a row' })).toHaveJSProperty('value', 1);

@@ -1,7 +1,13 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { DEPTHS, type Depth } from '../../../shared/domain';
+import type { FoundationProgress, LessonAddress } from '../../../shared/reader';
 import type { ChangeBrief } from '../../../shared/repository';
+import { plainConceptTitle } from '../../../shared/plain-language';
 import { BriefChapters } from '../reader/ChangeBrief';
+import { FoundationActivity } from '../reader/FoundationActivity';
 import { SetupProvider } from '../SetupProvider';
+import { call } from '../api';
+import { useRead } from '../useRead';
 import type { LessonState } from './useChangeLesson';
 
 const depthDescriptions = { high: 'What & why', medium: 'Module mechanics', low: 'Protocol detail' };
@@ -14,22 +20,48 @@ export function ReadingDepth({ depth, onDepth }: { depth: Depth; onDepth: (depth
   </label>;
 }
 
-function Recommendation({ brief, onLesson }: { brief: ChangeBrief; onLesson: (id: number) => void }) {
+function Recommendation({ brief, depth, onLesson }: { brief: ChangeBrief; depth: Depth; onLesson: (id: number, lessonId?: number) => void }) {
   const { title, reason, conceptId } = brief.recommendation;
+  const overview = conceptId === brief.conceptId;
   return <aside className="change-next"><span className="eyebrow">Suggested next step</span>
-    <h3>{title}</h3><p>{reason}</p>
-    <button className="back" onClick={() => onLesson(conceptId)}>{conceptId === brief.conceptId ? 'Discuss this change' : 'Explore this concept'} →</button>
+    <h3>{depth === 'high' ? plainConceptTitle(title) : title}</h3><p>{reason}</p>
+    {(!overview || brief.lessonId !== undefined) && <button className="back" onClick={() => onLesson(conceptId, overview ? brief.lessonId : undefined)}>
+      {overview ? 'Discuss this change' : 'Explore this concept'} →</button>}
   </aside>;
 }
 
-export function ChangeExplanation({ description, lesson, onLesson }: {
-  description?: string; lesson: LessonState; onLesson: (id: number) => void;
+function SavedBrief({ brief, address, onLesson, onEvidence }: {
+  brief: ChangeBrief; address: LessonAddress; onLesson: (id: number, lessonId?: number) => void; onEvidence: () => void;
+}) {
+  const { workspaceId, conceptId, depth } = address;
+  const lessonId = brief.lessonId;
+  const read = useCallback((): Promise<FoundationProgress> => lessonId === undefined ? Promise.resolve({ step: null })
+    : call('reader:foundation', { workspaceId, conceptId, depth, lessonId }), [workspaceId, conceptId, depth, lessonId]);
+  const { result, refresh } = useRead(read);
+  const [completion, setCompletion] = useState<Omit<FoundationProgress, 'step'>>();
+  const summary = useRef<HTMLParagraphElement>(null);
+  useEffect(() => { if (completion) summary.current?.focus(); }, [completion]);
+  if (result.status === 'loading') return <p role="status">Opening the change lesson…</p>;
+  if (result.status === 'error') return <p role="alert">{result.message} <button onClick={refresh}>Retry opening the lesson</button></p>;
+  if (!completion && result.value.step) return <FoundationActivity address={{ ...address, lessonId }} initial={result.value.step}
+    onComplete={next => { setCompletion(next); onEvidence(); }} />;
+  const introduction = completion?.foundationIntroduction ?? result.value.foundationIntroduction;
+  return <>
+    {completion?.feedback && <p role="status" className="reader-observation">{completion.feedback}</p>}
+    {introduction && <p>{introduction}</p>}
+    <p ref={summary} tabIndex={-1} className="brief-summary">{brief.summary}</p><p className="smallprint">Saved brief · available offline</p>
+    <BriefChapters brief={brief} /><Recommendation brief={brief} depth={depth} onLesson={onLesson} />
+  </>;
+}
+
+export function ChangeExplanation({ description, lesson, workspaceId, depth, onLesson, onEvidence }: {
+  description?: string; lesson: LessonState; workspaceId: string; depth: Depth; onLesson: (id: number, lessonId?: number) => void; onEvidence: () => void;
 }) {
   const { brief, stale, running, provider, chooseProvider } = lesson;
   return <>
     {stale && <p className="repository-notice" role="status">This pull request has changed since its last explanation. Generate a brief for the current revision.</p>}
-    {brief ? <><p className="brief-summary">{brief.summary}</p><p className="smallprint">Saved brief · available offline</p>
-      <BriefChapters brief={brief} /><Recommendation brief={brief} onLesson={onLesson} /></>
+    {brief ? <SavedBrief key={[workspaceId, brief.conceptId, depth, brief.lessonId].join('/')} brief={brief}
+      address={{ workspaceId, conceptId: brief.conceptId, depth }} onLesson={onLesson} onEvidence={onEvidence} />
       : <div className="explanation-start">
         <h3>{description ? 'From the author' : 'What changed and why'}</h3>
         <p>{description || 'Generate a lesson to see what changed, why it matters, and the concepts it touches.'}</p>
@@ -43,15 +75,16 @@ export function ChangeExplanation({ description, lesson, onLesson }: {
   </>;
 }
 
-export function ChangeConcepts({ brief, atlasIds, onAtlas }: {
-  brief?: ChangeBrief; atlasIds: Set<number>; onAtlas: (id: number) => void;
+export function ChangeConcepts({ brief, atlasIds, depth, onAtlas }: {
+  brief?: ChangeBrief; atlasIds: Set<number>; depth: Depth; onAtlas: (id: number) => void;
 }) {
   if (!brief) return <div className="panel-message"><h3>Concepts touched</h3>
     <p>Use “Teach me this change” to see which concepts the diff affects.</p></div>;
   if (!brief.touched.length) return <p className="panel-message">The explanation identified no directly affected concepts.</p>;
   return <ul className="concept-footprint">{brief.touched.map(concept => {
     const onMap = atlasIds.has(concept.id);
-    return <li key={concept.id}><div><strong>{concept.title}</strong><small>{onMap ? 'On your repository atlas' : 'Introduced in this change'}</small></div>
+    const title = depth === 'high' ? plainConceptTitle(concept.title) : concept.title;
+    return <li key={concept.id}><div><strong>{title}</strong><small>{onMap ? 'On your repository atlas' : 'Introduced in this change'}</small></div>
       <button onClick={() => onAtlas(concept.id)}>View on Atlas ↗</button></li>;
   })}</ul>;
 }

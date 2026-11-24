@@ -60,11 +60,11 @@ export function createExplorerFixture(directory: string) {
   return { path, head };
 }
 
-export function writeExplanation(directory: string) {
+export function writeExplanation(directory: string, options: Record<string, unknown> = {}) {
   writeFileSync(join(directory, 'reply.json'), JSON.stringify({ ...baseline, schema: 'delve.change/1', concepts: [concept, newConcept], touched: [concept.key, newConcept.key],
     summary: 'A failed delivery gets two more attempts before the dispatcher gives up.',
     what: 'The retry budget increases from one attempt to three.', why: 'A short network interruption can clear between attempts.',
     before: 'The first failure ended the delivery.', after: 'The worker can try the same job again.',
     mechanics: 'The dispatcher passes the new attempt limit into the delivery loop.', boundary: null, trace: [], excerpt: [],
-    spans: [{ key: concept.key, path: modified.filename, side: 'new', start: 2, end: 2 }] }));
+    spans: [{ key: concept.key, path: modified.filename, side: 'new', start: 2, end: 2 }], ...options }));
 }

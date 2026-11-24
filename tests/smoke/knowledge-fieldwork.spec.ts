@@ -190,8 +190,10 @@ test('completes the reviewed path and opens the exact change-only concept in Atl
   await page.getByRole('button', { name: /Back to Knowledge/i }).click();
   await expect(page.getByRole('heading', { name: 'Path mastered' })).toBeVisible();
   await expect(page.getByLabel('Workspace area')).toHaveValue(workspace.id);
-  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveJSProperty('max', ids.length);
+  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveJSProperty('max', ids.length + 1);
+  await expect(page.locator('.knowledge-area-bar')).toContainText(`${ids.length + 1} concepts`);
   await page.getByRole('button', { name: 'Find a concept' }).click();
+  await expect(page.getByLabel('Matching concepts').getByRole('status')).toHaveText(`${ids.length + 1} matches`);
   await page.getByRole('button', { name: extra.title, exact: true }).click();
   await page.getByRole('button', { name: 'Show in workspace Atlas' }).click();
   await expect(page.getByLabel('Selected concept')).toContainText(extra.title);
@@ -270,7 +272,8 @@ test('opens Progress for the mastered path when the active workspace contains on
   await page.getByRole('button', { name: 'Knowledge', exact: true }).click();
   await page.getByLabel('Workspace area').selectOption({ label: 'All workspaces' });
   await expect(page.getByRole('heading', { name: 'Path mastered' })).toBeVisible();
-  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveAttribute('aria-valuetext', '1 of 1');
+  await expect(page.getByRole('meter', { name: 'Concepts mastered' })).toHaveAttribute('aria-valuetext', '1 of 2');
+  await expect(page.locator('.knowledge-area-bar')).toContainText('2 concepts');
   await page.getByRole('button', { name: 'View progress' }).click();
   await expect(page.getByRole('heading', { name: 'Your field record.' })).toBeVisible();
   await expect(identity).toHaveText(reviewed.name, { timeout: 2500 });

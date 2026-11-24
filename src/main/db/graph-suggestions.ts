@@ -2,16 +2,19 @@ import assert from 'node:assert/strict';
 import { DEPTHS } from '../../shared/domain';
 import { coversDepth, demonstratedEvidence } from '../../shared/evidence-depth';
 import type { WorkspaceGraph } from '../../shared/graph';
+import { containsTechnicalText, plainConceptTitle } from '../../shared/plain-language';
 import type { Db } from './connection';
 import { portableProofAtDepth } from './evidence';
 
 export const changeApplicationReason = 'Review how this repository applies the concepts you already know.';
 
 export function suggestedChanges(db: Db, workspaceId: string): NonNullable<WorkspaceGraph['changeSuggestions']> {
-  const query = db.prepare(`SELECT g.kind, g.ref, g.reason, json_extract(g.result, '$.brief.title') AS title,
-    json_extract(g.result, '$.brief.conceptId') AS briefId, target.id AS target, target.portable
+  const query = db.prepare(`SELECT g.kind, g.ref, g.reason, json_extract(g.result, '$.brief.title') AS sourceTitle,
+    brief.id AS briefId, brief.title AS conceptTitle, target.id AS target, target.portable
     FROM repository_generations g LEFT JOIN concept_identity_links link ON link.legacy_concept_id = g.next_concept
-    JOIN concepts target ON target.id = coalesce(link.portable_concept_id, g.next_concept)
+    JOIN concepts target ON target.id = coalesce(link.canonical_concept_id, g.next_concept)
+    LEFT JOIN concept_identity_links overview ON overview.legacy_concept_id = g.result ->> '$.brief.conceptId'
+    LEFT JOIN concepts brief ON brief.id = coalesce(overview.canonical_concept_id, g.result ->> '$.brief.conceptId')
     WHERE g.workspace_id = ? AND g.depth = ? AND g.kind <> 'baseline' ORDER BY g.last_used DESC LIMIT 1`);
   const suggestions: NonNullable<WorkspaceGraph['changeSuggestions']> = {};
   for (const depth of DEPTHS) {
@@ -21,8 +24,12 @@ export function suggestedChanges(db: Db, workspaceId: string): NonNullable<Works
     const mastered = row.portable === 1 && portableProofAtDepth(db, row.target, depth);
     if (row.target === row.briefId || mastered) {
       assert.ok(row.kind === 'pr' || row.kind === 'commit');
-      assert.ok(typeof row.title === 'string' && typeof row.reason === 'string' && typeof row.ref === 'string');
-      suggestions[depth] = { kind: row.kind, ref: row.ref, title: row.title, reason: mastered ? changeApplicationReason : row.reason };
+      assert.ok(typeof row.sourceTitle === 'string' && typeof row.reason === 'string' && typeof row.ref === 'string');
+      assert.ok(row.conceptTitle === null || typeof row.conceptTitle === 'string');
+      const title = depth === 'high' ? plainConceptTitle(row.conceptTitle ?? row.sourceTitle) : row.sourceTitle;
+      const discloseSource = depth === 'high' && title !== row.sourceTitle && containsTechnicalText(row.sourceTitle);
+      suggestions[depth] = { kind: row.kind, ref: row.ref, title, reason: mastered ? changeApplicationReason : row.reason,
+        ...(discloseSource ? { sourceTitle: row.sourceTitle } : {}) };
     }
   }
   return suggestions;
@@ -66,11 +73,11 @@ export function tutorSuggestions(db: Db, workspaceId: string, atlas: AtlasConten
     JOIN lesson_mastery lm ON lm.workspace_id = c.workspace_id AND lm.concept_id = c.concept_id AND lm.depth = c.depth
     WHERE c.workspace_id = :workspace AND c.depth = :depth AND m.role = 'tutor' AND json_type(m.body, '$.recommendation') = 'object'
       AND json_extract(lm.state, '$.stage') IN ('understood', 'skipped')
-      AND lm.revision = json_extract(m.body, '$.masteryRevision') AND lm.lesson_id IS c.lesson_id
+      AND lm.revision = json_extract(m.body, '$.masteryRevision') AND lm.lesson_id IS coalesce(m.pinned_lesson_id, c.lesson_id)
     UNION ALL SELECT next_concept, reason, created_at, last_used FROM repository_generations WHERE workspace_id = :workspace AND depth = :depth
     ) SELECT wc.concept_id AS target, candidate.reason FROM candidates candidate
     LEFT JOIN concept_identity_links link ON link.legacy_concept_id = candidate.target
-    JOIN workspace_concepts wc ON wc.concept_id = coalesce(link.portable_concept_id, candidate.target)
+    JOIN workspace_concepts wc ON wc.concept_id = coalesce(link.canonical_concept_id, candidate.target)
       AND wc.workspace_id = :workspace AND wc.on_atlas = 1
     ORDER BY candidate.at DESC, candidate.seq DESC LIMIT 1`);
   const suggestions: NonNullable<WorkspaceGraph['suggestions']> = {};

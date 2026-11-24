@@ -4,7 +4,7 @@ import { call, IpcCallError } from '../api';
 import { providerHint, useDetectedProvider, useProviderDetection } from '../SetupProvider';
 import { errorMessage } from '../useRead';
 import { hasTutorApproval, setTutorApproval } from './tutorApproval';
-import { lessonKey, tutorName, useTutorJobs } from './TutorJobs';
+import { lessonKey, lessonViewKey, tutorName, useTutorJobs } from './TutorJobs';
 import { TutorConsent, TutorPreviewDialog } from './TutorPreview';
 
 type Provider = TutorRequest['provider'];
@@ -72,8 +72,9 @@ function useApproval(address: LessonAddress, provider: Provider, refresh: () => 
 
 function useAddressJob(address: LessonAddress, onLesson: (lesson: ReaderLesson, intent: TutorIntent) => void) {
   const { jobs, setVisible, dismiss, failRead } = useTutorJobs();
-  const key = lessonKey(address);
-  const job = jobs.get(key);
+  const visibleKey = lessonViewKey(address);
+  const candidate = jobs.get(lessonKey(address));
+  const job = candidate?.request.lessonId === address.lessonId ? candidate : undefined;
   const [completedBeforeOpening] = useState(() => job?.phase === 'ready' ? job.id : undefined);
   const apply = useEffectEvent((id: string, lesson: ReaderLesson) => {
     if (job?.phase !== 'ready' || job.id !== id) return;
@@ -86,15 +87,15 @@ function useAddressJob(address: LessonAddress, onLesson: (lesson: ReaderLesson, 
   });
 
   useEffect(() => {
-    setVisible(key);
-    return () => setVisible(previous => previous === key ? undefined : previous);
-  }, [key, setVisible]);
+    setVisible(visibleKey);
+    return () => setVisible(previous => previous === visibleKey ? undefined : previous);
+  }, [visibleKey, setVisible]);
   useEffect(() => {
     if (job?.phase !== 'ready') return;
     if (job.id !== completedBeforeOpening && job.lesson) { apply(job.id, job.lesson); return; }
-    const { workspaceId, conceptId, depth } = job.request;
+    const { workspaceId, conceptId, depth, lessonId } = job.request;
     let current = true;
-    void call('reader:lesson', { workspaceId, conceptId, depth }).then(
+    void call('reader:lesson', { workspaceId, conceptId, depth, lessonId }).then(
       lesson => { if (current) apply(job.id, lesson); },
       cause => { if (current) failedRead(job.id, cause); },
     );
@@ -114,7 +115,7 @@ export function useTutor(address: LessonAddress, title: string, demo: boolean, o
   const provider: Provider = demo ? 'demo' : detected;
   const approval = useApproval(address, provider, () => update(version => version + 1));
   const start = (request: TutorRequest, token: string) => queue.start({ request, token, title });
-  const review = useTutorPreview(start, lessonKey(address));
+  const review = useTutorPreview(start, lessonViewKey(address));
   const signedIn = demo || status?.state === 'signed-in';
   const running = job?.phase === 'running' || job?.phase === 'cancelling';
 
