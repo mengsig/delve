@@ -73,7 +73,8 @@ function useApproval(address: LessonAddress, provider: Provider, refresh: () => 
 function useAddressJob(address: LessonAddress, onLesson: (lesson: ReaderLesson, intent: TutorIntent) => void) {
   const { jobs, setVisible, dismiss, failRead } = useTutorJobs();
   const key = lessonKey(address);
-  const job = jobs.get(key);
+  const candidate = jobs.get(key);
+  const job = candidate?.request.lessonId === address.lessonId ? candidate : undefined;
   const [completedBeforeOpening] = useState(() => job?.phase === 'ready' ? job.id : undefined);
   const apply = useEffectEvent((id: string, lesson: ReaderLesson) => {
     if (job?.phase !== 'ready' || job.id !== id) return;
@@ -92,9 +93,9 @@ function useAddressJob(address: LessonAddress, onLesson: (lesson: ReaderLesson, 
   useEffect(() => {
     if (job?.phase !== 'ready') return;
     if (job.id !== completedBeforeOpening && job.lesson) { apply(job.id, job.lesson); return; }
-    const { workspaceId, conceptId, depth } = job.request;
+    const { workspaceId, conceptId, depth, lessonId } = job.request;
     let current = true;
-    void call('reader:lesson', { workspaceId, conceptId, depth }).then(
+    void call('reader:lesson', { workspaceId, conceptId, depth, lessonId }).then(
       lesson => { if (current) apply(job.id, lesson); },
       cause => { if (current) failedRead(job.id, cause); },
     );

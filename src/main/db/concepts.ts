@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { DomainError } from '../../shared/errors';
 import { nowIso, transaction, type Db } from './connection';
+import { canonicalEdges, edgeReachable } from './migration-edges';
 
 const CONCEPT_KEY = /^[a-z0-9][a-z0-9._/-]{0,199}$/;
 
@@ -105,17 +106,15 @@ export function upsertConceptInTransaction(db: Db, input: ConceptInput, onAtlas 
 
 /** True when `from` already (transitively) requires `to`. */
 function requires(db: Db, from: number, to: number): boolean {
-  const row = db
-    .prepare(
-      `WITH RECURSIVE reach (id) AS (
-         SELECT prerequisite_id FROM concept_edges WHERE concept_id = ?
-         UNION
-         SELECT e.prerequisite_id FROM concept_edges e JOIN reach r ON e.concept_id = r.id
-       )
-       SELECT 1 AS found FROM reach WHERE id = ? LIMIT 1`,
-    )
-    .get(from, to);
-  return row !== undefined;
+  assert.ok(Number.isSafeInteger(from) && from > 0);
+  assert.ok(Number.isSafeInteger(to) && to > 0);
+  if (db.prepare('SELECT 1 FROM concept_identity_links LIMIT 1').get()) {
+    return edgeReachable(canonicalEdges(db), from, to);
+  }
+  return db.prepare(`WITH RECURSIVE reach (id) AS (
+    SELECT prerequisite_id FROM concept_edges WHERE concept_id = ?
+    UNION SELECT e.prerequisite_id FROM concept_edges e JOIN reach r ON e.concept_id = r.id
+  ) SELECT 1 FROM reach WHERE id = ? LIMIT 1`).get(from, to) !== undefined;
 }
 
 function assertEdgeScope(concept: Concept, prerequisite: Concept): void {
@@ -134,6 +133,8 @@ export function addPrerequisite(db: Db, conceptId: number, prerequisiteId: numbe
 
 export function addPrerequisiteInTransaction(db: Db, conceptId: number, prerequisiteId: number): void {
   assert.ok(db.isTransaction, 'edge writes require a transaction');
+  conceptId = canonicalConceptId(db, conceptId);
+  prerequisiteId = canonicalConceptId(db, prerequisiteId);
   if (conceptId === prerequisiteId) throw new DomainError('CYCLE', 'A concept cannot require itself.');
   const concept = requireConcept(db, conceptId);
   const prerequisite = requireConcept(db, prerequisiteId);

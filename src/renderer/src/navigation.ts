@@ -12,7 +12,7 @@ import { errorMessage } from './useRead';
 export type Route =
   | { screen: 'atlas'; focus?: AtlasFocus; conceptId?: number; intent?: LearnIntent }
   | { screen: 'changes'; change?: ChangeRef; title?: string; job?: RepositoryJob }
-  | { screen: 'lesson'; conceptId: number; question?: string; change?: ChangeRef; environment?: string; review?: boolean }
+  | { screen: 'lesson'; conceptId: number; lessonId?: number; lessonDepth?: Depth; question?: string; change?: ChangeRef; environment?: string; review?: boolean }
   | { screen: 'progress'; conceptId?: number }
   | { screen: 'knowledge' }
   | { screen: 'setup' | 'first-run' }

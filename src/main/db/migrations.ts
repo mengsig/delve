@@ -405,9 +405,26 @@ export const MIGRATIONS: readonly Migration[] = [
       change_id TEXT NOT NULL CHECK (length(change_id) = 64),
       identity TEXT NOT NULL CHECK (length(identity) > 0),
       concept_id INTEGER NOT NULL REFERENCES concepts ON DELETE CASCADE,
-      PRIMARY KEY (workspace_id, change_id, identity)
+      PRIMARY KEY (workspace_id, change_id, identity, concept_id)
     );
-    CREATE INDEX change_concept_keys_concept ON change_concept_keys (concept_id);`,
+    CREATE INDEX change_concept_keys_concept ON change_concept_keys (concept_id);
+    UPDATE repository_generations AS g SET result = json_set(g.result, '$.brief.lessonId', l.id)
+    FROM lessons l WHERE g.kind <> 'baseline' AND l.cache_key = g.cache_key
+      AND l.workspace_id = g.workspace_id AND l.snapshot_id = g.snapshot_id AND l.depth = g.depth
+      AND l.provider = g.provider AND l.model = g.model AND l.schema_version = 'delve.lesson/1'
+      AND l.concept_id = g.result ->> '$.brief.conceptId';
+    ALTER TABLE messages ADD COLUMN pinned_lesson_id INTEGER REFERENCES lessons(id) ON DELETE SET NULL;
+    CREATE INDEX messages_by_pinned_lesson ON messages(pinned_lesson_id);
+    CREATE TABLE pinned_lesson_mastery (
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+      depth TEXT NOT NULL CHECK (depth IN ('high', 'medium', 'low')),
+      scope TEXT NOT NULL,
+      revision TEXT NOT NULL,
+      state TEXT,
+      lesson_id INTEGER NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+      PRIMARY KEY (workspace_id, concept_id, depth, lesson_id)
+    );`,
     afterSql: reconcileSavedChanges,
   },
 ];

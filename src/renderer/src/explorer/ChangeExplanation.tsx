@@ -20,16 +20,18 @@ export function ReadingDepth({ depth, onDepth }: { depth: Depth; onDepth: (depth
   </label>;
 }
 
-function Recommendation({ brief, depth, onLesson }: { brief: ChangeBrief; depth: Depth; onLesson: (id: number) => void }) {
+function Recommendation({ brief, depth, onLesson }: { brief: ChangeBrief; depth: Depth; onLesson: (id: number, lessonId?: number) => void }) {
   const { title, reason, conceptId } = brief.recommendation;
+  const overview = conceptId === brief.conceptId;
   return <aside className="change-next"><span className="eyebrow">Suggested next step</span>
     <h3>{depth === 'high' ? plainConceptTitle(title) : title}</h3><p>{reason}</p>
-    <button className="back" onClick={() => onLesson(conceptId)}>{conceptId === brief.conceptId ? 'Discuss this change' : 'Explore this concept'} →</button>
+    {(!overview || brief.lessonId !== undefined) && <button className="back" onClick={() => onLesson(conceptId, overview ? brief.lessonId : undefined)}>
+      {overview ? 'Discuss this change' : 'Explore this concept'} →</button>}
   </aside>;
 }
 
 function SavedBrief({ brief, address, onLesson, onEvidence }: {
-  brief: ChangeBrief; address: LessonAddress; onLesson: (id: number) => void; onEvidence: () => void;
+  brief: ChangeBrief; address: LessonAddress; onLesson: (id: number, lessonId?: number) => void; onEvidence: () => void;
 }) {
   const { workspaceId, conceptId, depth } = address;
   const lessonId = brief.lessonId;
@@ -53,7 +55,7 @@ function SavedBrief({ brief, address, onLesson, onEvidence }: {
 }
 
 export function ChangeExplanation({ description, lesson, workspaceId, depth, onLesson, onEvidence }: {
-  description?: string; lesson: LessonState; workspaceId: string; depth: Depth; onLesson: (id: number) => void; onEvidence: () => void;
+  description?: string; lesson: LessonState; workspaceId: string; depth: Depth; onLesson: (id: number, lessonId?: number) => void; onEvidence: () => void;
 }) {
   const { brief, stale, running, provider, chooseProvider } = lesson;
   return <>

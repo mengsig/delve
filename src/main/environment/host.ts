@@ -15,7 +15,7 @@ import { isActiveWorkspace } from '../db/workspaces';
 import { appendEntries } from '../reader/conversation';
 import { documentSchema, type Document } from '../reader/document';
 import { readLesson } from '../reader/ipc';
-import { lessonContext, selectLesson } from '../reader/stored-lesson';
+import { lessonContext, requestedLesson } from '../reader/stored-lesson';
 
 type OpenRequest = LabContract['lab:open']['request'];
 type Session = { id: string; request: OpenRequest; snapshotId: number | null; config: LabConfig; state: PackState | null; seq: number; expires: number; events: number[] };
@@ -44,7 +44,7 @@ function messageDocument(db: Db, request: OpenRequest, canonicalId: number, snap
 function resolveActivity(db: Db, request: OpenRequest) {
   active(db, request);
   const context = lessonContext(db, request);
-  const selected = selectLesson(db, context);
+  const selected = requestedLesson(db, context);
   if (selected.revision !== request.revision) return fail('The lesson changed. Reopen this activity.');
   const document = request.messageId === null ? selected.document : messageDocument(db, request, context.canonicalConceptId, context.snapshotId);
   const block = document?.blocks[request.blockIndex];

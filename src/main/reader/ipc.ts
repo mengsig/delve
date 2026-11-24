@@ -8,38 +8,26 @@ import { getWorkspace } from '../db/workspaces';
 import { isDemoWorkspace } from '../db/demo';
 import { addMessage, readHistory } from './conversation';
 import { publicBlocks } from './document';
-import { lessonContext, selectLesson } from './stored-lesson';
+import { lessonContext, requestedLesson } from './stored-lesson';
 import { canRecommend, hasVerifiedMastery, loadMastery, publicMastery, requireMasteryRevision, saveMastery } from '../tutor/mastery';
 import { answerFoundation, foundationIntroduction, readFoundation } from '../tutor/foundation-progress';
 
-export const address = z.strictObject({ workspaceId: z.uuid(), conceptId: z.int().positive(), depth: z.enum(DEPTHS) });
+export const address = z.strictObject({ workspaceId: z.uuid(), conceptId: z.int().positive(), depth: z.enum(DEPTHS), lessonId: z.int().positive().optional() });
 export const readerSchemas = {
   'reader:lesson': address,
   'reader:start-topic': z.strictObject({ workspaceId: z.uuid() }),
   'reader:message': address.extend({ text: z.string().trim().min(1).max(4000) }),
   'reader:skip': address.extend({ revision: z.string().regex(/^[a-f0-9]{64}$/) }),
   'reader:foundation': address.extend({
-    lessonId: z.int().positive().optional(),
     decision: z.strictObject({ revision: z.string().regex(/^[a-f0-9]{64}$/), answer: z.int().min(0).max(3).nullable() }).optional(),
   }),
 };
 
 function lessonState(db: Db, address: LessonAddress, loadDemo: boolean) {
   const context = lessonContext(db, address);
-  const inherited = hasVerifiedMastery(db, context);
-  const selected = selectLesson(db, context, loadDemo && !inherited);
+  const inherited = address.lessonId === undefined && hasVerifiedMastery(db, context);
+  const selected = requestedLesson(db, context, loadDemo && !inherited);
   return { context, selected, mastery: loadMastery(db, context, selected, inherited) };
-}
-
-function foundationLessonId(db: Db, context: ReturnType<typeof lessonContext>, latest: number | null, lessonId?: number) {
-  if (lessonId === undefined || lessonId === latest) return latest;
-  const row = db.prepare(`SELECT 1 FROM lessons WHERE id = :id AND workspace_id = :workspace
-    AND (concept_id = :canonical OR concept_id IN (
-      SELECT legacy_concept_id FROM concept_identity_links WHERE canonical_concept_id = :canonical
-    )) AND depth = :depth AND snapshot_id IS :snapshot`)
-    .get({ id: lessonId, workspace: context.workspaceId, canonical: context.canonicalConceptId, depth: context.depth, snapshot: context.snapshotId });
-  if (!row) throw new DomainError('LESSON_CHANGED', 'Reopen the change to see the current lesson.');
-  return lessonId;
 }
 
 export function readLesson(db: Db, address: LessonAddress): ReaderLesson {
@@ -85,7 +73,7 @@ export function readerHandlers(db: Db): Handlers {
     'reader:lesson': request => readLesson(db, request),
     'reader:foundation': request => {
       const { context, selected } = lessonState(db, request, false);
-      const lessonId = foundationLessonId(db, context, selected.id, request.lessonId);
+      const lessonId = selected.id;
       if (request.decision) return answerFoundation(db, context, lessonId, request.decision);
       const step = readFoundation(db, context, lessonId);
       const introduction = step ? undefined : foundationIntroduction(db, context, lessonId);
@@ -94,7 +82,7 @@ export function readerHandlers(db: Db): Handlers {
     'reader:skip': request => skipLesson(db, request),
     'reader:message': request => {
       const context = lessonContext(db, request);
-      const selected = selectLesson(db, context);
+      const selected = requestedLesson(db, context);
       return addMessage(db, context, selected.id, request.text);
     },
   };

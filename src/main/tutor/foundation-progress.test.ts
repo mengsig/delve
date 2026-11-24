@@ -93,6 +93,19 @@ it('derives and saves foundation links, skips covering proof and unlocks the exp
   expect(getGlobalKnowledgeGraph(db).concepts.filter(c => c.key === receipt.key)).toHaveLength(1);
 });
 
+it('probes and grades a conflicting foundation without borrowing another definition’s mastery', async () => {
+  const unrelated = linked({ ...receipt, summary: 'A receipt is an accounting document.' });
+  recordEvidence(db, { conceptId: unrelated.id, depth: 'low', status: 'demonstrated', source: 'check', masteryVerified: true });
+  session = new TutorSession(db, async () => ({ ...opening, foundations: [receipt] }));
+  const first = (await run()).foundation!;
+  expect(first).toMatchObject({ phase: 'probe', title: receipt.title });
+  expect(respond(first.revision, 0).step).toBeNull();
+  const learned = getGlobalKnowledgeGraph(db).concepts.find(c => c.summary === receipt.summary)!;
+  expect(learned.id).not.toBe(unrelated.id);
+  expect(listEvidence(db, unrelated.id)).toHaveLength(1);
+  expect(listEvidence(db, learned.id)).toMatchObject([{ status: 'demonstrated', masteryVerified: true }]);
+});
+
 it('orders questions bottom-up, infers evidence from the answer, and never repeats an answered probe', async () => {
   const basic = linked(receipt);
   const advanced = linked(timeout);

@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 import { addPrerequisite, upsertConcept, upsertConceptInTransaction } from './concepts';
 import { openDatabase, transaction, type Db } from './connection';
 import { seedDemoWorkspaces } from './demo';
 import { readWorkspaceGraph } from './graph';
-import { persistTutorPrerequisites } from './tutor-prerequisites';
+import { findTutorPrerequisite, persistTutorPrerequisites } from './tutor-prerequisites';
 import { addWorkspace } from './workspaces';
 
 let db: Db;
@@ -18,7 +18,12 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-describe('tutor prerequisites', () => {
+  it('rejects conflicting descriptions and aliases, including unscoped local keys', () => {
+    const local = upsertConcept(db, { key: 'tcp', title: 'Transport', summary: 'A protocol.', portable: false, workspaceId: workspace });
+    expect(findTutorPrerequisite(db, workspace, candidate('tcp', 'Transport'))).toBeNull();
+    expect(findTutorPrerequisite(db, workspace, { key: 'http', title: 'Transport', summary: 'A protocol.' })).toBeNull();
+    expect(findTutorPrerequisite(db, workspace, { key: 'tcp', title: 'Transport', summary: 'A protocol.' })?.id).toBe(local.id);
+  });
   it('reuses local and portable concepts without changing their text, and deduplicates', () => {
     const target = upsertConcept(db, { key: 'target', title: 'Target', portable: false, workspaceId: workspace });
     const local = upsertConcept(db, { key: 'local', title: '  Shared Name ', summary: 'Existing local', portable: false, workspaceId: workspace });
@@ -26,7 +31,9 @@ describe('tutor prerequisites', () => {
     const portable = upsertConcept(db, { key: 'portable', title: 'Portable', summary: 'Existing portable', portable: true, workspaceId: other });
     upsertConcept(db, { key: 'private', title: 'Private', portable: false, workspaceId: other });
     const result = transaction(db, () => persistTutorPrerequisites(db, workspace, target.id, [
-      candidate('new-key', 'shared   name'), candidate('local', 'Changed'), candidate('portable', 'Changed'), candidate('private', 'Private'),
+      { ...candidate('new-key', 'shared   name'), summary: 'Existing local' },
+      { ...candidate('local', 'Changed'), summary: 'Existing local' },
+      { ...candidate('portable', 'Changed'), summary: 'Existing portable' }, candidate('private', 'Private'),
     ]));
     expect(result.map(item => [item.concept.id, item.candidateKey])).toEqual([[local.id, 'new-key'], [portable.id, 'portable'], [expect.any(Number), 'private']]);
     expect(result[0]!.concept.summary).toBe('Existing local');
@@ -36,8 +43,8 @@ describe('tutor prerequisites', () => {
   });
 
   it('omits self and cycles without leaking membership and preserves valid siblings', () => {
-    const target = upsertConcept(db, { key: 'target', title: 'Target', portable: false, workspaceId: workspace });
-    const cycle = upsertConcept(db, { key: 'cycle', title: 'Cycle', portable: false, workspaceId: workspace });
+    const target = upsertConcept(db, { ...candidate('target', 'Target'), portable: false, workspaceId: workspace });
+    const cycle = upsertConcept(db, { ...candidate('cycle', 'Cycle'), portable: false, workspaceId: workspace });
     addPrerequisite(db, cycle.id, target.id);
     db.prepare('DELETE FROM workspace_concepts WHERE workspace_id = ? AND concept_id = ?').run(workspace, cycle.id);
     const result = transaction(db, () => persistTutorPrerequisites(db, workspace, target.id, [candidate('target', 'Target'), candidate('cycle', 'Cycle'), candidate('valid', 'Valid')]));
@@ -46,16 +53,34 @@ describe('tutor prerequisites', () => {
     expect(readWorkspaceGraph(db, workspace).edges).toEqual([{ conceptId: target.id, prerequisiteId: result[0]!.concept.id }]);
   });
 
+  it('skips an obvious self prerequisite when the target has no description', () => {
+    const target = upsertConcept(db, { key: 'target', title: 'Target', portable: false, workspaceId: workspace });
+    const result = transaction(db, () => persistTutorPrerequisites(db, workspace, target.id, [candidate('target', 'Target')]));
+    expect(result).toEqual([]);
+    expect(readWorkspaceGraph(db, workspace).edges).toEqual([]);
+  });
+
   it('orders direct and transitive dependencies before dependents while keeping ready candidates stable', () => {
     const target = upsertConcept(db, { key: 'target', title: 'Target', portable: true, workspaceId: workspace });
-    const a = upsertConcept(db, { key: 'a', title: 'A', portable: true });
-    const b = upsertConcept(db, { key: 'b', title: 'B', portable: true });
+    const a = upsertConcept(db, { ...candidate('a'), portable: true });
+    const b = upsertConcept(db, { ...candidate('b'), portable: true });
     const intermediate = upsertConcept(db, { key: 'intermediate', title: 'Intermediate', portable: true });
-    const c = upsertConcept(db, { key: 'c', title: 'C', portable: true });
+    const c = upsertConcept(db, { ...candidate('c'), portable: true });
     addPrerequisite(db, a.id, intermediate.id);
     addPrerequisite(db, intermediate.id, c.id);
     const result = transaction(db, () => persistTutorPrerequisites(db, workspace, target.id, [candidate('a'), candidate('b'), candidate('c')]));
     expect(result.map(row => row.concept.id)).toEqual([b.id, c.id, a.id]);
+  });
+
+  it('orders prerequisites through migrated alias paths', () => {
+    const target = upsertConcept(db, { ...candidate('target'), portable: true, workspaceId: workspace });
+    const advanced = upsertConcept(db, { ...candidate('advanced'), portable: true, workspaceId: workspace });
+    const basic = upsertConcept(db, { ...candidate('basic'), portable: true, workspaceId: workspace });
+    const legacy = upsertConcept(db, { ...candidate('old'), portable: false, workspaceId: workspace });
+    db.prepare('INSERT INTO concept_edges VALUES (?, ?, ?)').run(legacy.id, basic.id, '2026-01-01');
+    db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, canonical_concept_id) VALUES (?, ?)').run(legacy.id, advanced.id);
+    const result = transaction(db, () => persistTutorPrerequisites(db, workspace, target.id, [candidate('advanced'), candidate('basic')]));
+    expect(result.map(row => row.concept.id)).toEqual([basic.id, advanced.id]);
   });
 
   it('keeps hidden change targets hidden while promoting prerequisites', () => {
@@ -68,7 +93,7 @@ describe('tutor prerequisites', () => {
   it('does not reuse legacy aliases or local concepts for portable targets', () => {
     const target = upsertConcept(db, { key: 'target', title: 'Target', portable: true, workspaceId: workspace });
     const legacy = upsertConcept(db, { key: 'old', title: 'Foundation', portable: false, workspaceId: workspace });
-    const canonical = upsertConcept(db, { key: 'canonical', title: 'Foundation', portable: true });
+    const canonical = upsertConcept(db, { ...candidate('canonical', 'Foundation'), portable: true });
     db.prepare('INSERT INTO concept_identity_links (legacy_concept_id, canonical_concept_id) VALUES (?, ?)').run(legacy.id, canonical.id);
     const result = transaction(db, () => persistTutorPrerequisites(db, workspace, target.id, [candidate('old', 'Foundation')]));
     expect(result.map(row => row.concept.id)).toEqual([canonical.id]);
@@ -82,8 +107,6 @@ describe('tutor prerequisites', () => {
     expect(() => transaction(db, () => persistTutorPrerequisites(db, workspace, local.id, [candidate('a'), candidate('b', ' ')]))).toThrow(/title/);
     expect(readWorkspaceGraph(db, workspace).edges).toEqual([]);
   });
-});
-
 it('keeps live foundations separate from the sample atlas', () => {
   seedDemoWorkspaces(db);
   const sample = db.prepare("SELECT id, title FROM concepts WHERE key LIKE 'Demo:%' LIMIT 1").get()!;

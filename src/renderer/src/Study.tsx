@@ -56,7 +56,7 @@ function StudyLesson({ route, common, remember, commit, refresh, backTo }: {
     else refresh();
   }
   return <EnvironmentActivity.Provider value={{ resumeKey: environment, onUse: used, onRead: read }}>
-    <Lesson {...common} conceptId={conceptId} initialQuestion={route.question} initialReview={route.review} onEvidence={onEvidence}
+    <Lesson {...common} conceptId={conceptId} lessonId={route.lessonDepth === depth ? route.lessonId : undefined} initialQuestion={route.question} initialReview={route.review} onEvidence={onEvidence}
       onBack={common.backLabel ? common.onBack : () => backTo({ screen: 'atlas', conceptId })}
       onBackToChange={change ? () => backTo({ screen: 'changes', change }) : undefined} />
   </EnvironmentActivity.Provider>;
@@ -77,7 +77,7 @@ function StudyChanges({ route, common, remember, visit, refresh }: {
   }, [change, title, workspace.id, depth, demo, remember]);
   return <Changes {...common} onAdd={() => visit({ screen: 'setup' })} selected={change} openedJob={job?.kind === 'change' ? job : undefined} onEvidence={refresh}
     onSelect={(selection?: ChangeRef, label?: string) => visit({ screen: 'changes', change: selection, title: label }, true)}
-    onLesson={conceptId => visit({ screen: 'lesson', conceptId, change: change ?? (demo ? { kind: 'pr', ref: '184' } : undefined) })}
+    onLesson={(conceptId, lessonId) => visit({ screen: 'lesson', conceptId, lessonId, lessonDepth: depth, change: change ?? (demo ? { kind: 'pr', ref: '184' } : undefined) })}
     onAtlas={id => visit({ screen: 'atlas', focus: change ? { id, change } : undefined })} />;
 }
 
@@ -92,7 +92,7 @@ function StudyPage({ props, fullGraph }: { props: Props; fullGraph: NonNullable<
   const returnToKnowledge = route.screen === 'lesson' || route.screen === 'progress' ? nav.returnToKnowledge : undefined;
   const common: ReaderProps = { workspace, graph, depth, view, onDepth: changeDepth,
     onBack: returnToKnowledge ?? toAtlas, backLabel: returnToKnowledge ? '← Back to Knowledge' : undefined,
-    onLesson: openLesson, onProgress: () => visit({ screen: 'progress', conceptId: activeConceptId }) };
+    onLesson: id => openLesson(id), onProgress: () => visit({ screen: 'progress', conceptId: activeConceptId }) };
   if (route.screen === 'lesson') return <StudyLesson key={route.conceptId} route={route} common={common} remember={remember}
     commit={study.commit} refresh={study.refresh} backTo={nav.backTo} />;
   if (route.screen === 'changes') return <StudyChanges route={route} common={common} remember={remember} visit={visit} refresh={study.refresh} />;

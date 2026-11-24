@@ -39,13 +39,15 @@ function decodeMessage(row: Record<string, unknown>): ReaderMessage {
     observation: entry.observation, correct: entry.correct, reasoningFeedback: entry.reasoningFeedback, recommendation: entry.recommendation };
 }
 
-export function readHistory(db: Db, { workspaceId, canonicalConceptId, depth }: LessonContext) {
+export function readHistory(db: Db, { workspaceId, canonicalConceptId, depth, lessonId }: LessonContext) {
   const rows = db.prepare(`SELECT m.id, m.role, m.body FROM messages m JOIN conversations c ON c.id = m.conversation_id
     LEFT JOIN lessons l ON l.id = c.lesson_id
     WHERE c.workspace_id = :workspace AND coalesce(c.depth, l.depth) = :depth
     AND (c.concept_id = :concept OR c.concept_id IN
       (SELECT legacy_concept_id FROM concept_identity_links WHERE canonical_concept_id = :concept))
-    ORDER BY m.id DESC LIMIT :limit`).all({ workspace: workspaceId, concept: canonicalConceptId, depth, limit: historyLimit + 1 });
+    ${lessonId === undefined ? '' : 'AND m.pinned_lesson_id = :lessonId'}
+    ORDER BY m.id DESC LIMIT :limit`).all({ workspace: workspaceId, concept: canonicalConceptId, depth, limit: historyLimit + 1,
+      ...(lessonId === undefined ? {} : { lessonId }) });
   const messages = rows.slice(0, historyLimit).reverse().map(decodeMessage);
   return { messages, earlierMessages: rows.length > historyLimit };
 }
@@ -60,11 +62,13 @@ export function appendEntries(db: Db, context: LessonContext, lessonId: number |
     .get(context.workspaceId, context.conceptId, context.depth, lessonId, context.title, now, now);
   assert.ok(row && typeof row.id === 'number', 'the turn must have a conversation');
   const conversationId = row.id;
-  const insert = db.prepare('INSERT INTO messages (conversation_id, role, body, created_at) VALUES (?, ?, ?, ?)');
+  const insert = context.lessonId === undefined
+    ? db.prepare('INSERT INTO messages (conversation_id, role, body, created_at) VALUES (?, ?, ?, ?)')
+    : db.prepare('INSERT INTO messages (conversation_id, role, body, created_at, pinned_lesson_id) VALUES (?, ?, ?, ?, ?)');
   return entries.map(({ role, ...body }) => {
     const hasLab = role === 'tutor' && body.lesson?.blocks.some(block => block.type === 'environment');
     const saved = hasLab ? { ...body, labSnapshotId: context.snapshotId } : body;
-    const result = insert.run(conversationId, role, JSON.stringify(saved), now);
+    const result = insert.run(conversationId, role, JSON.stringify(saved), now, ...(context.lessonId === undefined ? [] : [context.lessonId]));
     assert.equal(result.changes, 1);
     return { role, text: body.text, id: Number(result.lastInsertRowid), blocks: body.lesson && teachingBlocks(body.lesson),
       recommendation: body.recommendation, observation: body.observation, correct: body.correct, reasoningFeedback: body.reasoningFeedback };

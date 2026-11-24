@@ -88,6 +88,7 @@ const changeTask = [
   'At Medium and Low explain how the parts interact in mechanics and include a short ordered trace when supported. At Low name important changed files and functions and explain the boundary condition in boundary. Return a short contiguous excerpt copied verbatim from the diff, including patch prefixes. Use null or empty arrays where unavailable or outside the chosen depth.',
   'List the affected concepts and prerequisite edges. Reuse the same keys for concepts that also belong in foundations. List only directly affected keys in touched. Link those keys to concrete diff spans using the exact file path, side old for removed lines or new for added lines, and inclusive source line numbers. Each span must contain only consecutive changed lines on that side. Return empty spans if unavailable.',
   'Reuse the keys in changeConcepts for affected ideas already mapped for this change, even when the title or explanation changes with depth.',
+  'Set overviewConceptKey to an affected local concept key only when it teaches the same idea as the brief itself. Otherwise set overviewConceptKey to null.',
   'Recommend studying a feature, a prerequisite, or this change brief itself (key null). Give a specific reason.',
 ].join('\n');
 

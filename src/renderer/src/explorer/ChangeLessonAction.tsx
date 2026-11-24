@@ -58,14 +58,16 @@ function ChangeSourceReview({ lesson, depth, preview }: { lesson: LessonState; d
 }
 
 export function ChangeLessonAction({ lesson, depth, onLesson, onRefreshDetails, checkingDetails }: {
-  lesson: LessonState; depth: Depth; onLesson: (id: number) => void; onRefreshDetails: () => void; checkingDetails: boolean;
+  lesson: LessonState; depth: Depth; onLesson: (id: number, lessonId?: number) => void; onRefreshDetails: () => void; checkingDetails: boolean;
 }) {
   const { brief, running, review, saved, approval, provider, canPrepare } = lesson;
   const preview = review.result.status === 'ready' ? review.result.value : undefined;
   const previewError = review.result.status === 'error' ? review.result.message : undefined;
   return <div className="change-lesson-action">
     {brief && !checkingDetails && <div className="actions">
-      <TeachButton onClick={() => onLesson(brief.conceptId)} />
+      {brief.lessonId !== undefined
+        ? <TeachButton onClick={() => onLesson(brief.conceptId, brief.lessonId)} />
+        : <p role="status">The teaching session for this saved brief is unavailable.</p>}
       {lesson.sourceAvailable && !running && !lesson.reviewRefresh &&
         <button onClick={() => lesson.setReviewRefresh(true)}>Preview diff request</button>}
     </div>}

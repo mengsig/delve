@@ -18,7 +18,7 @@ type JobRequest = JobInput & ({ kind: 'map' } | { kind: 'change'; change: Change
 type JobState =
   | { phase: 'generating'; cancelError?: string }
   | { phase: 'cancelling' | 'cancelled' }
-  | { phase: 'ready'; conceptId?: number }
+  | { phase: 'ready'; conceptId?: number; lessonId?: number }
   | { phase: 'failed'; failure: RepositoryFailure };
 
 export type RepositoryJob = JobRequest & JobState & { key: string; requestId: string };
@@ -70,9 +70,9 @@ function useJobStore() {
       return updated;
     });
   }
-  function complete(job: RepositoryJob, conceptId?: number) {
+  function complete(job: RepositoryJob, result?: { conceptId: number; lessonId?: number }) {
     setCompletions(previous => new Map(previous).set(job.workspace.id, job.requestId));
-    replace(job, { ...job, phase: 'ready', conceptId });
+    replace(job, { ...job, phase: 'ready', ...result });
   }
   return { jobs, completions, replace, complete, add: (job: RepositoryJob) => setJobs(previous => new Map(previous).set(job.key, job)) };
 }
@@ -83,7 +83,7 @@ async function generateRepository(job: RepositoryJob) {
   if (result.kind !== expected) throw new Error('The provider returned a different type of result.');
   if (result.kind === 'baseline') return;
   if (result.brief.conceptId < 1) throw new Error('The change lesson was not saved. Review the request and retry.');
-  return result.brief.conceptId;
+  return { conceptId: result.brief.conceptId, lessonId: result.brief.lessonId };
 }
 
 function useMapQueue(): MapJobs {

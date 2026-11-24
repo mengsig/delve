@@ -11,6 +11,7 @@
 
 ### Fixed
 - Regenerating a change lesson reuses its Knowledge map concepts. Existing duplicates are reconciled with depth-specific mastery preserved, and the map and finder use the same concept total as area mastery.
+- Change concepts and tutor foundations use corroborated identities, preserving separate evidence for different meanings. Prerequisite cycles are checked across migrated aliases, and saved briefs open the exact provider lesson and its progress.
 - Change briefs keep usable diff links when some suggested lines fall outside the approved diff. Sequential diagrams show each step once with arrows between steps.
 
 ## [0.1.1] - 2026-11-23

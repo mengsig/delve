@@ -269,6 +269,7 @@ test('keeps one Knowledge node when a PR footprint and brief teach the same idea
   await pull.click();
   await page.getByLabel('Reading depth').selectOption('high');
   writeExplanation(directory, { concepts: [concept, { ...newConcept, title: plainChangeTitle }], conceptTitle: plainChangeTitle,
+    overviewConceptKey: newConcept.key,
     example: simpleExample, what: 'When a delivery fails, the worker can try again.', mechanics: null });
   await page.getByRole('button', { name: 'Teach me this change' }).click();
   await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible();
@@ -284,6 +285,37 @@ test('keeps one Knowledge node when a PR footprint and brief teach the same idea
   const request = JSON.parse(readFileSync(join(directory, 'request.json'), 'utf8'));
   expect(request.stdin).toContain(`"changeConcepts":[{"key":"${newConcept.key}","title":"${plainChangeTitle}"`);
   await verifyChangeKnowledge(page, info, 'pr-knowledge-high-after-low');
+});
+
+test('opens the selected provider’s saved PR lesson when both providers used the same depth', async ({ desktop: { page, directory } }) => {
+  createExplorerFixture(directory);
+  await mapFixture(page, 'https://github.com/contour/dispatch', directory, true);
+  await page.getByRole('option', { name: new RegExp(prTitle) }).click();
+  await page.getByLabel('Reading depth').selectOption('medium');
+  const codex = 'Codex explains the retry budget.';
+  const claude = 'Claude explains how delivery retries work.';
+  const transcript = page.getByLabel('Lesson transcript');
+  const teach = page.getByRole('button', { name: 'Teach me this change', exact: true });
+  const explanation = page.getByRole('tabpanel', { name: 'Explanation' });
+  const provider = explanation.getByRole('group', { name: 'Brief provider' });
+  const back = page.getByRole('button', { name: '← Back to change brief' });
+
+  writeExplanation(directory, { what: codex });
+  await teach.click();
+  await expect(transcript).toContainText(codex);
+  await back.click();
+  await explanation.getByText('Provider · Codex', { exact: true }).click();
+  await provider.getByRole('button', { name: /Claude Code/ }).click();
+  writeExplanation(directory, { what: claude });
+  await teach.click();
+  await expect(transcript).toContainText(claude);
+  await back.click();
+  await explanation.getByText('Provider · Claude Code', { exact: true }).click();
+  await provider.getByRole('button', { name: /Codex/ }).click();
+  await expect(explanation).toContainText(codex);
+  await teach.click();
+  await expect(transcript).toContainText(codex);
+  await expect(transcript).not.toContainText(claude);
 });
 
 test('draws a low-depth trace once with arrows and discloses technical text at high depth', async ({ desktop: { page, directory } }, info) => {

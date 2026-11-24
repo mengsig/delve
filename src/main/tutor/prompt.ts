@@ -9,7 +9,7 @@ import { lessonCacheKey, TUTOR_GENERATION } from '../db/lessons';
 import { cacheModel as modelCacheKey, selectModel } from '../providers/model';
 import { readHistory, teachingBlocks } from '../reader/conversation';
 import { resolveWorkspaceSource } from '../db/workspaces';
-import { lessonContext, storedLesson } from '../reader/stored-lesson';
+import { lessonContext, requestedLesson } from '../reader/stored-lesson';
 import { checkResponse, type ResponseToCheck } from './assessment';
 import { foundationInstructions } from './foundation-content';
 import { foundationRecap, readFoundation } from './foundation-progress';
@@ -114,9 +114,9 @@ function prerequisiteContext(graph: ReturnType<typeof readWorkspaceGraph>, conte
 export function prepareTurn(db: Db, request: TutorRequest) {
   const context = lessonContext(db, request);
   if (context.demo !== (request.provider === 'demo')) throw new DomainError('PROVIDER_SCOPE', 'Choose a provider for this workspace.');
-  const selected = storedLesson(db, context);
+  const selected = requestedLesson(db, context, false);
   if (readFoundation(db, context, selected.id)) throw new DomainError('FOUNDATION_PENDING', 'Finish or skip the foundations first.');
-  const mastery = loadMastery(db, context, selected, hasVerifiedMastery(db, context));
+  const mastery = loadMastery(db, context, selected, request.lessonId === undefined && hasVerifiedMastery(db, context));
   const intent = request.intent;
   const needsDiagram = intent.kind === 'ask' && /\b(diagrams?|visual(?:s|ly|i[sz](?:e|ation))?|flowcharts?)\b|\bdraw\s+(?:me\s+)?(?:(?:a|an|the)\s+)?(?:diagram|picture|graph|flow|system trace|this|it)\b/i.test(intent.text);
   if (intent.kind === 'review') requireMasteryRevision(mastery, intent.revision, ['teaching', 'review', 'understood', 'skipped']);

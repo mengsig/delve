@@ -55,13 +55,63 @@ it('keeps the high-depth change concept name and summary after generating a deta
   expect(graph.changeSuggestions?.high).toMatchObject({ title: plain.conceptTitle, sourceTitle: approved.preview.title });
 });
 
-describe('stable change concept identities', () => {
-  const title = 'Keeping unconfirmed data';
-  const affected = { key: 'pending-data', title, summary: 'Keep recently sent data until acknowledged.', portable: false };
-  const details = { key: 'retry-policy', title: 'Deciding when to retry', summary: 'Wait before retrying.', portable: false };
-  const proposal = { ...change, conceptTitle: title, concepts: [affected, details], touched: [affected.key, details.key],
+const affected = { key: 'pending-data', title: 'Keeping unconfirmed data', summary: 'Keep recently sent data until acknowledged.', portable: false };
+const details = { key: 'retry-policy', title: 'Deciding when to retry', summary: 'Wait before retrying.', portable: false };
+const stableChange = { ...change, conceptTitle: affected.title, overviewConceptKey: affected.key,
+    concepts: [affected, details], touched: [affected.key, details.key],
     edges: [{ concept: affected.key, prerequisite: details.key }], recommendation: { key: affected.key, reason: 'Start here.' } };
 
+describe('corroborated change concept identities', () => {
+  const proposal = stableChange;
+  it.each([true, false])('keeps a footprint and its depth evidence when portability flips (portable first: %s)', portable => {
+    const approved = source({ kind: 'pr', ref: '42' }, previous);
+    const first = { ...approved, request: { ...approved.request, depth: portable ? 'high' as const : 'low' as const } };
+    const second = { ...approved, cacheKey: 'other-depth', request: { ...approved.request, depth: portable ? 'low' as const : 'high' as const } };
+    const input = { ...details, portable };
+    const initial = persistGeneration(db, first, { ...proposal, overviewConceptKey: null, concepts: [input], touched: [input.key], edges: [],
+      recommendation: { key: input.key, reason: 'Review the retry policy.' } });
+    if (initial.kind !== 'change') throw new Error('Expected a change brief.');
+    const id = initial.brief.recommendation.conceptId;
+    recordEvidence(db, { workspaceId, conceptId: id, depth: first.request.depth, status: 'demonstrated',
+      source: 'check', masteryVerified: true });
+    expect(persistGeneration(db, second, { ...proposal, overviewConceptKey: null, concepts: [{ ...input, portable: !portable }], touched: [input.key],
+      edges: [], recommendation: { key: input.key, reason: 'Review the retry policy.' },
+    })).toMatchObject({ brief: { touched: [{ id }] } });
+    const graph = getGlobalKnowledgeGraph(db);
+    expect(graph.concepts).toHaveLength(2);
+    expect(graph.concepts).toContainEqual(expect.objectContaining({ id, masteredDepth: first.request.depth }));
+    expect(readWorkspaceGraph(db, workspaceId, true).evidence).toMatchObject([{ conceptId: id, depth: first.request.depth }]);
+  });
+
+  it('retains a mapped portable identity when its alias and portability change together', () => {
+    const input = { key: 'transmission-control-protocol', title: 'Transmission Control Protocol',
+      summary: 'An ordered stream of bytes.', portable: true };
+    const tcp = upsertConcept(db, { ...input, key: 'tcp', workspaceId });
+    const approved = source({ kind: 'pr', ref: '42' }, previous);
+    const first = { ...proposal, overviewConceptKey: null, concepts: [input], edges: [], touched: [input.key],
+      recommendation: { key: input.key, reason: 'Review the transport.' } };
+    expect(persistGeneration(db, approved, first)).toMatchObject({ brief: { touched: [{ id: tcp.id }] } });
+    const next = { ...approved, cacheKey: 'deeper', request: { ...approved.request, depth: 'low' as const } };
+    expect(persistGeneration(db, next, { ...first, concepts: [{ ...input, key: 'tcp', title: 'TCP', portable: false }],
+      touched: ['tcp'], recommendation: { ...first.recommendation, key: 'tcp' } })).toMatchObject({ brief: { touched: [{ id: tcp.id }] } });
+    expect(getGlobalKnowledgeGraph(db).concepts).toHaveLength(2);
+    expect(readWorkspaceGraph(db, workspaceId).concepts).toMatchObject([{ id: tcp.id, key: tcp.key, portable: true }]);
+  });
+
+  it('keeps a new same-title footprint separate when the overview teaches a different idea', () => {
+    const approved = source({ kind: 'pr', ref: '42' }, previous);
+    const high = { ...approved, request: { ...approved.request, depth: 'high' as const } };
+    const result = persistGeneration(db, high, { ...proposal, overviewConceptKey: undefined,
+      summary: 'A delivery is delayed while a task is still active.' });
+    if (result.kind !== 'change') throw new Error('Expected a change brief.');
+    expect(result.brief.touched[0]?.id).not.toBe(result.brief.conceptId);
+    expect(getGlobalKnowledgeGraph(db).concepts).toHaveLength(3);
+  });
+});
+
+describe('stable change overview and footprint', () => {
+  const proposal = stableChange;
+  const { title } = affected;
   it('upserts a PR overview and its footprint when regenerated at the same depth and across depths', () => {
     const approved = source({ kind: 'pr', ref: '42' }, previous);
     const high = { ...approved, request: { ...approved.request, depth: 'high' as const } };
@@ -91,7 +141,7 @@ describe('stable change concept identities', () => {
   it('coalesces a low-first footprint with its later plain overview and projects saved references', () => {
     const approved = source({ kind: 'pr', ref: '42' }, previous);
     const low = { ...approved, request: { ...approved.request, depth: 'low' as const } };
-    const first = persistGeneration(db, low, { ...proposal, conceptTitle: null });
+    const first = persistGeneration(db, low, { ...proposal, conceptTitle: null, overviewConceptKey: null });
     if (first.kind !== 'change') throw new Error('Expected a change brief.');
     const prior = first.brief.recommendation.conceptId;
     expect(prior).not.toBe(first.brief.conceptId);

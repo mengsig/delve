@@ -24,6 +24,7 @@ function saveOpening(db: Db, turn: PreparedTurn, lesson: Document) {
 
 function reuseOpening(db: Db, turn: PreparedTurn): boolean {
   if (turn.request.intent.kind !== 'teach' || turn.selected.invalidLatest) return false;
+  if (turn.context.lessonId !== undefined) return true;
   if (turn.reused) return true;
   const cached = storedLesson(db, turn.context, turn.cacheKey);
   if (!cached.document || cached.invalidLatest || !freshCheckSchema.safeParse(checkIn(cached.document)).success) return false;
@@ -115,12 +116,12 @@ export async function executeTurn(db: Db, generate: Generate, turn: PreparedTurn
     if (!reuseOpening(db, turn)) return false;
     onCommit?.();
     return true;
-  })) return readLesson(db, turn.context);
+  })) return readLesson(db, turn.request);
   const reply = await generateReply(generate, turn, signal);
   transaction(db, () => {
     checkedTurn(db, turn.request, turn.preview.token);
     commitReply(db, turn, reply);
     onCommit?.();
   });
-  return readLesson(db, turn.context);
+  return readLesson(db, turn.request);
 }

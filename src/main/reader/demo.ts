@@ -15,6 +15,7 @@ export interface LessonContext {
   title: string;
   summary: string;
   depth: Depth;
+  lessonId?: number;
   portable: boolean;
   topic: boolean;
   demo: boolean;

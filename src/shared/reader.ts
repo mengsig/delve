@@ -6,6 +6,7 @@ export interface LessonAddress {
   workspaceId: string;
   conceptId: number;
   depth: Depth;
+  lessonId?: number;
 }
 
 export const lessonKey = ({ workspaceId, conceptId, depth }: LessonAddress) => [workspaceId, conceptId, depth].join('/');

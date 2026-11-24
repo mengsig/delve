@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { DomainError } from '../../shared/errors';
 import { addPrerequisiteInTransaction, conceptStorageKey, getConcept, getConceptByKey, upsertConceptInTransaction, type Concept } from './concepts';
 import type { Db } from './connection';
-import { normalizedConceptName } from './portable-identity';
+import { compatibleDescriptions, compatiblePortableAliases, normalizedConceptName, portableAlias } from './portable-identity';
+import { canonicalEdges, edgeReachable } from './migration-edges';
 import { getWorkspace } from './workspaces';
 
 type Candidate = { key: string; title: string; summary: string };
@@ -25,6 +27,10 @@ export function findTutorPrerequisite(db: Db, workspaceId: string, candidate: Ca
     assert.ok(typeof row.id === 'number' && Number.isSafeInteger(row.id) && row.id > 0);
     const match = getConcept(db, row.id);
     assert.ok(match && (!portableOnly || match.portable));
+    const unscopedKey = match.portable ? match.key : match.key.slice(`ws/${workspaceId}/`.length);
+    assert.ok(unscopedKey.length > 0);
+    if (!compatibleDescriptions(candidate.summary, match.summary)
+      || !compatiblePortableAliases(portableAlias(candidate.key, candidate.title), portableAlias(unscopedKey, match.title))) continue;
     return match;
   }
   return null;
@@ -34,10 +40,15 @@ function resolveCandidate(db: Db, workspaceId: string, target: Concept, candidat
   assert.ok(db.isTransaction);
   const match = findTutorPrerequisite(db, workspaceId, candidate, target.portable);
   if (match) return match;
-  const key = conceptStorageKey(candidate.key, true);
-  assert.ok(key !== target.key);
-  if (getConceptByKey(db, key)) throw new DomainError('CONCEPT_CONFLICT', `Concept key "${key}" is unavailable.`);
-  return upsertConceptInTransaction(db, { ...candidate, portable: true }, false);
+  let key = conceptStorageKey(candidate.key, true);
+  if (getConceptByKey(db, key)) {
+    const digest = createHash('sha256').update(JSON.stringify([key, candidate.title, candidate.summary])).digest('hex');
+    key = `${key.slice(0, 135)}/${digest}`;
+    const existing = getConceptByKey(db, key);
+    if (existing) throw new DomainError('CONCEPT_CONFLICT', `Concept key "${key}" is unavailable.`);
+  }
+  assert.notEqual(key, target.key);
+  return upsertConceptInTransaction(db, { ...candidate, key, portable: true }, false);
 }
 
 function linkToAtlas(db: Db, workspaceId: string, conceptId: number): void {
@@ -50,12 +61,9 @@ function bottomUp(db: Db, concepts: Selection[]): Selection[] {
   if (concepts.length < 2) return concepts;
   const selected = new Set(concepts.map(c => c.concept.id));
   assert.equal(selected.size, concepts.length, 'selected concepts must be unique');
-  const reach = db.prepare(`WITH RECURSIVE dependencies(id) AS (
-    SELECT prerequisite_id FROM concept_edges WHERE concept_id = ?
-    UNION SELECT e.prerequisite_id FROM concept_edges e JOIN dependencies d ON e.concept_id = d.id
-  ) SELECT id FROM dependencies`);
-  const pending = new Map(concepts.map(c => [c.concept.id, new Set(reach.all(c.concept.id)
-    .map(row => Number(row.id)).filter(id => selected.has(id)))]));
+  const edges = canonicalEdges(db);
+  const pending = new Map(concepts.map(c => [c.concept.id, new Set([...selected]
+    .filter(id => id !== c.concept.id && edgeReachable(edges, c.concept.id, id)))]));
   const ordered: Selection[] = [];
   while (ordered.length < concepts.length) {
     const next = concepts.find(c => pending.has(c.concept.id) && pending.get(c.concept.id)!.size === 0);
@@ -86,6 +94,10 @@ export function persistTutorPrerequisites(db: Db, workspaceId: string, conceptId
   const selected: Selection[] = [];
   const seen = new Set<number>();
   for (const candidate of candidates) {
+    const targetKey = target.portable ? target.key : target.key.slice(`ws/${workspaceId}/`.length);
+    if (!target.summary.trim() && conceptStorageKey(candidate.key, true) === targetKey
+      && normalizedConceptName(candidate.title) === normalizedConceptName(target.title)
+      && compatiblePortableAliases(portableAlias(candidate.key, candidate.title), portableAlias(targetKey, target.title))) continue;
     const concept = resolveCandidate(db, workspaceId, target, candidate);
     if (seen.has(concept.id)) continue;
     try {

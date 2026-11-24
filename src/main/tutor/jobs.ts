@@ -5,7 +5,7 @@ import { transaction, type Db } from '../db/connection';
 import { digest, tutorRequest } from './request';
 import type { PreparedTurn } from './prompt';
 
-const detail = tutorRequest.pick({ provider: true, intent: true }).extend({
+const detail = tutorRequest.pick({ provider: true, intent: true, lessonId: true }).extend({
   title: z.string().min(1), submittedAnswer: z.string().optional(),
 }).refine(({ intent, submittedAnswer }) => (submittedAnswer !== undefined) === (intent.kind === 'answer'), {
   path: ['submittedAnswer'],
@@ -29,8 +29,8 @@ const matchIdentity = 'hex(id) = ? AND version = ?';
 
 function parseJob(raw: unknown): { token: string; job: SavedTutorJob } {
   const row = rowSchema.parse(raw);
-  const { intent, provider, title, submittedAnswer } = detail.parse(JSON.parse(row.detail));
-  const request = { workspaceId: row.workspace_id, conceptId: row.concept_id, depth: row.depth, intent, provider };
+  const { intent, provider, title, submittedAnswer, lessonId } = detail.parse(JSON.parse(row.detail));
+  const request = { workspaceId: row.workspace_id, conceptId: row.concept_id, depth: row.depth, intent, provider, lessonId };
   const base = { id: row.id, title, request, submittedAnswer };
   const job: SavedTutorJob = row.phase === 'failed'
     ? { ...base, phase: row.phase, code: row.code, message: row.message }
@@ -42,7 +42,7 @@ export function storeTutorJob(db: Db, id: string, turn: PreparedTurn): void {
   const { request, context, preview, response } = turn;
   assert.equal(context.workspaceId, request.workspaceId);
   assert.equal(context.depth, request.depth);
-  const body = detail.parse({ intent: request.intent, provider: request.provider, title: context.title, submittedAnswer: response?.answer });
+  const body = detail.parse({ intent: request.intent, provider: request.provider, lessonId: request.lessonId, title: context.title, submittedAnswer: response?.answer });
   const result = db.prepare(`INSERT INTO tutor_jobs (id, workspace_id, concept_id, depth, token, detail, phase)
     VALUES (?, ?, ?, ?, ?, ?, 'running')
     ON CONFLICT (workspace_id, concept_id, depth) DO UPDATE SET

@@ -22,6 +22,7 @@ import './fieldwork.css';
 
 interface LessonProps extends ReaderProps {
   conceptId: number;
+  lessonId?: number;
   onEvidence?: (lesson: ReaderLesson) => void;
   initialQuestion?: string;
   initialReview?: boolean;
@@ -79,9 +80,10 @@ function Session({ props, initial, title, address, reload }: {
 }) {
   const [body, setBody] = useState(initial);
   const [foundation, completeFoundation] = useState<{ feedback?: string }>();
-  const scope = lessonKey(address);
+  const scope = lessonKey(address) + (address.lessonId === undefined ? '' : '/lesson/' + address.lessonId);
   const { jobs, dismiss } = useTutorJobs();
-  const job = jobs.get(scope);
+  const candidate = jobs.get(lessonKey(address));
+  const job = candidate?.request.lessonId === address.lessonId ? candidate : undefined;
   const submitted = job?.phase === 'failed' && job.code === 'TUTOR_INTERRUPTED' ? job.request.intent : undefined;
   const { draft, change } = useLessonDraft(scope, body.mastery, props.initialQuestion, submitted);
   function commit(next: ReaderLesson) { setBody(next); props.onEvidence?.(next); }
@@ -122,11 +124,11 @@ function Session({ props, initial, title, address, reload }: {
 }
 
 function Reader({ props, title, reload }: { props: LessonProps; title: string; reload: () => void }) {
-  const { workspace: { id: workspaceId }, conceptId, depth } = props;
-  const read = useCallback(() => call('reader:lesson', { workspaceId, conceptId, depth }), [workspaceId, conceptId, depth]);
+  const { workspace: { id: workspaceId }, conceptId, depth, lessonId } = props;
+  const read = useCallback(() => call('reader:lesson', { workspaceId, conceptId, depth, lessonId }), [workspaceId, conceptId, depth, lessonId]);
   const { result, refresh } = useRead(read);
   if (result.status === 'ready') return <Session props={props} title={title} initial={result.value}
-    address={{ workspaceId, conceptId, depth }} reload={reload} />;
+    address={{ workspaceId, conceptId, depth, lessonId }} reload={reload} />;
   return <div className="field-lesson"><LessonHeading props={props} title={title} />
     {result.status === 'error' ? <p role="alert">{result.message} <button onClick={refresh}>Retry loading lesson</button></p> :
       <p role="status">Loading lesson…</p>}</div>;
@@ -139,5 +141,5 @@ export function Lesson(props: LessonProps) {
     <button className="back" onClick={props.onBack}>{props.backLabel ?? '← Back to atlas'}</button><p role="alert">This workspace does not contain the selected concept.</p>
   </>;
   const title = props.depth === 'high' ? plainConceptTitle(concept.title) : concept.title;
-  return <Reader key={[props.workspace.id, props.conceptId, props.depth, props.graph.snapshot, version].join('/')} props={props} title={title} reload={() => update(value => value + 1)} />;
+  return <Reader key={[props.workspace.id, props.conceptId, props.depth, props.lessonId, props.graph.snapshot, version].join('/')} props={props} title={title} reload={() => update(value => value + 1)} />;
 }

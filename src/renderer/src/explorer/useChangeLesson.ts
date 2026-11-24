@@ -31,7 +31,7 @@ interface LessonOptions {
   depth: Depth;
   detail?: ChangeDetail;
   openedJob?: ChangeJob;
-  onLesson: (id: number) => void;
+  onLesson: (id: number, lessonId?: number) => void;
 }
 
 function useTeachChange({ workspace, change, depth, onLesson }: LessonOptions, provider: ChangeJob['provider']) {
@@ -45,7 +45,7 @@ function useTeachChange({ workspace, change, depth, onLesson }: LessonOptions, p
   useEffect(() => {
     if (teachingToken.current && job?.token === teachingToken.current && job.phase === 'ready' && job.conceptId !== undefined) {
       teachingToken.current = undefined;
-      onLesson(job.conceptId);
+      if (job.lessonId !== undefined) onLesson(job.conceptId, job.lessonId);
     }
   }, [job, onLesson]);
 
