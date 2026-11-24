@@ -30,8 +30,8 @@ function messageDocument(db: Db, request: OpenRequest, canonicalId: number, snap
     WHERE m.id = :message AND c.workspace_id = :workspace AND c.depth = :depth AND m.role = 'tutor'
     AND (c.concept_id = :concept OR c.concept_id IN
       (SELECT legacy_concept_id FROM concept_identity_links WHERE canonical_concept_id = :concept))
-    AND length(CAST(m.body AS BLOB)) <= 524288`)
-    .get({ message: request.messageId, workspace: request.workspaceId, concept: canonicalId, depth: request.depth });
+    AND (:lesson IS NULL OR m.pinned_lesson_id = :lesson) AND length(CAST(m.body AS BLOB)) <= 524288`)
+    .get({ message: request.messageId, workspace: request.workspaceId, concept: canonicalId, depth: request.depth, lesson: request.lessonId ?? null });
   if (!row || typeof row.body !== 'string') return fail('This activity is no longer available.');
   let raw: unknown;
   try { raw = JSON.parse(row.body); } catch { return fail('This activity has an invalid saved message.'); }

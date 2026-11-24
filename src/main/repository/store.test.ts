@@ -157,6 +157,18 @@ describe('stable change overview and footprint', () => {
   });
 });
 
+it('keeps different scoped aliases separate even when the rendered title and description match', () => {
+  const approved = source({ kind: 'pr', ref: '42' }, previous);
+  const input = { key: 'tcp', title: 'Protocol boundary', summary: 'Establishes how the peers communicate.', portable: false };
+  const explain = (key: string) => ({ ...stableChange, overviewConceptKey: null, concepts: [{ ...input, key }], edges: [],
+    touched: [key], recommendation: { key, reason: 'Review the protocol boundary.' } });
+  const first = persistGeneration(db, approved, explain('tcp'));
+  const second = persistGeneration(db, { ...approved, cacheKey: 'second-protocol' }, explain('http'));
+  if (first.kind !== 'change' || second.kind !== 'change') throw new Error('Expected change briefs.');
+  expect(second.brief.touched[0]?.id).not.toBe(first.brief.touched[0]?.id);
+  expect(getGlobalKnowledgeGraph(db).concepts).toHaveLength(3);
+});
+
 it('plans local usage in a new repository and only tops up the missing portable depth', () => {
   const first = workspaceId;
   const map = (key: string, title: string, usage: string) => baselineReply.parse({

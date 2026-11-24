@@ -97,7 +97,7 @@ it('keeps same-title v10 concepts with different meanings separate through upgra
   }
 });
 
-it('recovers exact v10 lesson IDs for saved briefs at the same depth across providers', () => {
+it.each([false, true])('recovers v10 brief documents and attributable history (ambiguous Codex history: %s)', ambiguous => {
   const db = new DatabaseSync(':memory:');
   try {
     db.exec('PRAGMA foreign_keys = ON');
@@ -110,12 +110,25 @@ it('recovers exact v10 lesson IDs for saved briefs at the same depth across prov
       { cacheKey: 'codex-brief', omitLessonId: true });
     const claudeId = seedSavedChange(db, workspaceId, snapshotId, claude.id, claude.id, 'high',
       { cacheKey: 'claude-brief', provider: 'claude', omitLessonId: true });
+    const history = db.prepare(`INSERT INTO conversations (workspace_id, concept_id, lesson_id, depth, title, created_at, updated_at)
+      VALUES (?, ?, ?, 'high', 'Saved change conversation', '2026-01-01', '2026-01-01')`);
+    const message = db.prepare(`INSERT INTO messages (conversation_id, role, body, created_at) VALUES (?, 'learner', ?, '2026-01-01')`);
+    message.run(history.run(workspaceId, codex.id, codexId).lastInsertRowid, JSON.stringify('My Codex question'));
+    message.run(history.run(workspaceId, claude.id, claudeId).lastInsertRowid, JSON.stringify('My Claude question'));
+    if (ambiguous) db.prepare(`INSERT INTO lessons (cache_key, schema_version, concept_id, workspace_id, snapshot_id, depth, provider, model, body, created_at)
+      SELECT 'alternate', schema_version, concept_id, workspace_id, snapshot_id, depth, 'claude', model, body, created_at
+      FROM lessons WHERE id = ?`).run(codexId);
     migrate(db);
     migrate(db);
     const address = { workspaceId, kind: 'pr', ref: '42', depth: 'high' } as const;
     expect(cachedGeneration(db, 'codex-brief')).toMatchObject({ brief: { conceptId: codex.id, lessonId: codexId } });
     expect(latestBrief(db, { ...address, provider: 'claude' })).toMatchObject({ conceptId: codex.id, lessonId: claudeId });
     expect(codexId).not.toEqual(claudeId);
+    const lesson = { workspaceId, conceptId: codex.id, depth: 'high' } as const;
+    expect(readLesson(db, { ...lesson, lessonId: codexId }).messages.map(m => m.text))
+      .toEqual(ambiguous ? [] : ['My Codex question']);
+    expect(readLesson(db, { ...lesson, lessonId: claudeId }).messages.map(m => m.text)).toEqual(['My Claude question']);
+    expect(readLesson(db, lesson).messages.map(m => m.text)).toEqual(['My Codex question', 'My Claude question']);
   } finally {
     db.close();
   }

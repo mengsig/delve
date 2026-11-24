@@ -415,6 +415,14 @@ export const MIGRATIONS: readonly Migration[] = [
       AND l.concept_id = g.result ->> '$.brief.conceptId';
     ALTER TABLE messages ADD COLUMN pinned_lesson_id INTEGER REFERENCES lessons(id) ON DELETE SET NULL;
     CREATE INDEX messages_by_pinned_lesson ON messages(pinned_lesson_id);
+    UPDATE messages AS m SET pinned_lesson_id = l.id
+    FROM conversations c JOIN lessons l ON l.id = c.lesson_id
+    JOIN repository_generations g ON g.cache_key = l.cache_key
+    WHERE m.conversation_id = c.id AND g.kind <> 'baseline' AND g.result ->> '$.brief.lessonId' = l.id
+      AND c.workspace_id = l.workspace_id AND c.concept_id = l.concept_id
+      AND (c.depth IS NULL OR c.depth = l.depth)
+      AND NOT EXISTS (SELECT 1 FROM lessons other WHERE other.concept_id = l.concept_id AND other.depth = l.depth
+        AND other.id <> l.id AND (other.workspace_id = l.workspace_id OR other.workspace_id IS NULL));
     CREATE TABLE pinned_lesson_mastery (
       workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
       concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,

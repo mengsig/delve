@@ -28,7 +28,7 @@ delete foundationsJsonSchema.$schema;
 export const foundationInstructions = [
   'For an opening topic or change, identify the 2–4 ideas a learner needs first. Include only essential foundations. Return an empty foundations list for self-contained material.',
   'Each foundation needs a stable transferable key, a plain title, a short standalone explanation with a concrete example in summary, and one sentence in why explaining how it helps with the main subject. The why sentence must not give away the answer to the probe.',
-  'Reuse a matching key or title from the learner context. Include already known essentials so their graph links stay visible. Order the most basic ideas first.',
+  'Reuse the key and summary from the learner context when they describe the same foundation. Include already known essentials so their graph links stay visible. Order the most basic ideas first.',
   'For probe and practice, write separate short prediction checks at the chosen depth. Use type check, kind prediction, four distinct choices and a zero-based expected index. Give no hints in the probe. In practice, apply the explanation to a new situation.',
   'Delve asks the probe before showing the explanation, skips checks the learner has already covered, and names a known or practised foundation near the start of the lesson. Build the opening on those ideas and briefly explain how they apply, so it also works if the learner skips practice.',
 ].join('\n');

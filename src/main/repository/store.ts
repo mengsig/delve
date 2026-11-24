@@ -182,12 +182,15 @@ function resolveChangeFootprint(db: Db, scope: ChangeConceptScope, overview: Con
   const prefix = `ws/${workspaceId}/`;
   const candidate = match ? { key: match.portable ? match.key : match.key.slice(prefix.length),
     portable: match.portable, concept: match } : lookup(input);
+  const alias = portableAlias(input.key, input.title);
   if (reply.overviewConceptKey === input.key && !input.portable && !candidate.portable
+    && compatiblePortableAliases(alias, portableAlias('', overview.title))
     && (!candidate.concept || isGeneratedChangeConcept(scope.workspaceId, candidate.concept))) {
     if (candidate.concept) linkChangeDuplicate(db, candidate.concept, overview);
     return { key: overview.key.slice(prefix.length), portable: false, concept: overview };
   }
-  if (candidate.portable || candidate.concept) return candidate;
+  if ((candidate.portable || candidate.concept)
+    && compatiblePortableAliases(alias, portableAlias(candidate.key, candidate.concept?.title ?? input.title))) return candidate;
   const sameMeaning = findCompatibleChangeTitle(db, scope, input);
   if (sameMeaning) return { key: sameMeaning.key.slice(prefix.length), portable: false, concept: sameMeaning };
   return { key: 'change/' + digest([scope.change, input.key, input.title, input.summary]), portable: false, concept: null };

@@ -1,36 +1,44 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { DomainError } from '../../shared/errors';
-import { addPrerequisiteInTransaction, conceptStorageKey, getConcept, getConceptByKey, upsertConceptInTransaction, type Concept } from './concepts';
+import { addPrerequisiteInTransaction, canonicalConceptId, conceptStorageKey, getConcept, getConceptByKey, upsertConceptInTransaction, type Concept } from './concepts';
 import type { Db } from './connection';
-import { compatibleDescriptions, compatiblePortableAliases, normalizedConceptName, portableAlias } from './portable-identity';
+import { compatibleDescriptions, compatiblePortableAliases, normalizedConceptName, portableAlias, scopedFingerprint } from './portable-identity';
 import { canonicalEdges, edgeReachable } from './migration-edges';
 import { getWorkspace } from './workspaces';
 
 type Candidate = { key: string; title: string; summary: string };
 type Selection = { concept: Concept; candidateKey: string };
 
+const variantKey = (candidate: Candidate) => 'foundation/' + scopedFingerprint({ ...candidate, portable: false });
+
 export function findTutorPrerequisite(db: Db, workspaceId: string, candidate: Candidate, portableOnly = false): Concept | null {
   const key = conceptStorageKey(candidate.key, true);
   const localKey = conceptStorageKey(candidate.key, false, workspaceId);
   const title = normalizedConceptName(candidate.title);
+  const alias = portableAlias(key, title);
+  const local = getConceptByKey(db, localKey);
+  const scopedId = local ? canonicalConceptId(db, local.id) : null;
+  const variant = variantKey(candidate);
   assert.ok(title.length > 0, 'matching requires a nonblank concept title');
-  const rows = db.prepare(`SELECT c.id, c.key, c.title FROM concepts c
+  const rows = db.prepare(`SELECT c.id, c.key, c.title, c.summary, c.portable FROM concepts c
     WHERE (c.portable = 1 OR (c.workspace_id = ? AND ? = 0))
       AND c.key NOT LIKE 'Demo:%'
       AND NOT EXISTS (SELECT 1 FROM concept_identity_links l WHERE l.legacy_concept_id = c.id)
-    ORDER BY CASE c.key WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END, c.portable, c.id`)
-    .iterate(workspaceId, Number(portableOnly), localKey, key);
+    ORDER BY CASE WHEN c.id = ? THEN 0 WHEN c.key = ? OR c.key = ? THEN 1 ELSE 2 END, c.portable, c.id`)
+    .iterate(workspaceId, Number(portableOnly), scopedId, key, variant);
   for (const row of rows) {
-    assert.ok(typeof row.key === 'string' && typeof row.title === 'string');
-    if (row.key !== localKey && row.key !== key && normalizedConceptName(row.title) !== title) continue;
     assert.ok(typeof row.id === 'number' && Number.isSafeInteger(row.id) && row.id > 0);
+    assert.ok(typeof row.key === 'string' && typeof row.title === 'string' && typeof row.summary === 'string');
+    assert.ok(row.portable === 0 || row.portable === 1);
+    const unscopedKey = row.portable === 1 ? row.key : row.key.slice(`ws/${workspaceId}/`.length);
+    const savedAlias = portableAlias(unscopedKey, row.title);
+    const sameKey = row.id === scopedId || row.key === key || row.key === variant;
+    const sameAlias = Boolean(alias && alias === savedAlias);
+    const sameLocalTitle = row.portable === 0 && normalizedConceptName(row.title) === title;
+    if (!sameKey && !sameAlias && !sameLocalTitle) continue;
+    if (!compatibleDescriptions(candidate.summary, row.summary) || !compatiblePortableAliases(alias, savedAlias)) continue;
     const match = getConcept(db, row.id);
     assert.ok(match && (!portableOnly || match.portable));
-    const unscopedKey = match.portable ? match.key : match.key.slice(`ws/${workspaceId}/`.length);
-    assert.ok(unscopedKey.length > 0);
-    if (!compatibleDescriptions(candidate.summary, match.summary)
-      || !compatiblePortableAliases(portableAlias(candidate.key, candidate.title), portableAlias(unscopedKey, match.title))) continue;
     return match;
   }
   return null;
@@ -42,8 +50,7 @@ function resolveCandidate(db: Db, workspaceId: string, target: Concept, candidat
   if (match) return match;
   let key = conceptStorageKey(candidate.key, true);
   if (getConceptByKey(db, key)) {
-    const digest = createHash('sha256').update(JSON.stringify([key, candidate.title, candidate.summary])).digest('hex');
-    key = `${key.slice(0, 135)}/${digest}`;
+    key = variantKey(candidate);
     const existing = getConceptByKey(db, key);
     if (existing) throw new DomainError('CONCEPT_CONFLICT', `Concept key "${key}" is unavailable.`);
   }

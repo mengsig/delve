@@ -17,11 +17,15 @@ export const changeTitleKey = (title: string) => 'title:' + normalizedConceptNam
 export const changeProviderKey = (key: string) => 'key:' + key.trim().toLowerCase();
 export const overviewKey = 'overview';
 
-function changeConceptsForKey(db: Db, scope: ChangeConceptScope, key: string): Concept[] {
+function changeConceptsForKey(db: Db, scope: ChangeConceptScope, key: string, alias?: string): Concept[] {
   assert.match(scope.change, /^[a-f0-9]{64}$/);
   assert.ok(scope.workspaceId && key);
-  return db.prepare('SELECT concept_id FROM change_concept_keys WHERE workspace_id = ? AND change_id = ? AND identity = ?')
-    .all(scope.workspaceId, scope.change, key).map(row => {
+  return db.prepare(`SELECT k.concept_id FROM change_concept_keys k
+    WHERE k.workspace_id = ? AND k.change_id = ? AND k.identity = ?
+    AND (? IS NULL OR NOT EXISTS (SELECT 1 FROM change_concept_keys conflict
+      WHERE conflict.workspace_id = k.workspace_id AND conflict.change_id = k.change_id AND conflict.concept_id = k.concept_id
+        AND conflict.identity GLOB 'alias:*' AND conflict.identity <> ?))`)
+    .all(scope.workspaceId, scope.change, key, alias ?? null, alias ?? null).map(row => {
     assert.ok(typeof row.concept_id === 'number');
     const concept = getConcept(db, row.concept_id);
     assert.ok(concept && (concept.portable || concept.workspaceId === scope.workspaceId));
@@ -41,7 +45,9 @@ export function isGeneratedChangeConcept(workspaceId: string, concept: Concept):
 }
 
 export function findCompatibleChangeTitle(db: Db, scope: ChangeConceptScope, input: Footprint): Concept | null {
-  const matches = changeConceptsForKey(db, scope, changeTitleKey(input.title))
+  const alias = portableAlias(input.key, input.title);
+  if (alias === null) return null;
+  const matches = changeConceptsForKey(db, scope, changeTitleKey(input.title), alias && 'alias:' + alias)
     .filter(concept => isGeneratedChangeConcept(scope.workspaceId, concept)
       && compatibleChangeAliases(scope, input, concept) && compatibleDescriptions(input.summary, concept.summary));
   return matches.length === 1 ? matches[0]! : null;
@@ -57,13 +63,15 @@ function compatibleChangeAliases(scope: ChangeConceptScope, input: Pick<Footprin
 export function findScopedChangeKey(db: Db, scope: ChangeConceptScope, input: Footprint): Concept | null {
   assert.ok(input.key.trim());
   assert.ok(input.title.trim());
-  const keyed = changeConceptsForKey(db, scope, changeProviderKey(input.key))
+  const alias = portableAlias(input.key, input.title);
+  if (alias === null) return null;
+  const scopedAlias = alias && 'alias:' + alias;
+  const keyed = changeConceptsForKey(db, scope, changeProviderKey(input.key), scopedAlias)
     .filter(concept => compatibleChangeAliases(scope, input, concept));
   const exact = keyed.filter(concept => compatibleDescriptions(input.summary, concept.summary));
   if (exact.length) return exact.length === 1 ? exact[0]! : null;
-  const alias = portableAlias(input.key, input.title);
-  if (alias) {
-    const matches = changeConceptsForKey(db, scope, 'alias:' + alias)
+  if (scopedAlias) {
+    const matches = changeConceptsForKey(db, scope, scopedAlias, scopedAlias)
       .filter(concept => compatibleChangeAliases(scope, input, concept) && compatibleDescriptions(input.summary, concept.summary));
     if (matches.length) return matches.length === 1 ? matches[0]! : null;
   }
